@@ -45,7 +45,11 @@ struct StoreTests {
         await saver.schedule()
         await saver.schedule()
         #expect(await saver.isPending)
-        try await Task.sleep(for: .milliseconds(400))
+        // Wait for the debounced save rather than a fixed sleep: busy CI runners can fire it late.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while count.value == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(count.value == 1)
         await saver.schedule()
         await saver.flush()
