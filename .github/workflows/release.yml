@@ -1,5 +1,5 @@
 # Builds, signs and notarizes Headroom for a pushed tag `v<version>`, publishes the GitHub release
-# and updates the Homebrew cask.
+# and updates the Homebrew cask (ai-headroom in ScaleXY/homebrew-tap).
 #
 #   Headroom-<version>.dmg (+ .sha256)   drag-to-Applications disk image; what Homebrew installs
 #   Headroom-<version>.zip (+ .sha256)   the zipped app that install.sh downloads
@@ -211,16 +211,19 @@ jobs:
           mkdir -p tap/Casks
           sed -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
               -e "s/^  sha256 .*$/  sha256 \"$SHA256\"/" \
-              Packaging/headroom.rb > tap/Casks/headroom.rb
-          grep -q "version \"$VERSION\"" tap/Casks/headroom.rb && grep -q "sha256 \"$SHA256\"" tap/Casks/headroom.rb
+              Packaging/ai-headroom.rb > tap/Casks/ai-headroom.rb
+          grep -q "version \"$VERSION\"" tap/Casks/ai-headroom.rb && grep -q "sha256 \"$SHA256\"" tap/Casks/ai-headroom.rb
+          # The cask was first published as "headroom"; the rename moves those installs over.
+          rm -f tap/Casks/headroom.rb
+          printf '{\n  "headroom": "ai-headroom"\n}\n' > tap/cask_renames.json
 
           cd tap
-          git add Casks/headroom.rb
+          git add -A Casks cask_renames.json
           if git diff --cached --quiet; then
             echo "The cask is already at $VERSION."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git commit -m "headroom $VERSION"
+          git commit -m "ai-headroom $VERSION"
           git push

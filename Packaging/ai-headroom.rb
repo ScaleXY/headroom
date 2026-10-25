@@ -1,6 +1,7 @@
 # Homebrew cask for Headroom, published to ScaleXY/homebrew-tap by .github/workflows/release.yml.
 # The workflow fills in version and sha256 for each tagged release; the rest is maintained here.
-cask "headroom" do
+# Not "headroom": homebrew/cask has an unrelated app by that name, also installed as Headroom.app.
+cask "ai-headroom" do
   version "0.1.0-beta.4"
   sha256 :no_check
 
@@ -9,6 +10,7 @@ cask "headroom" do
   desc "Menu bar pace meter for Claude and Codex plan allowances"
   homepage "https://github.com/ScaleXY/headroom"
 
+  conflicts_with cask: "headroom"
   depends_on arch: :arm64
   depends_on macos: :sequoia
 

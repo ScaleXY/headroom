@@ -32,7 +32,7 @@ Headroom appears in your menu bar a few seconds later and opens a short welcome 
 Or install it with [Homebrew](https://brew.sh), which also links the `headroom` command and its man page:
 
 ```sh
-brew install --cask scalexy/tap/headroom
+brew install --cask scalexy/tap/ai-headroom
 ```
 
 Prefer a disk image? Every [release](https://github.com/ScaleXY/headroom/releases) has a DMG; open it and drag Headroom to Applications.
@@ -122,13 +122,13 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 
 ## Update or remove
 
-Run the install command again to update, or `brew upgrade --cask headroom` if you used Homebrew. To remove Headroom:
+Run the install command again to update, or `brew upgrade --cask ai-headroom` if you used Homebrew. To remove Headroom:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | bash -s -- --uninstall
 ```
 
-With Homebrew, run `brew uninstall --cask headroom`; add `--zap` to remove your history and settings too.
+With Homebrew, run `brew uninstall --cask ai-headroom`; add `--zap` to remove your history and settings too.
 
 ## License
 
