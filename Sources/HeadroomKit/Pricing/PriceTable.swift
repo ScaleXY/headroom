@@ -166,11 +166,25 @@ public struct PriceTable: Codable, Sendable, Hashable {
 
     /// The rate card shipped inside the app.
     public static func bundled() throws -> PriceTable {
-        guard let url = Bundle.module.url(forResource: "pricing", withExtension: "json") else {
+        guard let url = resources.url(forResource: "pricing", withExtension: "json") else {
             throw CocoaError(.fileNoSuchFile)
         }
         return try decode(Data(contentsOf: url))
     }
+
+    /// SwiftPM's `Bundle.module` only looks beside `Headroom.app` and in the build directory, and
+    /// traps when neither exists, so a release build crashes on every Mac but the one that built it.
+    /// The app ships the bundle in Contents/Resources; look there first and keep `.module` for
+    /// `swift run` and the tests.
+    private static let resources: Bundle = {
+        let name = "Headroom_HeadroomKit.bundle"
+        let executableDir = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent()
+        let candidates = [Bundle.main.resourceURL, executableDir?.deletingLastPathComponent().appendingPathComponent("Resources")]
+        for case let dir? in candidates {
+            if let bundle = Bundle(url: dir.appendingPathComponent(name)) { return bundle }
+        }
+        return .module
+    }()
 
     public static func decode(_ data: Data) throws -> PriceTable {
         try JSONDecoder().decode(PriceTable.self, from: data)
