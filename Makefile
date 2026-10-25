@@ -8,6 +8,7 @@
 #   make appstore   render the Mac App Store screenshots, app preview and icon into appstore/ (needs Chrome, ffmpeg)
 #   make release    zip the signed app into dist/ with a SHA-256 checksum
 #   make dmg        build dist/Headroom-<version>.dmg (drag to Applications) with a SHA-256 checksum
+#   make dmg-background  redraw assets/dmg-background.tiff, the DMG window background (needs Chrome)
 #   make notarize   notarize and staple the DMG (needs NOTARY_PROFILE, see below)
 #
 # Distribution builds need a "Developer ID Application" certificate in the keychain; it is picked
@@ -24,6 +25,8 @@ BUNDLE_ID := com.scalexy.headroom
 APP       := build/Headroom.app
 DMG       := dist/Headroom-$(VERSION).dmg
 RELEASE   := .build/release
+# dmgbuild lays out the DMG window (background, icon positions) without driving Finder.
+DMGBUILD  := build/dmgbuild/bin/dmgbuild
 # First valid identity of a kind, by SHA-1 (names can be ambiguous).
 identity   = $(shell security find-identity -v -p codesigning | grep -v REVOKED | grep "$(1)" | head -1 | awk '{print $$2}')
 DEVELOPER_ID := $(call identity,Developer ID Application)
@@ -31,7 +34,7 @@ IDENTITY  ?= $(or $(DEVELOPER_ID),$(call identity,Apple Development))
 # Notarization needs a secure timestamp; local development builds skip the network round trip.
 TIMESTAMP ?= $(if $(DEVELOPER_ID),--timestamp,--timestamp=none)
 
-.PHONY: all build test app install icon clean bench screenshots appstore release dmg notarize
+.PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize
 
 all: build
 
@@ -60,14 +63,19 @@ release: app
 	cd dist && shasum -a 256 Headroom-$(VERSION).zip > Headroom-$(VERSION).zip.sha256
 	@cat dist/Headroom-$(VERSION).zip.sha256
 
-dmg: app
-	rm -rf build/dmg $(DMG)* && mkdir -p build/dmg dist
-	ditto $(APP) build/dmg/Headroom.app
-	ln -s /Applications build/dmg/Applications
-	hdiutil create -volname Headroom -srcfolder build/dmg -fs HFS+ -format UDZO -ov $(DMG)
+dmg: app $(DMGBUILD)
+	rm -f $(DMG)* && mkdir -p dist
+	$(DMGBUILD) -s Packaging/dmg_settings.py -D app=$(APP) Headroom $(DMG)
 	codesign --force $(TIMESTAMP) --sign "$(IDENTITY)" $(DMG)
 	cd dist && shasum -a 256 $(notdir $(DMG)) > $(notdir $(DMG)).sha256
 	@cat $(DMG).sha256
+
+$(DMGBUILD):
+	python3 -m venv build/dmgbuild
+	build/dmgbuild/bin/pip install --quiet dmgbuild==1.6.7
+
+dmg-background:
+	python3 -I Scripts/dmg_background.py
 
 notarize:
 	@test -n "$(NOTARY_PROFILE)" || { echo "Set NOTARY_PROFILE to a profile from 'xcrun notarytool store-credentials'."; exit 1; }
