@@ -1,0 +1,226 @@
+# Builds, signs and notarizes Headroom for a pushed tag `v<version>`, publishes the GitHub release
+# and updates the Homebrew cask.
+#
+#   Headroom-<version>.dmg (+ .sha256)   drag-to-Applications disk image; what Homebrew installs
+#   Headroom-<version>.zip (+ .sha256)   the zipped app that install.sh downloads
+#
+# To release: bump VERSION in the Makefile and the versions in Packaging/Info.plist, commit, then
+#   git tag -a v0.1.0-beta.5 -m "<release notes>" && git push origin v0.1.0-beta.5
+# An annotated tag's message becomes the release notes; a lightweight tag gets GitHub's generated
+# notes. A version with a suffix (-beta.5, -rc.1) is published as a pre-release. If a release for
+# the tag already exists (say, a draft with hand-written notes), its assets are replaced instead.
+#
+# Secrets (set for the ScaleXY organization):
+#   MACOS_CERTIFICATE              base64 of the "Developer ID Application" certificate and key (.p12)
+#   MACOS_CERTIFICATE_PASSWORD     the .p12's export password
+#   MACOS_SIGNING_IDENTITY         its name, "Developer ID Application: <name> (<team>)", or SHA-1
+#   Notarization uses the App Store Connect API key when it's set, else the Apple ID:
+#   APP_STORE_CONNECT_KEY          the API key (AuthKey_<id>.p8), as is or base64
+#   APP_STORE_CONNECT_KEY_ID       that key's ID
+#   APP_STORE_CONNECT_ISSUER_ID    the issuer ID shown above the keys in App Store Connect
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   an Apple ID with an app-specific password
+#   HOMEBREW_TAP_TOKEN             token that can push to ScaleXY/homebrew-tap (fine-grained:
+#                                  Contents read and write on that repository). Without it the
+#                                  release still publishes and the cask update is skipped.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, notarize and publish
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dmg_sha256: ${{ steps.publish.outputs.dmg_sha256 }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the tag matches the version
+        id: version
+        run: |
+          version=${TAG#v}
+          make_version=$(sed -n 's/^VERSION *:= *//p' Makefile)
+          plist_version=$(plutil -extract CFBundleShortVersionString raw Packaging/Info.plist)
+          if [ "$version" != "$make_version" ]; then
+            echo "::error file=Makefile::Tag $TAG doesn't match VERSION $make_version in the Makefile."
+            exit 1
+          fi
+          if [ "${version%%-*}" != "$plist_version" ]; then
+            echo "::error file=Packaging/Info.plist::CFBundleShortVersionString is $plist_version; tag $TAG needs ${version%%-*}."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: |
+          swift --version
+          make test
+
+      - name: Set up signing and notarization
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          require() {
+            local missing="" name
+            for name in "$@"; do [ -n "${!name}" ] || missing="$missing $name"; done
+            [ -z "$missing" ] && return 0
+            echo "::error::Missing secrets:$missing. See the top of .github/workflows/release.yml."
+            exit 1
+          }
+          require MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY
+          if [ -n "$APP_STORE_CONNECT_KEY" ]; then
+            require APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID
+          else
+            require APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD
+          fi
+
+          # A throwaway keychain holds the certificate and the notary credentials for this run.
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password=$(uuidgen)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+
+          # The Developer ID intermediate isn't in an exported .p12, and codesign needs the chain.
+          curl -fsSL --retry 3 https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # shellcheck disable=SC2046 # the existing keychains are one path per word
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          # Notarization only accepts Developer ID signatures.
+          if ! security find-identity -v -p codesigning "$keychain" | grep -F -- "$MACOS_SIGNING_IDENTITY" | grep -q "Developer ID Application"; then
+            echo "::error::MACOS_SIGNING_IDENTITY isn't a valid Developer ID Application identity in MACOS_CERTIFICATE."
+            security find-identity -v -p codesigning "$keychain"
+            exit 1
+          fi
+
+          if [ -n "$APP_STORE_CONNECT_KEY" ]; then
+            key="$RUNNER_TEMP/AuthKey.p8"
+            case "$APP_STORE_CONNECT_KEY" in
+              *"BEGIN PRIVATE KEY"*) printf '%s\n' "$APP_STORE_CONNECT_KEY" > "$key" ;;
+              *) printf '%s' "$APP_STORE_CONNECT_KEY" | base64 --decode > "$key" ;;
+            esac
+            xcrun notarytool store-credentials headroom-ci --keychain "$keychain" \
+              --key "$key" --key-id "$APP_STORE_CONNECT_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID"
+            rm -f "$key"
+          else
+            xcrun notarytool store-credentials headroom-ci --keychain "$keychain" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          fi
+
+          echo "RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      # One make run builds the app once: the DMG is notarized and stapled (the app inside it too),
+      # then the zip is made from that stapled app.
+      - name: Build, sign and notarize
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          make dmg notarize release IDENTITY="$MACOS_SIGNING_IDENTITY" \
+            NOTARY_PROFILE=headroom-ci NOTARY_KEYCHAIN="$RELEASE_KEYCHAIN"
+
+      - name: Check Gatekeeper accepts the build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          xcrun stapler validate "dist/Headroom-$VERSION.dmg"
+          spctl --assess --type open --context context:primary-signature --verbose "dist/Headroom-$VERSION.dmg"
+          spctl --assess --type execute --verbose build/Headroom.app
+
+      - name: Publish the release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          assets=(
+            "dist/Headroom-$VERSION.dmg" "dist/Headroom-$VERSION.dmg.sha256"
+            "dist/Headroom-$VERSION.zip" "dist/Headroom-$VERSION.zip.sha256"
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            flags=(--verify-tag --title "Headroom $VERSION")
+            case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+            # checkout fetches the tagged commit; fetch the tag itself to read an annotated message.
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            if [ "$(git cat-file -t "$TAG")" = tag ]; then flags+=(--notes-from-tag); else flags+=(--generate-notes); fi
+            gh release create "$TAG" "${assets[@]}" "${flags[@]}"
+          fi
+          echo "dmg_sha256=$(awk '{print $1}' "dist/Headroom-$VERSION.dmg.sha256")" >> "$GITHUB_OUTPUT"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          [ -n "${RELEASE_KEYCHAIN:-}" ] && security delete-keychain "$RELEASE_KEYCHAIN" || true
+
+  homebrew:
+    name: Update the Homebrew cask
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      VERSION: ${{ needs.release.outputs.version }}
+      SHA256: ${{ needs.release.outputs.dmg_sha256 }}
+    steps:
+      - name: Check for a tap token
+        if: env.TAP_TOKEN == ''
+        run: echo "::notice::HOMEBREW_TAP_TOKEN isn't set, so the Homebrew cask wasn't updated."
+
+      - uses: actions/checkout@v5
+        if: env.TAP_TOKEN != ''
+
+      - uses: actions/checkout@v5
+        if: env.TAP_TOKEN != ''
+        with:
+          repository: ScaleXY/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Commit the cask
+        if: env.TAP_TOKEN != ''
+        run: |
+          mkdir -p tap/Casks
+          sed -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
+              -e "s/^  sha256 .*$/  sha256 \"$SHA256\"/" \
+              Packaging/headroom.rb > tap/Casks/headroom.rb
+          grep -q "version \"$VERSION\"" tap/Casks/headroom.rb && grep -q "sha256 \"$SHA256\"" tap/Casks/headroom.rb
+
+          cd tap
+          git add Casks/headroom.rb
+          if git diff --cached --quiet; then
+            echo "The cask is already at $VERSION."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git commit -m "headroom $VERSION"
+          git push

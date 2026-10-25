@@ -29,6 +29,14 @@ curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | 
 
 Headroom appears in your menu bar a few seconds later and opens a short welcome to set it up.
 
+Or install it with [Homebrew](https://brew.sh), which also links the `headroom` command and its man page:
+
+```sh
+brew install --cask scalexy/tap/headroom
+```
+
+Prefer a disk image? Every [release](https://github.com/ScaleXY/headroom/releases) has a DMG; open it and drag Headroom to Applications.
+
 You'll need a Mac with Apple silicon on macOS 15 or later, and Claude Code or Codex signed in to your subscription.
 
 <br>
@@ -114,11 +122,13 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 
 ## Update or remove
 
-Run the install command again to update. To remove Headroom:
+Run the install command again to update, or `brew upgrade --cask headroom` if you used Homebrew. To remove Headroom:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | bash -s -- --uninstall
 ```
+
+With Homebrew, run `brew uninstall --cask headroom`; add `--zap` to remove your history and settings too.
 
 ## License
 

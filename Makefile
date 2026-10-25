@@ -13,7 +13,11 @@
 # Distribution builds need a "Developer ID Application" certificate in the keychain; it is picked
 # over Apple Development automatically and signs with a secure timestamp, as notarization requires.
 # Store notary credentials once with `xcrun notarytool store-credentials <profile>`, then run
-# `make dmg notarize NOTARY_PROFILE=<profile>`.
+# `make dmg notarize NOTARY_PROFILE=<profile>` (add NOTARY_KEYCHAIN=<path> when the profile lives
+# outside the default keychain, as it does in CI).
+#
+# Tagged releases are built by .github/workflows/release.yml: bump VERSION here and the versions in
+# Packaging/Info.plist, then push a tag `v$(VERSION)`.
 
 VERSION   := 0.1.0-beta.4
 BUNDLE_ID := com.scalexy.headroom
@@ -68,7 +72,7 @@ dmg: app
 notarize:
 	@test -n "$(NOTARY_PROFILE)" || { echo "Set NOTARY_PROFILE to a profile from 'xcrun notarytool store-credentials'."; exit 1; }
 	@test -n "$(DEVELOPER_ID)" || { echo "Notarization needs a Developer ID Application certificate."; exit 1; }
-	xcrun notarytool submit $(DMG) --keychain-profile "$(NOTARY_PROFILE)" --wait
+	xcrun notarytool submit $(DMG) --keychain-profile "$(NOTARY_PROFILE)" $(if $(NOTARY_KEYCHAIN),--keychain "$(NOTARY_KEYCHAIN)") --wait
 	xcrun stapler staple $(DMG)
 	xcrun stapler staple $(APP)
 	cd dist && shasum -a 256 $(notdir $(DMG)) > $(notdir $(DMG)).sha256
