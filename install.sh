@@ -1,7 +1,7 @@
 #!/bin/bash
 # Headroom installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/0xgeorgemathew/headroom/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | bash
 #
 # Downloads the newest release (betas included), removes the download quarantine (the app is
 # signed but not notarized), installs Headroom.app to /Applications (or ~/Applications when
@@ -16,7 +16,7 @@
 # Written for the bash 3.2 that ships with macOS.
 set -euo pipefail
 
-REPO="0xgeorgemathew/headroom"
+REPO="ScaleXY/headroom"
 APP_NAME="Headroom.app"
 BIN_DIR="$HOME/.local/bin"
 MAN_DIR="$HOME/.local/share/man/man1"

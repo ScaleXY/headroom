@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/0xgeorgemathew/headroom/releases"><img alt="Latest beta" src="https://img.shields.io/github/v/release/0xgeorgemathew/headroom?include_prereleases&label=latest%20beta&color=4A8EFF"></a>
+  <a href="https://github.com/ScaleXY/headroom/releases"><img alt="Latest beta" src="https://img.shields.io/github/v/release/ScaleXY/headroom?include_prereleases&label=latest%20beta&color=4A8EFF"></a>
   <img alt="For macOS 15 and later" src="https://img.shields.io/badge/macOS-15%2B-1C1C1E">
   <img alt="Free and open" src="https://img.shields.io/badge/license-public%20domain-30D158">
 </p>
@@ -24,7 +24,7 @@
 Paste this into Terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/0xgeorgemathew/headroom/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | bash
 ```
 
 Headroom appears in your menu bar a few seconds later and opens a short welcome to set it up.
@@ -117,7 +117,7 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 Run the install command again to update. To remove Headroom:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/0xgeorgemathew/headroom/main/install.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/ScaleXY/headroom/main/install.sh | bash -s -- --uninstall
 ```
 
 ## License
