@@ -5,6 +5,7 @@
 #   make install    install to /Applications, link the CLI and man page, restart the app
 #   make icon       regenerate assets/AppIcon.icns from assets/icon.svg
 #   make screenshots  render the README images in media/ from fixtures (needs Google Chrome)
+#   make appstore   render the Mac App Store screenshots, app preview and icon into appstore/ (needs Chrome, ffmpeg)
 #   make release    zip the signed app into dist/ with a SHA-256 checksum
 #   make dmg        build dist/Headroom-<version>.dmg (drag to Applications) with a SHA-256 checksum
 #   make notarize   notarize and staple the DMG (needs NOTARY_PROFILE, see below)
@@ -26,7 +27,7 @@ IDENTITY  ?= $(or $(DEVELOPER_ID),$(call identity,Apple Development))
 # Notarization needs a secure timestamp; local development builds skip the network round trip.
 TIMESTAMP ?= $(if $(DEVELOPER_ID),--timestamp,--timestamp=none)
 
-.PHONY: all build test app install icon clean bench screenshots release dmg notarize
+.PHONY: all build test app install icon clean bench screenshots appstore release dmg notarize
 
 all: build
 
@@ -45,6 +46,9 @@ icon:
 
 screenshots:
 	python3 -I Scripts/readme_media.py
+
+appstore:
+	python3 -I Scripts/appstore_media.py
 
 release: app
 	mkdir -p dist && rm -f dist/Headroom-$(VERSION).zip*
