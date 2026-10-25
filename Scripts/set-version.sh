@@ -1,0 +1,29 @@
+#!/bin/zsh
+# Writes a version into every file that carries one:
+#   Scripts/set-version.sh <version> [build]      e.g. 0.1.2-beta.1 42
+# CFBundleShortVersionString gets the version without its suffix (0.1.2), as macOS expects;
+# CFBundleVersion gets <build> when one is given and is left alone otherwise.
+# The release workflow runs this with the tag's version, so a tag alone is enough to release.
+set -euo pipefail
+cd "${0:A:h}/.."
+
+version=${1:?usage: Scripts/set-version.sh <version> [build]}
+build=${2:-}
+if [[ ! $version =~ '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' ]]; then
+  echo "error: '$version' isn't a version like 1.2.3 or 1.2.3-beta.4." >&2
+  exit 1
+fi
+
+sed -i '' -E "s/^VERSION( *):= .*/VERSION\1:= $version/" Makefile
+sed -i '' -E "s/(public static let version = )\"[^\"]*\"/\1\"$version\"/" Sources/HeadroomCLI/HeadroomCLI.swift
+sed -i '' -E "s/\"Headroom [^\"]*\"/\"Headroom $version\"/" Packaging/headroom.1
+plist_set() { sed -i '' -E "s|(<key>$1</key><string>)[^<]*(</string>)|\\1$2\\2|" Packaging/Info.plist; }
+plist_set CFBundleShortVersionString "${version%%-*}"
+[[ -n $build ]] && plist_set CFBundleVersion "$build"
+
+grep -q "^VERSION *:= $version\$" Makefile
+grep -qF "\"$version\"" Sources/HeadroomCLI/HeadroomCLI.swift
+grep -qF "\"Headroom $version\"" Packaging/headroom.1
+[[ $(plutil -extract CFBundleShortVersionString raw Packaging/Info.plist) == "${version%%-*}" ]]
+[[ -z $build || $(plutil -extract CFBundleVersion raw Packaging/Info.plist) == "$build" ]]
+echo "Set the version to $version${build:+ (build $build)}."

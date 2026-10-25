@@ -4,8 +4,9 @@
 #   Headroom-<version>.dmg (+ .sha256)   drag-to-Applications disk image; what Homebrew installs
 #   Headroom-<version>.zip (+ .sha256)   the zipped app that install.sh downloads
 #
-# To release: bump VERSION in the Makefile and the versions in Packaging/Info.plist, commit, then
-#   git tag -a v0.1.0-beta.5 -m "<release notes>" && git push origin v0.1.0-beta.5
+# To release, tag the commit and push the tag; the version comes from the tag:
+#   git tag -a v0.1.2 -m "<release notes>" && git push origin v0.1.2
+# Scripts/set-version.sh writes it into the Makefile, Info.plist, man page and CLI for the build.
 # An annotated tag's message becomes the release notes; a lightweight tag gets GitHub's generated
 # notes. A version with a suffix (-beta.5, -rc.1) is published as a pre-release. If a release for
 # the tag already exists (say, a draft with hand-written notes), its assets are replaced instead.
@@ -49,20 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the tag matches the version
+      # The tag is the source of truth: its version is written into the checkout before building,
+      # so the versions committed in the Makefile and Info.plist don't need bumping first.
+      # CFBundleVersion takes this workflow's run number, which only goes up.
+      - name: Set the version from the tag
         id: version
         run: |
           version=${TAG#v}
-          make_version=$(sed -n 's/^VERSION *:= *//p' Makefile)
-          plist_version=$(plutil -extract CFBundleShortVersionString raw Packaging/Info.plist)
-          if [ "$version" != "$make_version" ]; then
-            echo "::error file=Makefile::Tag $TAG doesn't match VERSION $make_version in the Makefile."
-            exit 1
-          fi
-          if [ "${version%%-*}" != "$plist_version" ]; then
-            echo "::error file=Packaging/Info.plist::CFBundleShortVersionString is $plist_version; tag $TAG needs ${version%%-*}."
-            exit 1
-          fi
+          Scripts/set-version.sh "$version" "${{ github.run_number }}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Test

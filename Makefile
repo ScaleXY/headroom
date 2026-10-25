@@ -17,8 +17,8 @@
 # `make dmg notarize NOTARY_PROFILE=<profile>` (add NOTARY_KEYCHAIN=<path> when the profile lives
 # outside the default keychain, as it does in CI).
 #
-# Tagged releases are built by .github/workflows/release.yml: bump VERSION here and the versions in
-# Packaging/Info.plist, then push a tag `v$(VERSION)`.
+# Tagged releases are built by .github/workflows/release.yml: push a tag `v<version>` and the
+# workflow stamps that version in with Scripts/set-version.sh (run it yourself to bump it here).
 
 VERSION   := 0.1.1-beta.5
 BUNDLE_ID := com.scalexy.headroom
