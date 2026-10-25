@@ -4,7 +4,7 @@ import HeadroomKit
 import os
 
 /// Diagnostics: counts and timings only (no paths, tokens or account data).
-let diag = Logger(subsystem: "com.headroom.app", category: "engine")
+let diag = Logger(subsystem: "com.scalexy.headroom", category: "engine")
 
 /// Persisted between launches (`state.plist`): history and last good readings. The ingestion
 /// state (cursors, ledger) lives in `ingest.plist`, which the scan child reads and writes directly.

@@ -9,6 +9,18 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        if defaults === UserDefaults.standard { Self.adoptLegacySettings(into: defaults) }
+    }
+
+    /// Betas up to 0.1.0-beta.4 shipped as `com.headroom.app`; carry their settings over once.
+    private static func adoptLegacySettings(into defaults: UserDefaults) {
+        let legacy = "com.headroom.app"
+        guard !defaults.bool(forKey: "adoptedLegacySettings"),
+              let id = Bundle.main.bundleIdentifier, id != legacy else { return }
+        for (key, value) in defaults.persistentDomain(forName: legacy) ?? [:] where defaults.object(forKey: key) == nil {
+            defaults.set(value, forKey: key)
+        }
+        defaults.set(true, forKey: "adoptedLegacySettings")
     }
 
     private func changed() { onChange?() }

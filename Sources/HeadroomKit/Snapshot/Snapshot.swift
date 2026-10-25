@@ -222,7 +222,7 @@ public enum SnapshotFile {
     public static var url: URL { directory.appendingPathComponent("snapshot.json") }
 
     /// Darwin notification the CLI posts to ask the app for fresh limits.
-    public static let refreshNotification = "com.headroom.refresh"
+    public static let refreshNotification = "com.scalexy.headroom.refresh"
 
     public static func decoder() -> JSONDecoder {
         let d = JSONDecoder()

@@ -11,13 +11,15 @@
 # Options:
 #   bash -s -- --version v0.1.0-beta.1   install a specific release
 #   bash -s -- --uninstall               remove the app and the CLI links (keeps your data)
-#   bash -s -- --uninstall --purge       also remove ~/Library/Application Support/Headroom
+#   bash -s -- --uninstall --purge       also remove your history and settings
 #
 # Written for the bash 3.2 that ships with macOS.
 set -euo pipefail
 
 REPO="ScaleXY/headroom"
 APP_NAME="Headroom.app"
+BUNDLE_ID="com.scalexy.headroom"
+LEGACY_BUNDLE_ID="com.headroom.app"
 BIN_DIR="$HOME/.local/bin"
 MAN_DIR="$HOME/.local/share/man/man1"
 DATA_DIR="$HOME/Library/Application Support/Headroom"
@@ -172,7 +174,10 @@ tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' 
 quit_app() {
   pgrep -x HeadroomApp >/dev/null || return 0
   # Ask politely in the background: the Apple event can sit behind an Automation prompt.
-  osascript -e 'tell application id "com.headroom.app" to quit' >/dev/null 2>&1 &
+  # Ask by the installed app's own identifier, since betas up to 0.1.0-beta.4 used another one.
+  local id
+  id=$(plutil -extract CFBundleIdentifier raw "$(installed_app)/Contents/Info.plist" 2>/dev/null) || id=$BUNDLE_ID
+  osascript -e "tell application id \"$id\" to quit" >/dev/null 2>&1 &
   local asker=$!
   for _ in 1 2 3 4 5; do pgrep -x HeadroomApp >/dev/null || break; sleep 1; done
   kill "$asker" >/dev/null 2>&1 || true
@@ -206,6 +211,9 @@ if [ "$uninstall" = 1 ]; then
   if [ "$purge" = 1 ]; then
     rm -rf "$DATA_DIR"
     done_ "Removed your history" "$(tilde "$DATA_DIR")"
+    defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+    defaults delete "$LEGACY_BUNDLE_ID" >/dev/null 2>&1 || true
+    done_ "Removed your settings"
   fi
   printf '\n  %sHeadroom is uninstalled.%s\n' "$BOLD" "$RESET"
   if [ "$purge" != 1 ]; then

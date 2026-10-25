@@ -234,7 +234,7 @@ enum PopoverPage {
 
     /// One welcome step at window size, with the window's traffic lights, from scratch settings.
     static func renderOnboarding(step: Int, theme: Theme, configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
-        let suite = "com.headroom.render.onboarding"
+        let suite = "com.scalexy.headroom.render.onboarding"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -260,7 +260,7 @@ enum PopoverPage {
 
     /// One Settings section at window size, from scratch settings.
     static func renderSettings(section: SettingsView.Section, theme: Theme, configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
-        let suite = "com.headroom.render.settings"
+        let suite = "com.scalexy.headroom.render.settings"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }

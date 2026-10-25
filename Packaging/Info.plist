@@ -6,7 +6,7 @@
 	<key>CFBundleDisplayName</key><string>Headroom</string>
 	<key>CFBundleExecutable</key><string>HeadroomApp</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
-	<key>CFBundleIdentifier</key><string>com.headroom.app</string>
+	<key>CFBundleIdentifier</key><string>com.scalexy.headroom</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>Headroom</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
@@ -15,7 +15,7 @@
 	<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key><string>15.0</string>
 	<key>LSUIElement</key><true/>
-	<key>NSHumanReadableCopyright</key><string>Personal build. Local and read-only.</string>
+	<key>NSHumanReadableCopyright</key><string>Made by ScaleXY. Public domain under The Unlicense.</string>
 	<key>NSSupportsAutomaticTermination</key><false/>
 	<key>NSSupportsSuddenTermination</key><false/>
 </dict>

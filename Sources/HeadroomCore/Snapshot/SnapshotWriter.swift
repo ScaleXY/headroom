@@ -26,7 +26,7 @@ public struct SnapshotWriter: Sendable {
     }
 }
 
-/// Listens for `com.headroom.refresh` (posted by `headroom --refresh`).
+/// Listens for `com.scalexy.headroom.refresh` (posted by `headroom --refresh`).
 public final class RefreshObserver: @unchecked Sendable {
     private let handler: @Sendable () -> Void
     private var token: Int32 = 0
