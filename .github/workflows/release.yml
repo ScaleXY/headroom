@@ -10,6 +10,8 @@
 # An annotated tag's message becomes the release notes; a lightweight tag gets GitHub's generated
 # notes. A version with a suffix (-beta.5, -rc.1) is published as a pre-release. If a release for
 # the tag already exists (say, a draft with hand-written notes), its assets are replaced instead.
+# Generated notes are then rewritten by Claude (release-notes.yml), as are those of a release
+# published on github.com.
 #
 # Secrets (set for the ScaleXY organization):
 #   MACOS_CERTIFICATE              base64 of the "Developer ID Application" certificate and key (.p12)
@@ -47,6 +49,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       dmg_sha256: ${{ steps.publish.outputs.dmg_sha256 }}
+      generated_notes: ${{ steps.publish.outputs.generated_notes }}
     steps:
       - uses: actions/checkout@v5
 
@@ -166,7 +169,12 @@ jobs:
             case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
             # checkout fetches the tagged commit; fetch the tag itself to read an annotated message.
             git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-            if [ "$(git cat-file -t "$TAG")" = tag ]; then flags+=(--notes-from-tag); else flags+=(--generate-notes); fi
+            if [ "$(git cat-file -t "$TAG")" = tag ]; then
+              flags+=(--notes-from-tag)
+            else
+              flags+=(--generate-notes)
+              echo "generated_notes=true" >> "$GITHUB_OUTPUT"
+            fi
             gh release create "$TAG" "${assets[@]}" "${flags[@]}"
           fi
           echo "dmg_sha256=$(awk '{print $1}' "dist/Headroom-$VERSION.dmg.sha256")" >> "$GITHUB_OUTPUT"
@@ -175,6 +183,17 @@ jobs:
         if: always()
         run: |
           [ -n "${RELEASE_KEYCHAIN:-}" ] && security delete-keychain "$RELEASE_KEYCHAIN" || true
+
+  # A release made here doesn't send a release event (GITHUB_TOKEN's events start no workflows),
+  # so generated notes are handed to release-notes.yml directly.
+  notes:
+    name: Write the release notes
+    needs: release
+    if: needs.release.outputs.generated_notes == 'true'
+    uses: ./.github/workflows/release-notes.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
 
   homebrew:
     name: Update the Homebrew cask

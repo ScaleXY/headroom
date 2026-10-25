@@ -1,0 +1,87 @@
+# Writes a release's notes with Claude (Scripts/release-notes.sh) when they're empty or only
+# GitHub's generated list of commits and PRs. Hand-written notes are left alone unless `force` is set.
+#
+# Runs when a release is published on github.com, after Release creates one with generated notes
+# (a lightweight tag), or by hand from the Actions tab for any tag.
+#
+# Secrets (set for the ScaleXY organization):
+#   ANTHROPIC_API_KEY   a Claude API key. Without it the notes are left as they are.
+
+name: Release notes
+
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      force:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, like v0.1.4
+        type: string
+        required: true
+      force:
+        description: Replace notes that were written by hand
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  notes:
+    name: Write the release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      FORCE: ${{ inputs.force && 'true' || 'false' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check for an API key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::ANTHROPIC_API_KEY isn't set, so the release notes weren't written."
+
+      - name: Check the current notes
+        id: check
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          # What's left after removing everything GitHub generates; anything else was written by hand.
+          written=$(printf '%s\n' "$body" | tr -d '\r' | grep -v -E \
+            -e '^[[:space:]]*$' \
+            -e "^## (What's Changed|New Contributors)" \
+            -e '^\* .* by @[^ ]+ in https://' \
+            -e '^\* @[^ ]+ made their first contribution' \
+            -e '^\*\*Full Changelog\*\*: ' || true)
+          if [ -n "$written" ] && [ "$FORCE" != true ]; then
+            echo "::notice::$TAG already has notes written by hand; run this workflow with force to replace them."
+            echo "write=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "write=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.check.outputs.write == 'true'
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Write and publish the notes
+        if: steps.check.outputs.write == 'true'
+        run: |
+          git fetch --force --tags origin
+          Scripts/release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
