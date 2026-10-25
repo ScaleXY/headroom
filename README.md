@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ScaleXY/headroom/releases"><img alt="Latest beta" src="https://img.shields.io/github/v/release/ScaleXY/headroom?include_prereleases&label=latest%20beta&color=4A8EFF"></a>
+  <a href="https://github.com/ScaleXY/headroom/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/ScaleXY/headroom?label=latest&color=4A8EFF"></a>
   <img alt="For macOS 15 and later" src="https://img.shields.io/badge/macOS-15%2B-1C1C1E">
   <img alt="Free and open" src="https://img.shields.io/badge/license-public%20domain-30D158">
 </p>
