@@ -4,7 +4,7 @@ import notify
 
 /// The `headroom` command. Reads `snapshot.json` only: it never touches credentials or the network.
 public enum HeadroomCLI {
-    public static let version = "0.1.0-beta.4"
+    public static let version = "0.1.1-beta.5"
 
     public enum Exit: Int32 {
         case ok = 0

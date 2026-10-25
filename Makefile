@@ -19,7 +19,7 @@
 # Tagged releases are built by .github/workflows/release.yml: bump VERSION here and the versions in
 # Packaging/Info.plist, then push a tag `v$(VERSION)`.
 
-VERSION   := 0.1.0-beta.4
+VERSION   := 0.1.1-beta.5
 BUNDLE_ID := com.scalexy.headroom
 APP       := build/Headroom.app
 DMG       := dist/Headroom-$(VERSION).dmg
