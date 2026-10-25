@@ -69,6 +69,13 @@ import HeadroomKit
         #expect(!out.contains("\u{1B}["))
     }
 
+    @Test func creditLineCountsOnlyTheSoonestExpiry() throws {
+        var s = snapshot()
+        s.providers[1].credits = CreditsSnapshot(available: 3, nextExpiry: now.addingTimeInterval(51 * 60), nextExpiryCount: 1, expiringSoon: 2)
+        let (_, out) = run([], url: try write(s))
+        #expect(out.contains("↳ ⏳ 1 reset credit lapses in 51m"))
+    }
+
     @Test func colorsOnlyWhenAllowed() throws {
         let url = try write(snapshot())
         let (_, colored) = run(["--color"], url: url, env: [:])

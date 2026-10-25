@@ -270,9 +270,10 @@ struct Presenter {
             return "\(name)\(count) · \(exp)"
         }.joined(separator: "\n")
         if let first = soon.first, let exp = first.expiresAt {
-            let n = soon.reduce(0) { $0 + $1.count }
+            // Only the credits lapsing at that soonest moment; later ones are in the tooltip.
+            let n = soon.filter { $0.expiresAt == exp }.reduce(0) { $0 + $1.count }
             return DetailRowModel(icon: .hourglass(highlight: true), label: "Reset credits",
-                                  value: "\(n) lapses in \(TimeFormat.compact(exp.timeIntervalSince(now)))",
+                                  value: "\(n) \(n == 1 ? "lapses" : "lapse") in \(TimeFormat.compact(exp.timeIntervalSince(now)))",
                                   suffix: "\(total) total", highlight: true, tooltip: tooltip.isEmpty ? nil : tooltip)
         }
         return DetailRowModel(icon: .hourglass(highlight: false), label: "Reset credits", value: "\(total) available",

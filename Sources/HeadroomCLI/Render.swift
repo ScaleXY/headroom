@@ -40,8 +40,10 @@ enum Summary {
             }
             if let c = p.credits, c.available > 0 {
                 if c.expiringSoon > 0, let exp = c.nextExpiry {
-                    let noun = c.expiringSoon == 1 ? "reset credit lapses" : "reset credits lapse"
-                    lines.append("  ↳ " + style.paint("⏳ \(c.expiringSoon) \(noun) in \(TimeFormat.compact(exp.timeIntervalSince(now)))", Style.credit))
+                    // Older snapshots lack the per-expiry count; fall back to the 7-day total.
+                    let n = min(c.nextExpiryCount ?? c.expiringSoon, c.expiringSoon)
+                    let noun = n == 1 ? "reset credit lapses" : "reset credits lapse"
+                    lines.append("  ↳ " + style.paint("⏳ \(n) \(noun) in \(TimeFormat.compact(exp.timeIntervalSince(now)))", Style.credit))
                 } else {
                     lines.append("  ↳ " + style.dim("\(c.available) reset credit\(c.available == 1 ? "" : "s") available"))
                 }

@@ -177,12 +177,17 @@ public struct CapSnapshot: Codable, Sendable, Hashable {
 public struct CreditsSnapshot: Codable, Sendable, Hashable {
     public var available: Int
     public var nextExpiry: Date?
+    /// Credits lapsing at `nextExpiry` (not every credit within the 7-day window).
+    public var nextExpiryCount: Int?
     /// Credits expiring within 7 days.
     public var expiringSoon: Int
-    public init(available: Int, nextExpiry: Date?, expiringSoon: Int) { self.available = available; self.nextExpiry = nextExpiry; self.expiringSoon = expiringSoon }
+    public init(available: Int, nextExpiry: Date?, nextExpiryCount: Int? = nil, expiringSoon: Int) {
+        self.available = available; self.nextExpiry = nextExpiry; self.nextExpiryCount = nextExpiryCount; self.expiringSoon = expiringSoon
+    }
     enum CodingKeys: String, CodingKey {
         case available
         case nextExpiry = "next_expiry"
+        case nextExpiryCount = "next_expiry_count"
         case expiringSoon = "expiring_soon"
     }
 }

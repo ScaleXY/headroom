@@ -42,7 +42,8 @@ struct SnapshotBuilder {
             let horizon = now.addingTimeInterval(PacingPolicy.standard.creditExpiryHighlight)
             let dated = r.resetCredits.compactMap(\.expiresAt).filter { $0 > now }.sorted()
             let soon = r.resetCredits.filter { ($0.expiresAt.map { $0 > now && $0 <= horizon }) ?? false }.reduce(0) { $0 + $1.count }
-            out.credits = CreditsSnapshot(available: r.totalResetCredits, nextExpiry: dated.first, expiringSoon: soon)
+            let atNext = r.resetCredits.filter { $0.expiresAt != nil && $0.expiresAt == dated.first }.reduce(0) { $0 + $1.count }
+            out.credits = CreditsSnapshot(available: r.totalResetCredits, nextExpiry: dated.first, nextExpiryCount: atNext, expiringSoon: soon)
         }
         if let headline = r.headline, headline.resetsAt != nil {
             let a = PacingEngine.analyze(window: headline, samples: input.samples[headline.id] ?? [], now: now)
