@@ -14,17 +14,22 @@
 # published on github.com.
 #
 # Secrets (set for the ScaleXY organization):
-#   MACOS_CERTIFICATE              base64 of the "Developer ID Application" certificate and key (.p12)
-#   MACOS_CERTIFICATE_PASSWORD     the .p12's export password
-#   MACOS_SIGNING_IDENTITY         its name, "Developer ID Application: <name> (<team>)", or SHA-1
+#   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_BASE64
+#       base64 of the "Developer ID Application" certificate and key (.p12)
+#   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD
+#       the .p12's export password
+#   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY
+#       its name, "Developer ID Application: <name> (<team>)", or SHA-1
 #   Notarization uses the App Store Connect API key when it's set, else the Apple ID:
-#   APP_STORE_CONNECT_KEY          the API key (AuthKey_<id>.p8), as is or base64
-#   APP_STORE_CONNECT_KEY_ID       that key's ID
-#   APP_STORE_CONNECT_ISSUER_ID    the issuer ID shown above the keys in App Store Connect
-#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   an Apple ID with an app-specific password
-#   HOMEBREW_TAP_TOKEN             token that can push to ScaleXY/homebrew-tap (fine-grained:
-#                                  Contents read and write on that repository). Without it the
-#                                  release still publishes and the cask update is skipped.
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY          the API key (AuthKey_<id>.p8), as is or base64
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID       that key's ID
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID    the issuer ID shown above the keys in App Store Connect
+#   APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID                 an Apple ID on the team
+#   APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID_APP_PASSWORD    an app-specific password for it
+#   APPLE_DEVELOPER_ACCOUNT_TEAM_ID                        the team ID
+#   HOMEBREW_TAP_TOKEN   token that can push to ScaleXY/homebrew-tap (fine-grained: Contents read
+#                        and write on that repository). Without it the release still publishes and
+#                        the cask update is skipped.
 
 name: Release
 
@@ -70,15 +75,15 @@ jobs:
 
       - name: Set up signing and notarization
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          APP_STORE_CONNECT_KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_BASE64 }}
+          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY }}
+          APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
+          APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
+          APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID }}
+          APPLE_DEVELOPER_ACCOUNT_TEAM_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_TEAM_ID }}
+          APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID_APP_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID_APP_PASSWORD }}
         run: |
           require() {
             local missing="" name
@@ -87,11 +92,12 @@ jobs:
             echo "::error::Missing secrets:$missing. See the top of .github/workflows/release.yml."
             exit 1
           }
-          require MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY
-          if [ -n "$APP_STORE_CONNECT_KEY" ]; then
-            require APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID
+          require APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_BASE64 \
+            APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY
+          if [ -n "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY" ]; then
+            require APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID
           else
-            require APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD
+            require APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID APPLE_DEVELOPER_ACCOUNT_TEAM_ID APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID_APP_PASSWORD
           fi
 
           # A throwaway keychain holds the certificate and the notary credentials for this run.
@@ -105,32 +111,32 @@ jobs:
           curl -fsSL --retry 3 https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
           security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
 
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
-          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          printf '%s' "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/developer-id.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           # shellcheck disable=SC2046 # the existing keychains are one path per word
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
 
           # Notarization only accepts Developer ID signatures.
-          if ! security find-identity -v -p codesigning "$keychain" | grep -F -- "$MACOS_SIGNING_IDENTITY" | grep -q "Developer ID Application"; then
-            echo "::error::MACOS_SIGNING_IDENTITY isn't a valid Developer ID Application identity in MACOS_CERTIFICATE."
+          if ! security find-identity -v -p codesigning "$keychain" | grep -F -- "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY" | grep -q "Developer ID Application"; then
+            echo "::error::APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY isn't a valid Developer ID Application identity in that .p12."
             security find-identity -v -p codesigning "$keychain"
             exit 1
           fi
 
-          if [ -n "$APP_STORE_CONNECT_KEY" ]; then
+          if [ -n "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY" ]; then
             key="$RUNNER_TEMP/AuthKey.p8"
-            case "$APP_STORE_CONNECT_KEY" in
-              *"BEGIN PRIVATE KEY"*) printf '%s\n' "$APP_STORE_CONNECT_KEY" > "$key" ;;
-              *) printf '%s' "$APP_STORE_CONNECT_KEY" | base64 --decode > "$key" ;;
+            case "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY" in
+              *"BEGIN PRIVATE KEY"*) printf '%s\n' "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY" > "$key" ;;
+              *) printf '%s' "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY" | base64 --decode > "$key" ;;
             esac
             xcrun notarytool store-credentials headroom-ci --keychain "$keychain" \
-              --key "$key" --key-id "$APP_STORE_CONNECT_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID"
+              --key "$key" --key-id "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID" --issuer "$APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID"
             rm -f "$key"
           else
             xcrun notarytool store-credentials headroom-ci --keychain "$keychain" \
-              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+              --apple-id "$APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID" --team-id "$APPLE_DEVELOPER_ACCOUNT_TEAM_ID" --password "$APPLE_DEVELOPER_ACCOUNT_OWNER_APPLE_ID_APP_PASSWORD"
           fi
 
           echo "RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
@@ -139,9 +145,9 @@ jobs:
       # then the zip is made from that stapled app.
       - name: Build, sign and notarize
         env:
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY }}
         run: |
-          make dmg notarize release IDENTITY="$MACOS_SIGNING_IDENTITY" \
+          make dmg notarize release IDENTITY="$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY" \
             NOTARY_PROFILE=headroom-ci NOTARY_KEYCHAIN="$RELEASE_KEYCHAIN"
 
       - name: Check Gatekeeper accepts the build
