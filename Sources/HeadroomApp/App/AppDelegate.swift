@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: PopoverController!
     private var statusItem: StatusItemController!
     private var caffeinate: Caffeinate!
+    private var fans: FanControl!
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
     private var updater: AppUpdater!
@@ -19,7 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater = AppUpdater(settings: settings)
         popover = PopoverController(model: model, updater: updater)
         caffeinate = Caffeinate(settings: settings)
-        statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate)
+        fans = FanControl(settings: settings)
+        statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate, fans: fans)
         let open: () -> Void = { [weak self] in self?.showSettings() }
         popover.openSettings = open
         statusItem.openSettings = open
@@ -32,7 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         settings.onChange = { [weak self] in
             self?.model.settingsChanged()
+            self?.fans.updateReadout()
         }
+        fans.onChange = { [weak self] in self?.statusItem.update() }
         updater.onChange = { [weak self] in
             self?.popover.refresh()
             self?.settingsWindow?.refresh()
@@ -41,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.start()
         updater.start()
         caffeinate.restore()
+        fans.restore()
         // Test hook for measurements and screenshots: `open Headroom.app --args --open-popover [--tab 1]`.
         let args = ProcessInfo.processInfo.arguments
         // Test hook: `--cycle-popover` opens for 10 s every 30 s (memory soak).
@@ -126,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         caffeinate.suspendForQuit()
+        fans.suspendForQuit()
         Task { @MainActor in
             await model.flushOnQuit()
             NSApp.reply(toApplicationShouldTerminate: true)

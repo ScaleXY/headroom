@@ -20,7 +20,8 @@ cask "ai-headroom" do
   binary "#{appdir}/Headroom.app/Contents/MacOS/headroom"
   manpage "#{appdir}/Headroom.app/Contents/Resources/headroom.1"
 
-  uninstall quit: "com.scalexy.headroom"
+  uninstall quit:      "com.scalexy.headroom",
+            launchctl: "com.scalexy.headroom.fan"
 
   zap trash: [
     "~/Library/Application Support/Headroom",

@@ -42,6 +42,7 @@ all: build
 build:
 	swift build -c release --product HeadroomApp
 	swift build -c release --product headroom
+	swift build -c release --product HeadroomFanHelper
 
 test:
 	swift test
@@ -89,7 +90,7 @@ notarize:
 
 app: build
 	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/brand
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/brand $(APP)/Contents/Library/LaunchDaemons
 	cp Packaging/Info.plist $(APP)/Contents/Info.plist
 	cp $(RELEASE)/HeadroomApp $(APP)/Contents/MacOS/HeadroomApp
 	cp $(RELEASE)/headroom $(APP)/Contents/MacOS/headroom
@@ -97,19 +98,23 @@ app: build
 	ditto $(RELEASE)/Sparkle.framework $(APP)/Contents/Frameworks/Sparkle.framework
 	@# Headroom isn't sandboxed, so Sparkle's XPC services go unused (Sparkle's docs allow removing them).
 	rm -rf $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices $(APP)/Contents/Frameworks/Sparkle.framework/XPCServices
+	cp $(RELEASE)/HeadroomFanHelper $(APP)/Contents/MacOS/HeadroomFanHelper
+	cp Packaging/$(BUNDLE_ID).fan.plist $(APP)/Contents/Library/LaunchDaemons/
 	cp -R $(RELEASE)/Headroom_HeadroomKit.bundle $(APP)/Contents/Resources/
 	cp assets/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	cp assets/brand/claude.svg assets/brand/openai.svg $(APP)/Contents/Resources/brand/
 	cp Packaging/headroom.1 $(APP)/Contents/Resources/headroom.1
-	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom
+	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)/Contents/MacOS/headroom
 	@# Sparkle inside out: its helpers, then the framework, then the app.
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Autoupdate
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Updater.app
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)
+	@# The fan helper and the app each check that the other carries this identifier and their team.
+	codesign --force $(TIMESTAMP) --options runtime --identifier $(BUNDLE_ID).fan --sign "$(IDENTITY)" $(APP)/Contents/MacOS/HeadroomFanHelper
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)
 	codesign --verify --deep --strict $(APP)
-	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom
+	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper
 
 install: app
 	-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null

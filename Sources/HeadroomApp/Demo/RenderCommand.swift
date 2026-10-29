@@ -49,6 +49,12 @@ enum RenderCommand {
                 if let cg = StatusItemRenderer.renderBitmap(items, size: size, dark: dark, scale: 3) {
                     write(NSBitmapImageRep(cgImage: cg), to: outDir.appendingPathComponent("statusitem-\(dark ? "dark" : "light").png")); written += 1
                 }
+                // With the Fan Control readout.
+                let fan = FanReadout(temperature: 58, rpm: 3400)
+                let fanSize = NSSize(width: StatusItemRenderer.width(items, fan: fan), height: StatusItemRenderer.height)
+                if let cg = StatusItemRenderer.renderBitmap(items, fan: fan, size: fanSize, dark: dark, scale: 3) {
+                    write(NSBitmapImageRep(cgImage: cg), to: outDir.appendingPathComponent("statusitem-fan-\(dark ? "dark" : "light").png")); written += 1
+                }
             }
         }
         if name == "all" || name == "menubar-options" {

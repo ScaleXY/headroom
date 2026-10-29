@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomSMC
 
 /// User preferences (Settings window). Backed by UserDefaults; nothing secret is stored here.
 @MainActor
@@ -175,6 +176,42 @@ final class AppSettings {
     var awakeUntil: Date? {
         get { defaults.object(forKey: "awakeUntil") as? Date }
         set { defaults.set(newValue, forKey: "awakeUntil") }
+    }
+
+    // MARK: Fan control
+
+    /// Fans sit at their lowest speed here and are macOS's below it.
+    var fanMinTemp: Int {
+        get { defaults.object(forKey: "fanMinTemp") as? Int ?? 45 }
+        set { defaults.set(newValue, forKey: "fanMinTemp") }
+    }
+
+    /// Fans run flat out from here.
+    var fanMaxTemp: Int {
+        get { defaults.object(forKey: "fanMaxTemp") as? Int ?? 70 }
+        set { defaults.set(newValue, forKey: "fanMaxTemp") }
+    }
+
+    /// What the fan curve follows.
+    var fanSensor: FanSensor {
+        get { defaults.string(forKey: "fanSensor").flatMap(FanSensor.init(rawValue:)) ?? .default }
+        set { defaults.set(newValue.rawValue, forKey: "fanSensor") }
+    }
+
+    /// Defaults suit the averaged sensors, which run about 20 °C below the hottest core.
+    static let fanMinTempChoices = Array(stride(from: 35, through: 75, by: 5))
+    static let fanMaxTempChoices = Array(stride(from: 50, through: 95, by: 5))
+
+    /// While Fan Control runs, the sensor's temperature and the fan speed sit beside the meters.
+    var showFanInMenuBar: Bool {
+        get { defaults.object(forKey: "showFanInMenuBar") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "showFanInMenuBar"); changed() }
+    }
+
+    /// Fan control was on when Headroom last ran; it turns back on at launch.
+    var fanActive: Bool {
+        get { defaults.bool(forKey: "fanActive") }
+        set { defaults.set(newValue, forKey: "fanActive") }
     }
 
     /// User-set CLI paths (Settings → Command-line tools).

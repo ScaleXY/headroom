@@ -130,7 +130,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case login, statusChecks, costOnShares
         case menuMode(MenuBarMode)
         case focus(MeterFocus)
-        case percent, timer
+        case percent, timer, fanReadout
         case part(CardPart)
         case detail(SessionDetail)
         case warnAt(Double)
@@ -219,6 +219,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .focus(let f): s.meterFocus = f
         case .percent: s.showPercentInMenuBar.toggle()
         case .timer: s.alwaysShowSessionTimer.toggle()
+        case .fanReadout: s.showFanInMenuBar.toggle()
         case .part(let part): s.setShows(part, !s.shows(part))
         case .detail(let d): s.sessionDetail = d
         case .warnAt(let v): s.sessionWarnAt = v
@@ -581,6 +582,9 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         cy += 48
         toggleRow("Always show the 5-hour timer", "Otherwise it appears once the session is nearly used.", on: settings.alwaysShowSessionTimer,
                   action: Action.timer, x: x, y: cy, w: w, ctx: ctx)
+        cy += 48
+        toggleRow("Show the fan while it's controlled", "58° and 3.4k rpm while Fan Control runs.",
+                  on: settings.showFanInMenuBar, action: Action.fanReadout, x: x, y: cy, w: w, enabled: FanControl.macHasFans, ctx: ctx)
         cy += 48 + 14
         if enabled.count > 1 {
             hint(symbol: "rectangle.split.3x1", "Both tools take about 150 pt. Next to the notch macOS hides items that don't fit; Most urgent shows only the tool that needs you.",

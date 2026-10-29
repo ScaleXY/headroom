@@ -61,9 +61,28 @@ enum StatusItemRenderer {
 
     // MARK: Layout
 
-    static func width(_ items: [MenuBarProviderModel]) -> CGFloat {
-        guard !items.isEmpty else { return 22 }
-        return items.map(groupWidth).reduce(0, +) + CGFloat(items.count - 1) * 12 + 4
+    static func width(_ items: [MenuBarProviderModel], fan: FanReadout? = nil) -> CGFloat {
+        let meters = items.isEmpty ? 22 : items.map(groupWidth).reduce(0, +) + CGFloat(items.count - 1) * 12 + 4
+        return meters + (fan == nil ? 0 : 10 + fanWidth)
+    }
+
+    // MARK: Fan readout
+
+    /// Fixed slots ("88°", "8.8k") so the item keeps its width as the numbers move.
+    static var fanWidth: CGFloat {
+        11 + 3 + max(countdownText("88°", color: .black).width, countdownText("100°", color: .black).width) + 4
+            + countdownText("8.8k", color: .black).width
+    }
+
+    /// The fan symbol, the sensor's temperature and the fan speed: "58° 3.4k".
+    static func drawFan(_ fan: FanReadout, x: CGFloat, mid: CGFloat, ink: NSColor, ctx: CGContext) {
+        var x = x
+        CanvasControlView.drawSymbol("fan.fill", in: CGRect(x: x, y: mid - 5.5, width: 11, height: 11), color: ink.fade(0.82), ctx: ctx)
+        x += 11 + 3
+        let degrees = countdownText(fan.degrees, color: ink.fade(0.92))
+        degrees.draw(x: x, capCenter: mid, in: ctx)
+        x += max(countdownText("88°", color: .black).width, degrees.width) + 4
+        countdownText(fan.speed, color: ink.fade(0.62)).draw(x: x, capCenter: mid, in: ctx)
     }
 
     static let meterWidth: CGFloat = 1.5 + 5 * 6 + 4 * 1.5 + 1.5
@@ -130,7 +149,7 @@ enum StatusItemRenderer {
     }
 
     /// CPU rendering into a premultiplied sRGB bitmap.
-    static func renderBitmap(_ items: [MenuBarProviderModel], size: NSSize, dark: Bool, scale: CGFloat) -> CGImage? {
+    static func renderBitmap(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, size: NSSize, dark: Bool, scale: CGFloat) -> CGImage? {
         let w = Int((size.width * scale).rounded(.up)), h = Int((size.height * scale).rounded(.up))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -142,6 +161,10 @@ enum StatusItemRenderer {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = gc
         draw(items, in: CGRect(origin: .zero, size: size), dark: dark, ctx: ctx)
+        if let fan {
+            let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
+            drawFan(fan, x: size.width - fanWidth - 2, mid: size.height / 2, ink: ink, ctx: ctx)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return ctx.makeImage()
     }

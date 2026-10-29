@@ -109,6 +109,12 @@ Right-click any card to copy a share image or a text version. Shares never inclu
 
 Right-click the menu bar item and choose **Keep Awake** to keep a long run going. It uses macOS's `caffeinate` and offers every mode it has: prevent display, idle, disk or system sleep, or declare the user active. Run it for 15 minutes up to 8 hours, until your 5-hour session resets, or until you turn it off. It stops when you quit Headroom and picks up again at the next launch for whatever time is left.
 
+## Cool it harder
+
+macOS lets the chip get hot before the fans really spin up, which slows long AI runs down. Right-click the menu bar item and choose **Fan Control** to set your own curve with two numbers. At the **min temperature** the fans run at their lowest speed. At the **max temperature** they run at full speed. Between the two, speed rises in a straight line. Below the min temperature, macOS runs the fans as usual. Under **Sensor**, pick the temperature the curve follows: the average of the CPU and GPU cores (the default), the CPU or GPU alone, or the single hottest core. While it runs, the menu bar shows that temperature and the fan speed beside the meters (turn this off in **Settings → Menu Bar**).
+
+Fan speeds can only be set as root, so Headroom ships a small helper for it. The first time you turn Fan Control on, macOS asks you to allow Headroom under **Allow in the Background** in **System Settings → General → Login Items & Extensions**. The helper gives the fans back to macOS as soon as you turn Fan Control off or Headroom quits or crashes. Like Keep Awake, it comes back on at the next launch. Quit other fan apps such as Macs Fan Control first, or they'll fight over the fans.
+
 ## Also in your terminal
 
 <img src="media/terminal.png" alt="The headroom command showing the weekly summary, a one-line status, and waiting for the session to reset">
@@ -119,7 +125,8 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 
 ## Private by design
 
-- Headroom only **reads**. It never sends a prompt, never uses one of your reset credits, and never changes your sign-in.
+- Headroom only **reads** your usage. It never sends a prompt, never uses one of your reset credits, and never changes your sign-in.
+- Nothing runs as root unless you turn on Fan Control, and then only its small fan helper, which accepts requests from Headroom alone.
 - Your token counts come from files already on your Mac. Nothing you type is stored, and nothing is uploaded.
 - The only places it connects to are Anthropic's usage page and, if you leave it on, the Claude and OpenAI status pages. No analytics, ever. Notifications are local.
 - It's light: about 17 MB of memory and no CPU while it waits.

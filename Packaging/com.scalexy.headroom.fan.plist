@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Headroom's fan helper, registered by the app with SMAppService and approved by the user in
+     System Settings → General → Login Items & Extensions. launchd starts it when the app connects.
+     It's restarted only after a crash, and then gives the fans back to macOS. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>com.scalexy.headroom.fan</string>
+	<key>BundleProgram</key><string>Contents/MacOS/HeadroomFanHelper</string>
+	<key>AssociatedBundleIdentifiers</key><array><string>com.scalexy.headroom</string></array>
+	<key>MachServices</key><dict><key>com.scalexy.headroom.fan</key><true/></dict>
+	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+</dict>
+</plist>
