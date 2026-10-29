@@ -148,6 +148,35 @@ final class AppSettings {
         changed()
     }
 
+    // MARK: Keep awake (caffeinate)
+
+    /// The assertions Keep Awake holds. Idle sleep only by default, like `caffeinate` itself.
+    var awakeModes: Set<AwakeMode> {
+        get {
+            let modes = Set((defaults.stringArray(forKey: "awakeModes") ?? []).compactMap(AwakeMode.init(rawValue:)))
+            return modes.isEmpty ? [.idle] : modes
+        }
+        set { defaults.set(AwakeMode.allCases.filter(newValue.contains).map(\.rawValue), forKey: "awakeModes") }
+    }
+
+    /// The last duration picked, so the menu can mark it.
+    var awakeDuration: AwakeDuration {
+        get { (defaults.object(forKey: "awakeDuration") as? Int).flatMap(AwakeDuration.init(rawValue:)) ?? .indefinitely }
+        set { defaults.set(newValue.rawValue, forKey: "awakeDuration") }
+    }
+
+    /// Keep Awake was on when Headroom last ran; it turns back on at launch.
+    var awakeActive: Bool {
+        get { defaults.bool(forKey: "awakeActive") }
+        set { defaults.set(newValue, forKey: "awakeActive") }
+    }
+
+    /// When the saved Keep Awake run ends (nil = until turned off).
+    var awakeUntil: Date? {
+        get { defaults.object(forKey: "awakeUntil") as? Date }
+        set { defaults.set(newValue, forKey: "awakeUntil") }
+    }
+
     /// User-set CLI paths (Settings → Command-line tools).
     func cliPath(_ tool: String) -> String? {
         let v = defaults.string(forKey: "cliPath.\(tool)")

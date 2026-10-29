@@ -105,6 +105,10 @@ The Activity tab shows your tokens hour by hour for the last day, week or month,
 
 Right-click any card to copy a share image or a text version. Shares never include project names or your history.
 
+## Keep your Mac awake
+
+Right-click the menu bar item and choose **Keep Awake** to keep a long run going. It uses macOS's `caffeinate` and offers every mode it has: prevent display, idle, disk or system sleep, or declare the user active. Run it for 15 minutes up to 8 hours, until your 5-hour session resets, or until you turn it off. It stops when you quit Headroom and picks up again at the next launch for whatever time is left.
+
 ## Also in your terminal
 
 <img src="media/terminal.png" alt="The headroom command showing the weekly summary, a one-line status, and waiting for the session to reset">

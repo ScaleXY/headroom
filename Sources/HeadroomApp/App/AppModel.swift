@@ -452,6 +452,11 @@ final class AppModel {
         Provider.allCases.filter { settings.enabledProviders.contains($0) }.map(paceInput)
     }
 
+    /// The soonest upcoming 5-hour session reset among the enabled providers.
+    func nextSessionReset(now: Date = Date()) -> Date? {
+        paceInputs().compactMap { $0.reading?.session?.resetsAt }.filter { $0 > now }.min()
+    }
+
     var majorOutages: [Provider: String] {
         serviceStatus.compactMapValues { $0.level >= .majorOutage ? ($0.description ?? "Major outage") : nil }
     }
