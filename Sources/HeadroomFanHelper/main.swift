@@ -137,7 +137,7 @@ let requirement = FanHelper.requirement(identifier: FanHelper.appIdentifier, tea
 
 signal(SIGTERM, SIG_IGN)
 let terminate = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-terminate.setEventHandler { MainActor.assumeIsolated { controller.terminate() } }
+terminate.setEventHandler { MainActor.assumeIsolated { () -> Void in controller.terminate() } }
 terminate.resume()
 
 /// XPC objects are thread-safe; this carries them onto the main actor, where everything runs.
