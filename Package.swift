@@ -11,6 +11,10 @@ let package = Package(
         .executable(name: "headroom", targets: ["headroom"]),
         .executable(name: "HeadroomBench", targets: ["HeadroomBench"]),
     ],
+    dependencies: [
+        // In-app updates for the menu bar app (never linked by the CLI).
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+    ],
     targets: [
         // Pure value types: models, pacing, pricing, snapshot schema, formatters.
         // Foundation only. The CLI links this and nothing that touches credentials or the network.
@@ -19,7 +23,9 @@ let package = Package(
         .target(name: "HeadroomCore", dependencies: ["HeadroomKit"], swiftSettings: strict),
         .target(name: "HeadroomCLI", dependencies: ["HeadroomKit"], swiftSettings: strict),
         .executableTarget(name: "headroom", dependencies: ["HeadroomCLI"], swiftSettings: strict),
-        .executableTarget(name: "HeadroomApp", dependencies: ["HeadroomCore", "HeadroomKit"], swiftSettings: strict),
+        .executableTarget(name: "HeadroomApp", dependencies: ["HeadroomCore", "HeadroomKit", .product(name: "Sparkle", package: "Sparkle")],
+                         swiftSettings: strict,
+                         linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .executableTarget(name: "HeadroomBench", dependencies: ["HeadroomCore", "HeadroomKit"], swiftSettings: strict),
         .testTarget(name: "HeadroomKitTests", dependencies: ["HeadroomKit"], swiftSettings: strict),
         .testTarget(name: "HeadroomCoreTests", dependencies: ["HeadroomCore", "HeadroomKit"], swiftSettings: strict),

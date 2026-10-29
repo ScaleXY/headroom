@@ -11,11 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var caffeinate: Caffeinate!
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
+    private var updater: AppUpdater!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = AppSettings()
         model = AppModel(settings: settings)
-        popover = PopoverController(model: model)
+        updater = AppUpdater(settings: settings)
+        popover = PopoverController(model: model, updater: updater)
         caffeinate = Caffeinate(settings: settings)
         statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate)
         let open: () -> Void = { [weak self] in self?.showSettings() }
@@ -31,7 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onChange = { [weak self] in
             self?.model.settingsChanged()
         }
+        updater.onChange = { [weak self] in
+            self?.popover.refresh()
+            self?.settingsWindow?.refresh()
+        }
+        updater.onFocus = { [weak self] in self?.showSettings(section: SettingsView.Section.updates.rawValue) }
         model.start()
+        updater.start()
         caffeinate.restore()
         // Test hook for measurements and screenshots: `open Headroom.app --args --open-popover [--tab 1]`.
         let args = ProcessInfo.processInfo.arguments
@@ -55,6 +63,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--open-settings") {
             let section = args.firstIndex(of: "--settings-section").flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.showSettings(section: section) }
+        }
+        // Test hook: `--check-updates [--install-update]` checks at once and, with the second flag,
+        // takes the update the way the button does.
+        if args.contains("--check-updates") {
+            if args.contains("--install-update") {
+                updater.onChange = { [weak self] in
+                    guard let self else { return }
+                    self.popover.refresh()
+                    self.settingsWindow?.refresh()
+                    switch self.updater.state {
+                    case .available, .ready: self.updater.installAndRelaunch()
+                    default: break
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.showSettings(section: SettingsView.Section.updates.rawValue)
+                self?.updater.checkNow()
+            }
         }
         if args.contains("--register-login-item") {
             try? SMAppService.mainApp.register()
@@ -91,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showSettings(section: Int? = nil) {
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(settings: settings, model: model)
+            settingsWindow = SettingsWindowController(settings: settings, model: model, updater: updater)
             settingsWindow?.openWelcome = { [weak self] in self?.showOnboarding() }
         }
         settingsWindow?.show(section: section)

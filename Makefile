@@ -25,6 +25,7 @@ BUNDLE_ID := com.scalexy.headroom
 APP       := build/Headroom.app
 DMG       := dist/Headroom-$(VERSION).dmg
 RELEASE   := .build/release
+SPARKLE   := $(APP)/Contents/Frameworks/Sparkle.framework
 # dmgbuild lays out the DMG window (background, icon positions) without driving Finder.
 DMGBUILD  := build/dmgbuild/bin/dmgbuild
 # First valid identity of a kind, by SHA-1 (names can be ambiguous).
@@ -92,12 +93,20 @@ app: build
 	cp Packaging/Info.plist $(APP)/Contents/Info.plist
 	cp $(RELEASE)/HeadroomApp $(APP)/Contents/MacOS/HeadroomApp
 	cp $(RELEASE)/headroom $(APP)/Contents/MacOS/headroom
+	mkdir -p $(APP)/Contents/Frameworks
+	ditto $(RELEASE)/Sparkle.framework $(APP)/Contents/Frameworks/Sparkle.framework
+	@# Headroom isn't sandboxed, so Sparkle's XPC services go unused (Sparkle's docs allow removing them).
+	rm -rf $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices $(APP)/Contents/Frameworks/Sparkle.framework/XPCServices
 	cp -R $(RELEASE)/Headroom_HeadroomKit.bundle $(APP)/Contents/Resources/
 	cp assets/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	cp assets/brand/claude.svg assets/brand/openai.svg $(APP)/Contents/Resources/brand/
 	cp Packaging/headroom.1 $(APP)/Contents/Resources/headroom.1
 	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)/Contents/MacOS/headroom
+	@# Sparkle inside out: its helpers, then the framework, then the app.
+	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Autoupdate
+	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Updater.app
+	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)
 	codesign --verify --deep --strict $(APP)
 	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom

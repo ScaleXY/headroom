@@ -12,6 +12,8 @@ struct HitRegion {
         case tab(Int)
         case activityMode(Int)
         case activityRange(Int)
+        case update
+        case dismissUpdate
     }
     var rect: CGRect
     var tooltip: String?

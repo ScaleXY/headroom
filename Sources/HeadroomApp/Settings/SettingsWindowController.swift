@@ -15,9 +15,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         set { view.openWelcome = newValue }
     }
 
-    init(settings: AppSettings, model: AppModel) {
+    init(settings: AppSettings, model: AppModel, updater: AppUpdater? = nil) {
         self.settings = settings
-        view = SettingsView(settings: settings, model: model)
+        view = SettingsView(settings: settings, model: model, updater: updater)
         let size = SettingsView.size
         let window = OnboardingWindow(contentRect: NSRect(origin: .zero, size: size),
                                       styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -70,7 +70,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     static let stageWidth: CGFloat = 320
 
     enum Section: Int, CaseIterable, Hashable {
-        case general, menuBar, card, session, notifications, advanced
+        case general, menuBar, card, session, notifications, advanced, updates
 
         var title: String {
             switch self {
@@ -80,6 +80,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .session: "5-Hour Session"
             case .notifications: "Notifications"
             case .advanced: "Advanced"
+            case .updates: "Updates"
             }
         }
 
@@ -91,6 +92,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .session: "timer"
             case .notifications: "bell.badge.fill"
             case .advanced: "terminal.fill"
+            case .updates: "arrow.down"
             }
         }
 
@@ -103,6 +105,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .session: (0xFFCB55, 0xE99200)
             case .notifications: (0xFF6F86, 0xDD2448)
             case .advanced: (0x6E7480, 0x33373F)
+            case .updates: (0x5ED88A, 0x1DA653)
             }
         }
 
@@ -114,6 +117,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .session: ("Never get cut off\nmid-session.", "Pick when the session starts warning. From there it turns amber, counts down in the menu bar and can let you know.")
             case .notifications: ("Only what's worth a ping.", "Each alert fires once per session or week. Headroom never repeats itself.")
             case .advanced: ("Fine-tuning.", "Plan prices for the cost comparison, the command-line tool, and where to find the CLIs.")
+            case .updates: ("Always the latest.", "Headroom updates in place and reopens where it was. Your settings and history stay put.")
             }
         }
     }
@@ -136,21 +140,27 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case installCLI
         case choose(String)
         case revealPricing
+        case checkUpdates, installUpdate, cancelUpdate
+        case autoCheck, autoDownload
+        case betaUpdates(Bool)
     }
 
     private let settings: AppSettings
     private weak var model: AppModel?
+    private let updater: AppUpdater?
     var openWelcome: (() -> Void)?
     private(set) var section: Section = .general
-    private var notifyStatus = ""
+    // Never empty: an empty TextBlock throws when drawn, and the permission check answers later.
+    private var notifyStatus = "Checking notification permission…"
     private var cliStatus = ""
     private var cliMessage: String?
     private var priceFields: [Provider: NSTextField] = [:]
     private var pathFields: [String: NSTextField] = [:]
 
-    init(settings: AppSettings, model: AppModel?) {
+    init(settings: AppSettings, model: AppModel?, updater: AppUpdater? = nil) {
         self.settings = settings
         self.model = model
+        self.updater = updater
         super.init(frame: NSRect(origin: .zero, size: Self.size))
         for p in Provider.allCases { priceFields[p] = makeField() }
         for tool in ["claude", "codex"] { pathFields[tool] = makeField() }
@@ -228,6 +238,12 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             refreshStatuses()
         case .choose(let tool): choose(tool)
         case .revealPricing: revealPricing()
+        case .checkUpdates: updater?.checkNow()
+        case .installUpdate: updater?.installAndRelaunch()
+        case .cancelUpdate: updater?.cancel()
+        case .autoCheck: updater.map { $0.automaticChecks.toggle() }
+        case .autoDownload: updater.map { $0.automaticDownloads.toggle() }
+        case .betaUpdates(let on): updater?.betaUpdates = on
         }
         needsDisplay = true
     }
@@ -430,7 +446,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         ctx.fillRadial(in: CGPath(rect: b, transform: nil), center: CGPoint(x: stageRect.minX, y: b.minY), radii: CGSize(width: 420, height: 260),
                        color: t.isDark ? white(0.03) : white(0.85), fadeAt: 0.8)
         drawSidebar(ctx)
-        SettingsStage.draw(section, rect: stageRect, settings: settings, model: model, theme: t, ctx: ctx)
+        SettingsStage.draw(section, rect: stageRect, settings: settings, model: model, updater: updater, theme: t, ctx: ctx)
 
         let x0 = contentX, w = contentWidth
         var y: CGFloat = 52
@@ -449,6 +465,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .session: drawSession(x: x0, y: y, w: w, ctx: ctx)
         case .notifications: drawNotifications(x: x0, y: y, w: w, ctx: ctx)
         case .advanced: drawAdvanced(x: x0, w: w, ctx: ctx)
+        case .updates: drawUpdates(x: x0, y: y, w: w, ctx: ctx)
         }
     }
 
@@ -471,9 +488,16 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
 
         let tour = CGRect(x: 10, y: bounds.height - 88, width: side.width - 20, height: 36)
         navRow("Welcome Tour", symbol: "sparkles", tile: nil, selected: false, rect: tour, action: Action.welcome, ctx: ctx)
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        Text(version.map { "Version \($0)" } ?? "Development build", F.sf(10.5, 500, tabular: true), t.muted2)
-            .draw(x: 22, capCenter: bounds.height - 30, in: ctx)
+        let version = AppUpdater.currentVersion
+        let versionText = Text(version.map { "Version \($0)" } ?? "Development build", F.sf(10.5, 500, tabular: true), t.muted2)
+        versionText.draw(x: 22, capCenter: bounds.height - 30, in: ctx)
+        // A waiting update shows here from every section; the dot opens Updates.
+        if updater?.state.offersUpdate == true {
+            let c = CGPoint(x: 22 + versionText.width + 10, y: bounds.height - 30)
+            drawStatusDot(center: c, color: t.pacing(.plenty).bottom, ctx: ctx)
+            Text("Update", F.sf(10.5, 650), t.pacing(.plenty).text).draw(x: c.x + 8, capCenter: c.y, in: ctx)
+            hit(CGRect(x: c.x - 6, y: c.y - 9, width: 64, height: 18), Action.section(.updates))
+        }
     }
 
     private func navRow(_ title: String, symbol: String, tile: (UInt32, UInt32)?, selected: Bool, rect r: CGRect, action: Action, ctx: CGContext) {
@@ -675,6 +699,94 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         Text(pricing.map { "API rates as of \($0)." } ?? "API rates bundled with this version.", F.sf(12, 500), t.muted)
             .draw(x: x, capCenter: l.footer + 6, in: ctx)
         button("Edit prices…", right: x + w, mid: l.footer + 6, style: .plain, height: 26, action: Action.revealPricing, ctx: ctx)
+    }
+
+    private func drawUpdates(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
+        let t = theme
+        var cy = y
+        let state = updater?.state ?? .idle
+        let available = updater?.isAvailable == true
+        // An update in play gets a second row for its button or progress.
+        let card = CGRect(x: x, y: cy, width: w, height: state.offersUpdate ? 136 : 84)
+        let head = CGRect(x: card.minX, y: card.minY, width: card.width, height: 84)
+        let shape = rounded(card, 16)
+        let blue = t.pacing(.plenty)
+        ctx.fill(shape, t.isDark ? white(0.045) : .white)
+        if state.offersUpdate {
+            ctx.fillRadial(in: shape, center: CGPoint(x: card.minX, y: card.minY), radii: CGSize(width: 260, height: 140),
+                           color: blue.bottom.fade(t.isDark ? 0.2 : 0.1), fadeAt: 0.8)
+            ctx.innerStroke(shape, blue.bottom.fade(t.isDark ? 0.6 : 0.45), width: 1.5)
+            ctx.fill(CGPath(rect: CGRect(x: card.minX + 16, y: head.maxY, width: card.width - 32, height: 0.5), transform: nil), t.separator)
+        } else {
+            ctx.innerStroke(shape, t.isDark ? white(0.08) : black(0.08), width: 1)
+        }
+        HeadroomMark.draw(in: CGRect(x: head.minX + 16, y: head.midY - 20, width: 40, height: 40), ctx: ctx, dropShadow: false)
+        let tx = head.minX + 16 + 40 + 14
+        let version = AppUpdater.currentVersion
+        Text(version.map { "Headroom \($0)" } ?? "Headroom", F.sf(14.5, 650), t.ink, kern: -0.1).draw(x: tx, capCenter: head.midY - 10, in: ctx)
+        let (status, dot) = updateStatus(state, available: available)
+        drawStatusDot(center: CGPoint(x: tx + 3, y: head.midY + 11), color: dot, ctx: ctx)
+        Text(status, F.sf(12, 500), t.muted).draw(x: tx + 13, capCenter: head.midY + 11, in: ctx)
+
+        let right = card.maxX - 16
+        let row = CGRect(x: card.minX + 16, y: head.maxY, width: card.width - 32, height: card.maxY - head.maxY)
+        switch state {
+        case .available, .ready:
+            let note = { if case .ready = state { "Or it installs on quit." } else { "Takes a few seconds." } }()
+            Text(note, F.sf(12, 500), t.muted2).draw(x: row.minX, capCenter: row.midY, in: ctx)
+            button("Update & Restart", right: right, mid: row.midY, style: .primary, height: 30, action: Action.installUpdate, ctx: ctx)
+        case .downloading(_, let p):
+            let b = button("Cancel", right: right + 6, mid: row.midY, style: .plain, height: 26, action: Action.cancelUpdate, ctx: ctx)
+            let track = CGRect(x: row.minX, y: row.midY - 2, width: b.minX - 14 - row.minX, height: 4)
+            ctx.fill(rounded(track, 2), t.meterTrack)
+            let fill = CGRect(x: track.minX, y: track.minY, width: max(4, track.width * (p ?? 0)), height: track.height)
+            ctx.fillVertical(rounded(fill, 2), blue.top, blue.bottom)
+        case .installing:
+            Text("Headroom quits, installs and reopens in a few seconds.", F.sf(12, 500), t.muted2).draw(x: row.minX, capCenter: row.midY, in: ctx)
+        case .checking:
+            button("Checking…", right: right, mid: head.midY, style: .tinted, enabled: false, height: 28, action: Action.checkUpdates, ctx: ctx)
+        default:
+            button("Check Now", right: right, mid: head.midY, style: .tinted, enabled: available, height: 28, action: Action.checkUpdates, ctx: ctx)
+        }
+        cy += card.height + 22
+
+        sectionLabel("AUTOMATIC", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let checks = updater?.automaticChecks ?? true
+        toggleRow("Check for updates", "Once a day, quietly in the background.", on: checks,
+                  action: Action.autoCheck, x: x, y: cy, w: w, enabled: available, ctx: ctx)
+        cy += 48
+        toggleRow("Download them too", "Ready to go; installs when Headroom quits.", on: updater?.automaticDownloads ?? false,
+                  action: Action.autoDownload, x: x, y: cy, w: w, enabled: available && checks, ctx: ctx)
+        cy += 48 + 14
+        sectionLabel("RELEASES", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let beta = updater?.betaUpdates ?? settings.betaUpdates
+        segmented(["Stable", "Stable and beta"], selected: beta ? 1 : 0, x: x, y: cy, w: w,
+                  actions: [AnyHashable(Action.betaUpdates(false)), AnyHashable(Action.betaUpdates(true))], enabled: available, ctx: ctx)
+        cy += 30 + 20
+        hint(symbol: "checkmark.shield", "Each update is signed and notarized, and Headroom checks both before installing. Installed with Homebrew? It updates here too.",
+             x: x, y: cy, w: w, ctx: ctx)
+    }
+
+    private func updateStatus(_ state: AppUpdater.State, available: Bool) -> (String, NSColor) {
+        let t = theme, blue = t.pacing(.plenty).bottom
+        guard available else { return ("Updates come with release builds.", t.muted2) }
+        switch state {
+        case .checking: return ("Checking for updates…", t.muted2)
+        case .available(let v): return ("Version \(v) is available.", blue)
+        case .downloading(let v, let p): return ("Downloading \(v)" + (p.map { " · \(Int(($0 * 100).rounded()))%" } ?? "…"), blue)
+        case .installing(let v): return ("Installing \(v). Headroom reopens on its own.", blue)
+        case .ready(let v): return ("Version \(v) is downloaded and ready.", blue)
+        case .failed(let message): return (message, t.amber)
+        case .idle, .upToDate:
+            guard let last = updater?.lastCheck else { return ("Up to date.", t.ok) }
+            let f = RelativeDateTimeFormatter()
+            f.locale = Display.locale
+            f.unitsStyle = .full
+            let ago = Date().timeIntervalSince(last) < 60 ? "just now" : f.localizedString(for: last, relativeTo: Date())
+            return ("Up to date · checked \(ago)", t.ok)
+        }
     }
 
     private func drawField(_ r: CGRect, editing: Bool, prefix: String?, ctx: CGContext) {

@@ -62,6 +62,15 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "costOnShares"); changed() }
     }
 
+    /// Offer beta releases too. On by default for anyone already running a beta.
+    var betaUpdates: Bool {
+        get {
+            let version = AppUpdater.currentVersion ?? ""
+            return defaults.object(forKey: "betaUpdates") as? Bool ?? version.contains("-")
+        }
+        set { defaults.set(newValue, forKey: "betaUpdates"); changed() }
+    }
+
     // MARK: Welcome
 
     /// Set once the welcome window has been finished (or skipped).
