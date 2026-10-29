@@ -40,6 +40,39 @@ struct PacingEngineTests {
         #expect(abs(projected.timeIntervalSince(runOut)) < 120)
     }
 
+    // A quiet start, then 40% in the last 3 hours: the 24-hour average says tomorrow, the
+    // recent burn says this evening.
+    @Test func recentBurstRunsOutBeforeTheAverage() {
+        let start = now.addingTimeInterval(-23 * 3600)
+        let reset = start.addingTimeInterval(PT.week)
+        let samples = PT.linear(from: start, fromUsed: 0, to: now.addingTimeInterval(-3 * 3600), toUsed: 0.05)
+            + PT.linear(from: now.addingTimeInterval(-3 * 3600), fromUsed: 0.05, to: now, toUsed: 0.45)
+        let a = PacingEngine.analyze(window: PT.weekly(used: 0.45, resetsAt: reset), samples: samples, now: now)
+        let average = try! #require(a.projectedRunOut)
+        let recent = try! #require(a.recentRunOut)
+        #expect(average.timeIntervalSince(now) > 24 * 3600)
+        #expect(abs(recent.timeIntervalSince(now) - 0.55 / (0.40 / 3) * 3600) < 120)
+    }
+
+    @Test func recentRunOutNilWhenIdle() {
+        let start = now.addingTimeInterval(-23 * 3600)
+        let reset = start.addingTimeInterval(PT.week)
+        let samples = PT.linear(from: start, fromUsed: 0, to: now.addingTimeInterval(-3 * 3600), toUsed: 0.45)
+            + [UsageSample(time: now, used: 0.45)]
+        let a = PacingEngine.analyze(window: PT.weekly(used: 0.45, resetsAt: reset), samples: samples, now: now)
+        #expect(a.recentRunOut == nil)
+    }
+
+    // Policies are saved inside `state.plist` (the pacing tracker); one written by an older build
+    // must still decode, or the whole history is dropped on launch.
+    @Test func policySavedByOlderBuildDecodes() throws {
+        var dict = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(PacingPolicy.standard)) as? [String: Any])
+        dict["recentLookback"] = nil
+        dict["recentMinHistory"] = nil
+        let data = try JSONSerialization.data(withJSONObject: dict)
+        #expect(try JSONDecoder().decode(PacingPolicy.self, from: data) == .standard)
+    }
+
     @Test func thresholds() {
         let p = PacingPolicy.standard
         #expect(p.classify(multiple: 2.0, remaining: 0.2) == .plenty)

@@ -221,6 +221,10 @@ struct Presenter {
         var label: String? = nil
         if a.rule == .exhausted {
             end = (nowT, 0)
+        } else if let runOut = a.recentRunOut {
+            // A heavy stretch right now: show where it ends, not where the 24-hour average does.
+            end = (runOut.timeIntervalSince(a.windowStart) / 3600, 0)
+            runsOut = true
         } else if let runOut = a.projectedRunOut, runOut < a.resetsAt {
             end = (runOut.timeIntervalSince(a.windowStart) / 3600, 0)
             runsOut = true

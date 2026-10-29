@@ -22,6 +22,13 @@ public struct PacingPolicy: Codable, Sendable, Hashable {
     public var projectionLookback: TimeInterval = 24 * 3600
     /// The projection needs at least this much history.
     public var projectionMinHistory: TimeInterval = 3600
+    /// The glide's short-term projection measures the burn over this much recent history…
+    /// (Computed, so policies already saved in `state.plist` still decode.)
+    public var recentLookback: TimeInterval { 2 * 3600 }
+    /// …and needs at least this much of it.
+    public var recentMinHistory: TimeInterval { 1800 }
+    /// …and only overrides the 24-hour projection when it burns at least this many times faster.
+    public var recentFactor: Double { 1.5 }
     /// Inside the last hour S is ∞ (or 0 when nothing is left).
     public var lastHour: TimeInterval = 3600
     /// 5-hour session warning levels.

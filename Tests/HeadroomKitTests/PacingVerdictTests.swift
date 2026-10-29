@@ -48,6 +48,18 @@ struct PacingVerdictTests {
         #expect(v.secondary == "21 hours early · ease off ~20% to reach Saturday.")
     }
 
+    // Quiet for a day, then 40% in the last 3 hours (13%/h): 55% lasts about 4 hours.
+    @Test func recentBurstLeads() {
+        let start = now.addingTimeInterval(-23 * 3600)
+        let reset = start.addingTimeInterval(PT.week)
+        let samples = PT.linear(from: start, fromUsed: 0, to: now.addingTimeInterval(-3 * 3600), toUsed: 0.05)
+            + PT.linear(from: now.addingTimeInterval(-3 * 3600), fromUsed: 0.05, to: now, toUsed: 0.45)
+        let v = verdict(PT.weekly(used: 0.45, resetsAt: reset), samples)
+        #expect(v.title == "Very tight")
+        #expect(v.primary == "At this rate you run out today 2:09 PM, 6 days early.")
+        #expect(v.secondary == "At today's pace it lasts to tomorrow 2:08 PM.")
+    }
+
     @Test func tightBySustainableMultiple() {
         // S = 0.9 with renewal Saturday 1 PM.
         let reset = PT.date(2026, 10, 24, 13, 0)

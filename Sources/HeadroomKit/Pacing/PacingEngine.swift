@@ -45,6 +45,11 @@ public struct PacingAnalysis: Codable, Sendable, Hashable {
     public var burnPerHour: Double?
     /// When the allowance runs out at the last-24h burn rate. Nil when the burn is zero or unknown.
     public var projectedRunOut: Date?
+    /// Burn over the last couple of hours (`PacingPolicy.recentLookback`). Nil without enough recent history.
+    public var recentBurnPerHour: Double?
+    /// When the allowance runs out at the recent burn, if that's before renewal and the recent burn
+    /// is well above the 24-hour one: a heavy stretch the average hasn't caught up with yet.
+    public var recentRunOut: Date?
     /// Fraction left at renewal at the last-24h burn rate (0 when it runs out first).
     public var projectedUnusedAtReset: Double?
     /// When the allowance runs out at exactly even pace (1/W per hour).
@@ -104,6 +109,13 @@ public enum PacingEngine {
             }
             unused = max(0, r - burn * timeLeft / 3600)
         }
+        let recentBurn = burnRate(samples: samples, currentUsed: used, windowStart: windowStart, now: now, policy: policy,
+                                  lookback: policy.recentLookback, minHistory: policy.recentMinHistory)
+        var recentRunOut: Date?
+        if let recentBurn, recentBurn > 0, r > 0, recentBurn > (burn ?? 0) * policy.recentFactor {
+            let out = now.addingTimeInterval(r / recentBurn * 3600)
+            if out < resetsAt { recentRunOut = out }
+        }
 
         let raw: PacingState
         let rule: PacingRule
@@ -139,6 +151,8 @@ public enum PacingEngine {
             rule: rule,
             burnPerHour: burn,
             projectedRunOut: projectedRunOut,
+            recentBurnPerHour: recentBurn,
+            recentRunOut: recentRunOut,
             projectedUnusedAtReset: unused,
             evenRunOut: now.addingTimeInterval(max(0, r) * duration),
             cells: cells(remaining: r),
@@ -147,16 +161,19 @@ public enum PacingEngine {
         )
     }
 
-    /// Used-fraction per hour over the last 24 h (or since the window began, if later).
-    /// History before Headroom was installed is never invented: with under an hour of it, nil.
+    /// Used-fraction per hour over the last 24 h (or since the window began, if later), or over
+    /// `lookback` when given. History before Headroom was installed is never invented: with under
+    /// `minHistory` (an hour by default) of it, nil.
     public static func burnRate(
         samples: [UsageSample],
         currentUsed: Double,
         windowStart: Date,
         now: Date,
-        policy: PacingPolicy = .standard
+        policy: PacingPolicy = .standard,
+        lookback: TimeInterval? = nil,
+        minHistory: TimeInterval? = nil
     ) -> Double? {
-        let lookbackStart = now.addingTimeInterval(-policy.projectionLookback)
+        let lookbackStart = now.addingTimeInterval(-(lookback ?? policy.projectionLookback))
         let base: (time: Date, used: Double)
         if windowStart >= lookbackStart {
             base = (windowStart, 0)
@@ -180,7 +197,7 @@ public enum PacingEngine {
             }
         }
         let span = now.timeIntervalSince(base.time)
-        guard span >= policy.projectionMinHistory else { return nil }
+        guard span >= (minHistory ?? policy.projectionMinHistory) else { return nil }
         return max(0, currentUsed - base.used) / (span / 3600)
     }
 }

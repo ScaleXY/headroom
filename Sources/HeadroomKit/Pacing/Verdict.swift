@@ -45,6 +45,25 @@ public enum VerdictWriter {
 
         let renewDay = reachPhrase(a.resetsAt, now: now, calendar: calendar, locale: locale)
 
+        // A heavy stretch right now runs out well before the 24-hour average says: lead with it,
+        // as the glide does, and give the longer view underneath.
+        if let runOut = a.recentRunOut {
+            let early = a.resetsAt.timeIntervalSince(runOut)
+            let longer: String
+            if let dayRunOut = a.projectedRunOut, dayRunOut < a.resetsAt {
+                longer = "At today's pace it lasts to " + TimeFormat.weekdayOrDay(dayRunOut, now: now, calendar: calendar, locale: locale) + "."
+            } else {
+                longer = "At today's pace it lasts to \(renewDay)."
+            }
+            return Verdict(
+                state: state,
+                title: state.title,
+                multipleText: chip,
+                primary: "At this rate you run out " + TimeFormat.shortDayTime(runOut, now: now, calendar: calendar, locale: locale) + ", \(TimeFormat.spokenSpan(early)) early.",
+                secondary: longer
+            )
+        }
+
         switch state {
         case .plenty:
             let primary = "Spend it before it renews " + TimeFormat.relative(a.resetsAt, now: now, calendar: calendar, locale: locale) + "."
