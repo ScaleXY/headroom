@@ -5,6 +5,15 @@
     <link>https://github.com/ScaleXY/headroom</link>
     <description>Headroom releases</description>
     <item>
+      <title>Headroom 0.2.0</title>
+      <pubDate>Thu, 29 Oct 2026 11:27:31 GMT</pubDate>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/ScaleXY/headroom/releases/tag/v0.2.0</sparkle:fullReleaseNotesLink>
+      <enclosure url="https://github.com/ScaleXY/headroom/releases/download/v0.2.0/Headroom-0.2.0.zip" type="application/octet-stream" sparkle:edSignature="JgWs5oRtYe53Pd4j5eERmsytGPYtO2PZ4Iy092cB40Qq6BueOIJGW6gtHEiYa4N3uXUDrxRZy8XANb8a9QbMBQ==" length="4045576" />
+    </item>
+    <item>
       <title>Headroom 0.1.8</title>
       <pubDate>Thu, 29 Oct 2026 10:42:01 GMT</pubDate>
       <sparkle:version>9</sparkle:version>
