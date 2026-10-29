@@ -10,19 +10,22 @@ final class StatusItemController: NSObject {
     private let popover: PopoverController
     private let caffeinate: Caffeinate
     private let fans: FanControl
+    private let updater: AppUpdater
     var openSettings: (() -> Void)?
     var openWelcome: (() -> Void)?
     private var lastKey: [MenuBarProviderModel]?
     private var lastFan: FanReadout?
+    private var lastBadge = false
     private var lastAppearanceDark: Bool?
     private var lastScale: CGFloat = 0
     private var appearanceObservation: NSKeyValueObservation?
 
-    init(model: AppModel, popover: PopoverController, caffeinate: Caffeinate, fans: FanControl) {
+    init(model: AppModel, popover: PopoverController, caffeinate: Caffeinate, fans: FanControl, updater: AppUpdater) {
         self.model = model
         self.popover = popover
         self.caffeinate = caffeinate
         self.fans = fans
+        self.updater = updater
         super.init()
         item.autosaveName = "Headroom"
         if let button = item.button {
@@ -45,9 +48,12 @@ final class StatusItemController: NSObject {
         let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let scale = button.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let fan = fans.readout
-        guard force || items != lastKey || fan != lastFan || dark != lastAppearanceDark || scale != lastScale else { return }
+        // The same rule as the popover banner: putting it off there clears the dot too.
+        let badge = UpdateBannerRenderer.shows(updater)
+        guard force || items != lastKey || fan != lastFan || badge != lastBadge || dark != lastAppearanceDark || scale != lastScale else { return }
         lastKey = items
         lastFan = fan
+        lastBadge = badge
         lastAppearanceDark = dark
         lastScale = scale
         let size = NSSize(width: StatusItemRenderer.width(items, fan: fan), height: StatusItemRenderer.height)
@@ -55,15 +61,16 @@ final class StatusItemController: NSObject {
         // every relayout makes AppKit re-render the status button.
         if abs(item.length - (size.width + 8)) > 0.5 { item.length = size.width + 8 }
         // A finished CPU-rendered bitmap; AppKit only composites it.
-        if let cg = StatusItemRenderer.renderBitmap(items, fan: fan, size: size, dark: dark, scale: scale) {
+        if let cg = StatusItemRenderer.renderBitmap(items, fan: fan, updateBadge: badge, size: size, dark: dark, scale: scale) {
             let image = NSImage(cgImage: cg, size: size)
             image.isTemplate = false
             button.image = image
         }
-        let spoken = (items.map(\.spoken) + [fan?.spoken].compactMap(\.self)).joined(separator: " ")
+        let update = badge ? updater.state.version.map { "Headroom \($0) is available." } : nil
+        let spoken = (items.map(\.spoken) + [fan?.spoken, update].compactMap(\.self)).joined(separator: " ")
         let label = spoken.isEmpty ? "Headroom" : spoken
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
-        let tip: String? = items.isEmpty ? "Headroom" : nil
+        let tip: String? = update ?? (items.isEmpty ? "Headroom" : nil)
         if button.toolTip != tip { button.toolTip = tip }
     }
 
@@ -78,6 +85,10 @@ final class StatusItemController: NSObject {
     private func showMenu() {
         popover.close()
         let menu = NSMenu()
+        if let item = updateItem() {
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Open Headroom", action: #selector(openPopover), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Refresh Now", action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(.separator())
@@ -92,6 +103,28 @@ final class StatusItemController: NSObject {
         item.button?.performClick(nil)
         item.menu = nil
     }
+
+    // MARK: Updates
+
+    /// Leads the menu while an update is on offer: one click installs it, and the line
+    /// under it says what's happening once it's under way.
+    private func updateItem() -> NSMenuItem? {
+        guard let version = updater.state.version else { return nil }
+        let title: String = switch updater.state {
+        case .downloading(_, let p): "Downloading Headroom \(version)" + (p.map { " · \(Int(($0 * 100).rounded()))%" } ?? "…")
+        case .installing: "Installing Headroom \(version)…"
+        default: "Update to Headroom \(version) and Restart"
+        }
+        let item = NSMenuItem(title: title, action: #selector(installUpdate), keyEquivalent: "")
+        item.target = self
+        switch updater.state {
+        case .available, .ready: break
+        default: item.action = nil
+        }
+        return item
+    }
+
+    @objc private func installUpdate() { updater.installAndRelaunch() }
 
     // MARK: Keep awake
 

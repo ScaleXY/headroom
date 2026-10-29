@@ -220,6 +220,7 @@ enum PopoverPage {
         let presenter = Presenter(now: now, locale: Locale(identifier: "en_US"))
         let rows: [(String, [PaceInput])] = [
             ("mockup", [Demo.claudeMockup(now: now), Demo.codexMockup(now: now)]),
+            ("update available", [Demo.claudeMockup(now: now), Demo.codexMockup(now: now)]),
             ("on pace + very tight", [Demo.state(.claude, used: 0.52, elapsedH: 84, now: now), Demo.state(.codex, used: 0.82, elapsedH: 72, now: now)]),
             ("rose session + blocked", [Demo.state(.claude, used: 0.46, elapsedH: 90, session: 0.94, now: now), Demo.state(.codex, used: 0.46, elapsedH: 90, session: 1, now: now)]),
             ("fault + weekly blocked", [Demo.state(.claude, used: 0.46, elapsedH: 90, fault: .offline, now: now), Demo.state(.codex, used: 1, elapsedH: 140, now: now)]),
@@ -231,7 +232,7 @@ enum PopoverPage {
             ctx.fill(CGPath(rect: CGRect(x: 0, y: 0, width: w, height: h), transform: nil), rgb(0x808080))
             var y: CGFloat = 6
             for bg in backgrounds {
-                for (_, inputs) in rows {
+                for (label, inputs) in rows {
                     let r = CGRect(x: 6, y: y, width: w - 12, height: stripH)
                     let dark = bg != "light"
                     switch bg {
@@ -243,7 +244,8 @@ enum PopoverPage {
                     ctx.fill(rounded(r, 6), dark ? rgb(0x080810, 0.3) : white(0.45))
                     let items = presenter.menuBarItems(inputs, mode: .both, enabled: [.claude, .codex])
                     let iw = StatusItemRenderer.width(items)
-                    StatusItemRenderer.draw(items, in: CGRect(x: r.maxX - 12 - iw, y: r.midY - 11, width: iw, height: 22), dark: dark, ctx: ctx)
+                    StatusItemRenderer.draw(items, in: CGRect(x: r.maxX - 12 - iw, y: r.midY - 11, width: iw, height: 22), dark: dark,
+                                            updateBadge: label == "update available", ctx: ctx)
                     y += stripH + 6
                 }
             }
