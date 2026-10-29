@@ -116,4 +116,32 @@ import HeadroomKit
         #expect(h.accounts["claude:acct"]?.sessions == [])
         #expect(h.accounts["claude:acct"]?.sessionHitsThisWindow == 2)
     }
+
+    @Test func finishedSessionsKeepTheirSamplesForADay() {
+        var h = HistoryStore()
+        let reset = t0.addingTimeInterval(3 * 3600)
+        h.record(reading(session: 0.1, resetsAt: reset, at: t0), now: t0)
+        h.record(reading(session: 0.6, resetsAt: reset, at: t0.addingTimeInterval(1800)), now: t0.addingTimeInterval(1800))
+        // Ran out of readings before the reset: still listed as finished, with its samples.
+        let past = reset.addingTimeInterval(60)
+        #expect(h.account(.claude, "acct")!.finishedSessions(since: t0, now: past).map { $0.samples.map(\.used) } == [[0.1, 0.6]])
+
+        let next = reset.addingTimeInterval(600)
+        h.record(reading(session: 0.2, resetsAt: next.addingTimeInterval(5 * 3600), at: next), now: next)
+        #expect(h.account(.claude, "acct")!.sessions[0].samples.map(\.used) == [0.1, 0.6])
+        // A day and more later, closing another session drops the old samples but keeps the summary.
+        let much = next.addingTimeInterval(HistoryStore.sessionTrailSpan + 6 * 3600)
+        h.record(reading(session: 0.3, resetsAt: much.addingTimeInterval(5 * 3600), at: much), now: much)
+        let acct = h.account(.claude, "acct")!
+        #expect(acct.sessions.map(\.peakUsed) == [0.6, 0.2])
+        #expect(acct.sessions[0].samples.isEmpty)
+        #expect(acct.finishedSessions(since: much.addingTimeInterval(-24 * 3600), now: much).isEmpty)
+    }
+
+    @Test func decodesSessionsSavedBeforeSamplesWereKept() throws {
+        let old = #"{"start":0,"resetsAt":18000,"peakUsed":0.5,"inProgress":false}"#
+        let r = try JSONDecoder().decode(SessionRecord.self, from: Data(old.utf8))
+        #expect(r.peakUsed == 0.5)
+        #expect(r.samples.isEmpty)
+    }
 }

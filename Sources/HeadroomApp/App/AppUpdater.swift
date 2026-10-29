@@ -68,6 +68,8 @@ final class AppUpdater: NSObject {
         super.init()
         state = preview
         previewing = true
+        // A check a while ago, as a running copy shows it: the longest status the card has to fit.
+        previewLastCheck = Date().addingTimeInterval(-5 * 3600)
     }
 
     /// Starts Sparkle when this is a release bundle with a feed and a signing key; `swift run`
@@ -85,8 +87,9 @@ final class AppUpdater: NSObject {
     }
 
     private var previewing = false
+    private var previewLastCheck: Date?
     var isAvailable: Bool { updater != nil || previewing }
-    var lastCheck: Date? { updater?.lastUpdateCheckDate }
+    var lastCheck: Date? { updater?.lastUpdateCheckDate ?? previewLastCheck }
 
     var automaticChecks: Bool {
         get { updater?.automaticallyChecksForUpdates ?? true }

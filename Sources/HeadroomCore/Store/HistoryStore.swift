@@ -9,6 +9,8 @@ public struct HistoryStore: Codable, Sendable, Hashable {
     public static let weekSampleLimit = 168
     /// Finished 5-hour sessions kept per account (a few weeks of heavy use).
     public static let maxSessions = 120
+    /// How long finished sessions keep their samples, for the 5-hour graph's trail.
+    public static let sessionTrailSpan: TimeInterval = 30 * 3600
 
     public var accounts: [String: AccountHistory] = [:]
 
@@ -82,6 +84,9 @@ public struct HistoryStore: Codable, Sendable, Hashable {
                 if let record = current.closeSession() {
                     acct.sessions.append(record)
                     if acct.sessions.count > maxSessions { acct.sessions.removeFirst(acct.sessions.count - maxSessions) }
+                    // Only the last day or so is graphed; older sessions keep their summary.
+                    let cutoff = now.addingTimeInterval(-sessionTrailSpan)
+                    for i in acct.sessions.indices where acct.sessions[i].resetsAt < cutoff { acct.sessions[i].samples = [] }
                 }
                 acct.session = nil
             }
@@ -132,6 +137,13 @@ public struct AccountHistory: Codable, Sendable, Hashable {
         sessions = try c.decodeIfPresent([SessionRecord].self, forKey: .sessions) ?? []
     }
 
+    /// Finished sessions that reset after `since`, including one that ran out but isn't closed yet, oldest first.
+    public func finishedSessions(since: Date, now: Date) -> [SessionRecord] {
+        var all = sessions.filter { $0.resetsAt > since }
+        if let current = session, current.resetsAt <= now, current.resetsAt > since, let record = current.closeSession() { all.append(record) }
+        return all
+    }
+
     /// Finished sessions plus the one in progress (as a record so far), newest last.
     public func recentSessions(now: Date) -> [SessionRecord] {
         var all = sessions
@@ -148,9 +160,23 @@ public struct SessionRecord: Codable, Sendable, Hashable {
     public var hitLimitAt: Date?
     /// True for the session still running (never stored).
     public var inProgress: Bool
+    /// How the session filled up; kept for about a day (`HistoryStore.sessionTrailSpan`), empty after.
+    public var samples: [UsageSample]
 
-    public init(start: Date, resetsAt: Date, peakUsed: Double, hitLimitAt: Date?, inProgress: Bool = false) {
+    public init(start: Date, resetsAt: Date, peakUsed: Double, hitLimitAt: Date?, inProgress: Bool = false, samples: [UsageSample] = []) {
         self.start = start; self.resetsAt = resetsAt; self.peakUsed = peakUsed; self.hitLimitAt = hitLimitAt; self.inProgress = inProgress
+        self.samples = samples
+    }
+
+    // Sessions saved before samples were kept have no `samples` key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        start = try c.decode(Date.self, forKey: .start)
+        resetsAt = try c.decode(Date.self, forKey: .resetsAt)
+        peakUsed = try c.decode(Double.self, forKey: .peakUsed)
+        hitLimitAt = try c.decodeIfPresent(Date.self, forKey: .hitLimitAt)
+        inProgress = try c.decodeIfPresent(Bool.self, forKey: .inProgress) ?? false
+        samples = try c.decodeIfPresent([UsageSample].self, forKey: .samples) ?? []
     }
 
     public var hitLimit: Bool { hitLimitAt != nil || peakUsed >= 1 }
@@ -192,7 +218,8 @@ public struct WindowHistory: Codable, Sendable, Hashable {
     func closeSession(live: Bool = false) -> SessionRecord? {
         let peak = samples.map(\.used).max() ?? 0
         guard peak > 0 else { return nil }
-        return SessionRecord(start: start, resetsAt: resetsAt, peakUsed: peak, hitLimitAt: samples.first { $0.used >= 1 }?.time, inProgress: live)
+        return SessionRecord(start: start, resetsAt: resetsAt, peakUsed: peak, hitLimitAt: samples.first { $0.used >= 1 }?.time,
+                             inProgress: live, samples: samples)
     }
 
     func close(endedAt: Date, early: Bool, sessionHits: Int, plan: String?) -> WeekRecord {

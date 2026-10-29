@@ -149,7 +149,8 @@ enum StatusItemRenderer {
     }
 
     /// CPU rendering into a premultiplied sRGB bitmap.
-    static func renderBitmap(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, size: NSSize, dark: Bool, scale: CGFloat) -> CGImage? {
+    static func renderBitmap(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, updateBadge: Bool = false,
+                             size: NSSize, dark: Bool, scale: CGFloat) -> CGImage? {
         let w = Int((size.width * scale).rounded(.up)), h = Int((size.height * scale).rounded(.up))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -160,7 +161,7 @@ enum StatusItemRenderer {
         let gc = NSGraphicsContext(cgContext: ctx, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = gc
-        draw(items, in: CGRect(origin: .zero, size: size), dark: dark, ctx: ctx)
+        draw(items, in: CGRect(origin: .zero, size: size), dark: dark, updateBadge: updateBadge, ctx: ctx)
         if let fan {
             let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
             drawFan(fan, x: size.width - fanWidth - 2, mid: size.height / 2, ink: ink, ctx: ctx)
@@ -169,12 +170,15 @@ enum StatusItemRenderer {
         return ctx.makeImage()
     }
 
-    static func draw(_ items: [MenuBarProviderModel], in rect: CGRect, dark: Bool, ctx: CGContext) {
+    static func draw(_ items: [MenuBarProviderModel], in rect: CGRect, dark: Bool, updateBadge: Bool = false, ctx: CGContext) {
         let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
         let mid = rect.midY
         var x = rect.minX + 2
         if items.isEmpty {
-            HeadroomMark.draw(in: CGRect(x: x, y: mid - 8, width: 16, height: 16), ctx: ctx, dropShadow: false)
+            let mark = CGRect(x: x, y: mid - 8, width: 16, height: 16)
+            badged(updateBadge ? mark : nil, dark: dark, ctx: ctx) {
+                HeadroomMark.draw(in: mark, ctx: ctx, dropShadow: false)
+            }
             return
         }
         for (i, m) in items.enumerated() {
@@ -182,7 +186,10 @@ enum StatusItemRenderer {
             let dim: CGFloat = m.blockedCountdown != nil ? 0.4 : (m.fault ? 0.5 : 1)
             // Brand mark: Claude clay, OpenAI in the label color.
             let markColor: NSColor = m.provider == .claude ? (dark ? rgb(0xE8956F) : rgb(0xD97757)) : ink
-            BrandMark.draw(m.provider, in: CGRect(x: x, y: mid - 7, width: 14, height: 14), color: markColor, ctx: ctx)
+            let mark = CGRect(x: x, y: mid - 7, width: 14, height: 14)
+            badged(updateBadge && i == 0 ? mark : nil, dark: dark, ctx: ctx) {
+                BrandMark.draw(m.provider, in: mark, color: markColor, ctx: ctx)
+            }
             x += 14 + 5
             // Micro meter.
             let track = CGRect(x: x, y: mid - 7, width: meterWidth, height: 14)
@@ -255,5 +262,23 @@ enum StatusItemRenderer {
                 x += 9
             }
         }
+    }
+
+    /// Draws the first mark with a small blue dot on its top-right corner when an update is waiting,
+    /// cut out from the mark so it reads on any wallpaper. The item's width doesn't change.
+    private static func badged(_ mark: CGRect?, dark: Bool, ctx: CGContext, _ drawMark: () -> Void) {
+        guard let mark else { return drawMark() }
+        let center = CGPoint(x: mark.maxX - 1, y: mark.minY + 1.5)
+        ctx.withState {
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            drawMark()
+            ctx.setBlendMode(.clear)
+            ctx.fillEllipse(in: CGRect(x: center.x - 4.25, y: center.y - 4.25, width: 8.5, height: 8.5))
+            ctx.endTransparencyLayer()
+        }
+        let dot = CGPath(ellipseIn: CGRect(x: center.x - 2.75, y: center.y - 2.75, width: 5.5, height: 5.5), transform: nil)
+        let p = palette(.plenty, dark: dark)
+        ctx.glow(dot, color: p.glow, blur: 3, base: p.bottom)
+        ctx.fillVertical(dot, p.top, p.bottom)
     }
 }

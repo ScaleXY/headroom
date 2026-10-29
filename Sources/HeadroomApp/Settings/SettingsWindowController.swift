@@ -728,11 +728,24 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         let tx = head.minX + 16 + 40 + 14
         let version = AppUpdater.currentVersion
         Text(version.map { "Headroom \($0)" } ?? "Headroom", F.sf(14.5, 650), t.ink, kern: -0.1).draw(x: tx, capCenter: head.midY - 10, in: ctx)
-        let (status, dot) = updateStatus(state, available: available)
-        drawStatusDot(center: CGPoint(x: tx + 3, y: head.midY + 11), color: dot, ctx: ctx)
-        Text(status, F.sf(12, 500), t.muted).draw(x: tx + 13, capCenter: head.midY + 11, in: ctx)
-
         let right = card.maxX - 16
+        // The head's own button goes first so the status line knows where to stop.
+        var headButton: CGRect?
+        switch state {
+        case .available, .ready, .downloading, .installing: break
+        case .checking:
+            headButton = button("Checking…", right: right, mid: head.midY, style: .tinted, enabled: false, height: 28, action: Action.checkUpdates, ctx: ctx)
+        default:
+            headButton = button("Check Now", right: right, mid: head.midY, style: .tinted, enabled: available, height: 28, action: Action.checkUpdates, ctx: ctx)
+        }
+        let (statuses, dot) = updateStatus(state, available: available)
+        let statusFont = F.sf(12, 500)
+        let statusWidth = (headButton?.minX ?? right) - 14 - (tx + 13)
+        var status = PaceCardRenderer.fit(statuses, font: statusFont, width: statusWidth)
+        while Text(status, statusFont, .black).width > statusWidth, status.count > 4 { status = String(status.dropLast(2)) + "…" }
+        drawStatusDot(center: CGPoint(x: tx + 3, y: head.midY + 11), color: dot, ctx: ctx)
+        Text(status, statusFont, t.muted).draw(x: tx + 13, capCenter: head.midY + 11, in: ctx)
+
         let row = CGRect(x: card.minX + 16, y: head.maxY, width: card.width - 32, height: card.maxY - head.maxY)
         switch state {
         case .available, .ready:
@@ -747,10 +760,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             ctx.fillVertical(rounded(fill, 2), blue.top, blue.bottom)
         case .installing:
             Text("Headroom quits, installs and reopens in a few seconds.", F.sf(12, 500), t.muted2).draw(x: row.minX, capCenter: row.midY, in: ctx)
-        case .checking:
-            button("Checking…", right: right, mid: head.midY, style: .tinted, enabled: false, height: 28, action: Action.checkUpdates, ctx: ctx)
-        default:
-            button("Check Now", right: right, mid: head.midY, style: .tinted, enabled: available, height: 28, action: Action.checkUpdates, ctx: ctx)
+        default: break
         }
         cy += card.height + 22
 
@@ -773,23 +783,27 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
              x: x, y: cy, w: w, ctx: ctx)
     }
 
-    private func updateStatus(_ state: AppUpdater.State, available: Bool) -> (String, NSColor) {
+    /// The status line under the version, longest first: the card uses the first that fits.
+    private func updateStatus(_ state: AppUpdater.State, available: Bool) -> ([String], NSColor) {
         let t = theme, blue = t.pacing(.plenty).bottom
-        guard available else { return ("Updates come with release builds.", t.muted2) }
+        guard available else { return (["Updates come with release builds."], t.muted2) }
         switch state {
-        case .checking: return ("Checking for updates…", t.muted2)
-        case .available(let v): return ("Version \(v) is available.", blue)
-        case .downloading(let v, let p): return ("Downloading \(v)" + (p.map { " · \(Int(($0 * 100).rounded()))%" } ?? "…"), blue)
-        case .installing(let v): return ("Installing \(v). Headroom reopens on its own.", blue)
-        case .ready(let v): return ("Version \(v) is downloaded and ready.", blue)
-        case .failed(let message): return (message, t.amber)
+        case .checking: return (["Checking for updates…"], t.muted2)
+        case .available(let v): return (["Version \(v) is available.", "\(v) is available."], blue)
+        case .downloading(let v, let p): return (["Downloading \(v)" + (p.map { " · \(Int(($0 * 100).rounded()))%" } ?? "…")], blue)
+        case .installing(let v): return (["Installing \(v). Headroom reopens on its own.", "Installing \(v)…"], blue)
+        case .ready(let v): return (["Version \(v) is downloaded and ready.", "\(v) is ready to install."], blue)
+        case .failed(let message): return ([message, "Couldn't check for updates.", "Check failed."], t.amber)
         case .idle, .upToDate:
-            guard let last = updater?.lastCheck else { return ("Up to date.", t.ok) }
+            guard let last = updater?.lastCheck else { return (["Up to date."], t.ok) }
+            guard Date().timeIntervalSince(last) >= 60 else { return (["Up to date · checked just now", "Up to date"], t.ok) }
             let f = RelativeDateTimeFormatter()
             f.locale = Display.locale
             f.unitsStyle = .full
-            let ago = Date().timeIntervalSince(last) < 60 ? "just now" : f.localizedString(for: last, relativeTo: Date())
-            return ("Up to date · checked \(ago)", t.ok)
+            let full = f.localizedString(for: last, relativeTo: Date())
+            f.unitsStyle = .abbreviated
+            let short = f.localizedString(for: last, relativeTo: Date())
+            return (["Up to date · checked \(full)", "Up to date · checked \(short)", "Up to date · \(short)", "Up to date"], t.ok)
         }
     }
 

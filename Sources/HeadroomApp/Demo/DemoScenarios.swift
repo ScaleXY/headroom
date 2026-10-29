@@ -60,7 +60,8 @@ enum Demo {
         let sStart = at(now, hours: -4.2)
         let sess = [0.0, 0.12, 0.30, 0.46, 0.58, 0.66, 0.70].enumerated().map { UsageSample(time: at(sStart, hours: Double($0.offset) * 0.6), used: $0.element) }
             + [UsageSample(time: now, used: 0.84)]
-        return PaceInput(provider: .claude, reading: reading, samples: ["weekly": s, "session": sess], weekCostMicros: 412_000_000)
+        return PaceInput(provider: .claude, reading: reading, samples: ["weekly": s, "session": sess],
+                         pastSessions: pastSessions([(-20.5, 0.62, 2.6), (-12.5, 1, 1.4)], now: now), weekCostMicros: 412_000_000)
     }
 
     static func codexMockup(now: Date) -> PaceInput {
@@ -77,7 +78,7 @@ enum Demo {
                                    plan: PlanCatalog.codex(planType: "pro"), windows: [session, weekly],
                                    resetCredits: credits, resetCreditsAvailable: 3)
         return PaceInput(provider: .codex, reading: reading, samples: ["weekly": samples(cum, start: start), "session": sessionSamples(used: 0.10, elapsedH: 0.8, now: now)],
-                         weekCostMicros: 186_000_000)
+                         pastSessions: pastSessions([(-17, 0.38, 3.1), (-9.5, 0.71, 0.9)], now: now), weekCostMicros: 186_000_000)
     }
 
     /// Ten-minute samples for a session `elapsedH` in, with a quiet patch and a busier stretch, ending at `used`.
@@ -97,6 +98,24 @@ enum Demo {
             out.append(UsageSample(time: at(start, hours: Double(i + 1) / 6), used: min(cum, used)))
         }
         return out
+    }
+
+    /// Finished sessions with their samples: each starts `hoursAgo` before now, idles along, then a spike
+    /// `spikeAfterH` in takes it to `peak` (a peak of 1 hits the limit and waits out the reset).
+    static func pastSessions(_ specs: [(hoursAgo: Double, peak: Double, spikeAfterH: Double)], now: Date) -> [SessionRecord] {
+        specs.map { spec in
+            let start = at(now, hours: spec.hoursAgo)
+            var out: [UsageSample] = []
+            var hit: Date? = nil
+            for i in 1...30 {
+                let h = Double(i) / 6
+                let base = spec.peak * 0.18 * min(h, spec.spikeAfterH) / spec.spikeAfterH
+                let used = h <= spec.spikeAfterH ? base : min(spec.peak, base + spec.peak * 0.82 * min(1, (h - spec.spikeAfterH) / 0.7))
+                if used >= 1, hit == nil { hit = at(start, hours: h) }
+                out.append(UsageSample(time: at(start, hours: h), used: used))
+            }
+            return SessionRecord(start: start, resetsAt: at(start, hours: 5), peakUsed: spec.peak, hitLimitAt: hit, samples: out)
+        }
     }
 
     /// A single-window state for the state gallery: used `u` with `elapsedH` of 168 gone,
@@ -119,7 +138,7 @@ enum Demo {
         let reading = LimitReading(provider: p, fetchedAt: at(now, hours: fault == nil ? -1.0 / 60 : -1.6), source: p == .claude ? .api : .appServer,
                                    plan: plan, windows: [sess, weekly] + caps, resetCredits: credits)
         return PaceInput(provider: p, reading: reading, samples: ["weekly": s, "session": sessionSamples(used: session, elapsedH: 2.8, now: now)],
-                         fault: fault, weekCostMicros: p == .claude ? 96_400_000 : 31_200_000)
+                         pastSessions: pastSessions([(-19, 0.55, 2.4), (-10.5, 1, 1.6)], now: now), fault: fault, weekCostMicros: p == .claude ? 96_400_000 : 31_200_000)
     }
 
     static func paceScenarios(now: Date) -> [PaceScenario] {

@@ -1,4 +1,5 @@
 import AppKit
+import HeadroomCore
 import HeadroomKit
 
 /// Everything the Pace card needs for one provider, gathered from live state or a fixture.
@@ -7,6 +8,8 @@ struct PaceInput {
     var reading: LimitReading?
     /// Glide history per window id.
     var samples: [String: [UsageSample]] = [:]
+    /// Finished 5-hour sessions from about the last day, oldest first: the session graph's trail.
+    var pastSessions: [SessionRecord] = []
     var fault: Fault? = nil
     /// Tracker-smoothed state, when available (live app). Fixtures use the raw analysis.
     var smoothedState: PacingState? = nil
@@ -88,7 +91,7 @@ struct Presenter {
             let samples = input.samples[LimitWindow.sessionID()] ?? []
             let forecast = SessionForecast(window: reading.session, samples: samples, now: now)
             let weekLeft = reading.headline?.remaining
-            model.sessionModule = sessionModule(s, forecast: forecast, weekLeft: weekLeft, samples: samples)
+            model.sessionModule = sessionModule(s, forecast: forecast, weekLeft: weekLeft, samples: samples, past: input.pastSessions)
         }
 
         // Detail rows.
@@ -117,7 +120,8 @@ struct Presenter {
 
     // MARK: Pieces
 
-    func sessionModule(_ s: SessionStatus, forecast f: SessionForecast, weekLeft: Double?, samples: [UsageSample] = []) -> SessionModuleModel {
+    func sessionModule(_ s: SessionStatus, forecast f: SessionForecast, weekLeft: Double?, samples: [UsageSample] = [],
+                       past: [SessionRecord] = []) -> SessionModuleModel {
         let clock: (Date) -> String = { TimeFormat.clock($0, calendar: calendar, locale: locale) }
         var m = SessionModuleModel(level: s.level, outlook: f.outlook, tone: f.pacingState, used: f.used, elapsed: f.elapsed,
                                    projectedUsed: nil, title: s.title, subtitle: "", countdown: "", caption: "to reset", forecast: "",
@@ -133,8 +137,9 @@ struct Presenter {
             m.startLabel = nil
             m.endLabel = nil
             m.onTop = false
-            // A fresh session reads as a full meter; there's nothing to graph yet.
+            // A fresh session reads as a full meter; the graph still shows the day's earlier sessions.
             if options.parts.contains(.sessionMeter) { m.meter = MeterModel(state: .plenty, cells: 5, caret: nil, opacity: 1) }
+            if options.parts.contains(.sessionGraph) { m.glide = sessionGlide(f, samples: [], past: past, state: .plenty) }
             return m
         case .blocked:
             m.subtitle = f.resetsAt.map { "back at \(clock($0))" } ?? "paused until the reset"
@@ -169,35 +174,79 @@ struct Presenter {
             m.meter = MeterModel(state: state, cells: PacingEngine.cells(remaining: f.remaining),
                                  caret: f.outlook == .blocked ? nil : 1 - f.elapsed, opacity: 1)
         }
-        if options.parts.contains(.sessionGraph) { m.glide = sessionGlide(f, samples: samples, state: state) }
+        if options.parts.contains(.sessionGraph) { m.glide = sessionGlide(f, samples: samples, past: past, state: state) }
         return m
     }
 
-    /// The 5 hours as a glide path: used so far from the samples, then where the recent burn takes it.
-    private func sessionGlide(_ f: SessionForecast, samples: [UsageSample], state: PacingState) -> GlideModel? {
-        guard let start = f.startedAt, let resetsAt = f.resetsAt else { return nil }
-        let hours = resetsAt.timeIntervalSince(start) / 3600
-        let nowT = f.elapsed * hours
-        var points = samples
-            .filter { $0.time >= start && $0.time <= now }
-            .map { GlideModel.Point(t: $0.time.timeIntervalSince(start) / 3600, used: $0.used) }
-        // A session starts empty with its first message.
-        if points.first.map({ $0.t > 0.1 }) ?? true { points.insert(GlideModel.Point(t: 0, used: 0), at: 0) }
-        points.append(GlideModel.Point(t: nowT, used: f.used))
-        var end = (t: nowT, remaining: f.remaining)
+    /// Hours of 5-hour headroom the session graph shows, ending at the current session's reset.
+    static let sessionTrailHours: Double = 24
+
+    /// The last day of 5-hour headroom: each session dips as it's used and refills at its reset,
+    /// then the current one runs on to where the recent burn takes it. Nil when there's nothing to show.
+    private func sessionGlide(_ f: SessionForecast, samples: [UsageSample], past: [SessionRecord], state: PacingState) -> GlideModel? {
+        let hours = Self.sessionTrailHours
+        let end = f.isActive ? (f.resetsAt ?? now) : now
+        let origin = end.addingTimeInterval(-hours * 3600)
+        func t(_ d: Date) -> Double { d.timeIntervalSince(origin) / 3600 }
+
+        var points: [GlideModel.Point] = []
+        // A session starts empty with its first message, fills up, and refills at its reset.
+        func add(start: Date, samples: [UsageSample], until: Date) {
+            points.append(GlideModel.Point(t: t(start), used: 0))
+            points += samples.filter { $0.time > start && $0.time <= until }.map { GlideModel.Point(t: t($0.time), used: $0.used) }
+        }
+        let liveStart = f.isActive ? f.startedAt : nil
+        for record in past.sorted(by: { $0.start < $1.start }) where record.resetsAt > origin && record.resetsAt <= (liveStart ?? now) {
+            let before = points.count
+            if record.samples.isEmpty {
+                // Saved before samples were kept: only the peak is known, so the climb is drawn as a gap.
+                points.append(GlideModel.Point(t: t(record.start), used: 0))
+                points.append(GlideModel.Point(t: t(record.hitLimitAt ?? record.resetsAt), used: record.peakUsed))
+            } else {
+                add(start: record.start, samples: record.samples, until: record.resetsAt)
+            }
+            guard points.count > before, let last = points.last else { continue }
+            if last.t < t(record.resetsAt) { points.append(GlideModel.Point(t: t(record.resetsAt), used: last.used)) }
+            points.append(GlideModel.Point(t: t(record.resetsAt), used: 0, refill: true))
+        }
+        let pastDip = points.contains { $0.used > 0 && $0.t > 0 }
+
+        var nowT = t(now)
+        var projection = (t: nowT, remaining: 1.0)
         var runsOut = false
         var label: String? = nil
-        if f.outlook == .blocked {
-            end = (nowT, 0)
-        } else if let out = f.runsOutAt {
-            end = (out.timeIntervalSince(start) / 3600, 0)
-            runsOut = true
-        } else if let left = f.leftAtReset {
-            end = (hours, left)
-            if left >= 0.005 { label = "\(percent(left)) left at reset" }
+        var evenFrom: Double? = nil
+        if f.isActive, let start = f.startedAt {
+            add(start: start, samples: samples, until: now)
+            points.append(GlideModel.Point(t: nowT, used: f.used))
+            evenFrom = t(start)
+            projection = (nowT, f.remaining)
+            if f.outlook == .blocked {
+                projection = (nowT, 0)
+            } else if let out = f.runsOutAt {
+                projection = (t(out), 0)
+                runsOut = true
+            } else if let left = f.leftAtReset {
+                projection = (hours, left)
+                if left >= 0.005 { label = "\(percent(left)) left at reset" }
+            }
+        } else {
+            // Between sessions the headroom is full; with no earlier dips there's nothing to graph.
+            guard pastDip else { return nil }
+            nowT = hours
+            points.append(GlideModel.Point(t: nowT, used: 0))
         }
-        return GlideModel(hours: hours, windowStart: start, nowT: nowT, points: points, projectionEnd: end,
-                          runsOut: runsOut, endLabel: label, state: state)
+        // Clip to the chart: the last point before its left edge stands in at the edge.
+        if let lastBefore = points.lastIndex(where: { $0.t < 0 }) {
+            points[lastBefore].t = 0
+            points.removeFirst(lastBefore)
+        }
+        if points.first.map({ $0.t > 0.1 && $0.used == 0 }) ?? false { points.insert(GlideModel.Point(t: 0, used: 0), at: 0) }
+
+        var g = GlideModel(hours: hours, windowStart: origin, nowT: nowT, points: points, projectionEnd: projection,
+                           runsOut: runsOut, endLabel: label, state: state)
+        g.evenPaceFrom = evenFrom
+        return g
     }
 
     /// "<1m", "48m", "2h", "2h 12m".

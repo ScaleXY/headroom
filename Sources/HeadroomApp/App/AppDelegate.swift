@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover = PopoverController(model: model, updater: updater)
         caffeinate = Caffeinate(settings: settings)
         fans = FanControl(settings: settings)
-        statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate, fans: fans)
+        statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate, fans: fans, updater: updater)
         let open: () -> Void = { [weak self] in self?.showSettings() }
         popover.openSettings = open
         statusItem.openSettings = open
@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         fans.onChange = { [weak self] in self?.statusItem.update() }
         updater.onChange = { [weak self] in
+            self?.statusItem.update()
             self?.popover.refresh()
             self?.settingsWindow?.refresh()
         }
@@ -75,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if args.contains("--install-update") {
                 updater.onChange = { [weak self] in
                     guard let self else { return }
+                    self.statusItem.update()
                     self.popover.refresh()
                     self.settingsWindow?.refresh()
                     switch self.updater.state {
