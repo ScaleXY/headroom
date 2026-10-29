@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
     private var popover: PopoverController!
     private var statusItem: StatusItemController!
+    private var caffeinate: Caffeinate!
     private var settingsWindow: SettingsWindowController?
     private var onboarding: OnboardingWindowController?
 
@@ -15,7 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings = AppSettings()
         model = AppModel(settings: settings)
         popover = PopoverController(model: model)
-        statusItem = StatusItemController(model: model, popover: popover)
+        caffeinate = Caffeinate(settings: settings)
+        statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate)
         let open: () -> Void = { [weak self] in self?.showSettings() }
         popover.openSettings = open
         statusItem.openSettings = open
@@ -30,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.model.settingsChanged()
         }
         model.start()
+        caffeinate.restore()
         // Test hook for measurements and screenshots: `open Headroom.app --args --open-popover [--tab 1]`.
         let args = ProcessInfo.processInfo.arguments
         // Test hook: `--cycle-popover` opens for 10 s every 30 s (memory soak).
@@ -95,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        caffeinate.suspendForQuit()
         Task { @MainActor in
             await model.flushOnQuit()
             NSApp.reply(toApplicationShouldTerminate: true)
