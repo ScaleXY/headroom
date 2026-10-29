@@ -154,10 +154,40 @@ extension Thermals {
     /// Runs a fan at `level` (0...1) of its range, taking it from macOS if needed.
     public func run(fan: Int, level: Double) throws(SMC.Failure) {
         guard let range = range(fan: fan) else { throw .badSize }
-        // Apple Silicon before M4 hides manual mode behind the fan test flag.
-        if smc.has("Ftst"), number("Ftst") != 1 { try smc.setNumber("Ftst", 1) }
-        if number("F\(fan)Md") != 1 { try smc.setNumber("F\(fan)Md", 1) }
+        if number("F\(fan)Md") != 1 {
+            // Apple Silicon before M4 hides manual mode behind the fan test flag, and thermalmonitord
+            // takes a few seconds to let go once it's set: until then the mode write fails with 0x82.
+            let unlocking = smc.has("Ftst")
+            if unlocking, number("Ftst") != 1 { try smc.setNumber("Ftst", 1) }
+            try Self.retrying(for: unlocking ? Self.unlockTimeout : 0) { () throws(SMC.Failure) in
+                try smc.setNumber("F\(fan)Md", 1)
+            }
+        }
         try smc.setNumber("F\(fan)Tg", range.min + (range.max - range.min) * Swift.min(1, Swift.max(0, level)))
+    }
+
+    /// How long to keep asking for manual mode after setting `Ftst`.
+    static let unlockTimeout: TimeInterval = 6
+
+    /// Runs `body`, retrying while the SMC answers 0x82 (busy: macOS still has the fans) until
+    /// `timeout` has passed. Any other failure, or 0x82 past the deadline, is thrown.
+    static func retrying(
+        for timeout: TimeInterval,
+        every interval: TimeInterval = 0.1,
+        now: () -> Date = Date.init,
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        _ body: () throws(SMC.Failure) -> Void
+    ) throws(SMC.Failure) {
+        let deadline = now().addingTimeInterval(timeout)
+        while true {
+            do {
+                try body()
+                return
+            } catch {
+                guard error == .result(0x82), now() < deadline else { throw error }
+                sleep(interval)
+            }
+        }
     }
 
     /// Hands every fan back to macOS.

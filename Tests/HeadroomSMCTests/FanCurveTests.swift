@@ -1,3 +1,4 @@
+import Foundation
 @testable import HeadroomSMC
 import Testing
 
@@ -71,4 +72,49 @@ import Testing
     #expect(FanSensor.gpuAverage.temperature(readings) == 60)
     #expect(FanSensor.hottest.temperature(readings) == 90)
     #expect(FanSensor.gpuAverage.temperature(["Tp01": 90]) == nil)
+}
+
+// M1–M3: after `Ftst` is set, the mode write answers 0x82 until thermalmonitord lets go.
+@Test func takeoverWaitsOutBusySMC() throws {
+    var clock = Date(timeIntervalSince1970: 0)
+    var attempts = 0
+    try Thermals.retrying(for: 6, now: { clock }, sleep: { clock += $0 }) { () throws(SMC.Failure) in
+        attempts += 1
+        if attempts < 25 { throw .result(0x82) }
+    }
+    #expect(attempts == 25)
+}
+
+@Test func takeoverGivesUpAfterTimeout() {
+    var clock = Date(timeIntervalSince1970: 0)
+    var attempts = 0
+    #expect(throws: SMC.Failure.result(0x82)) {
+        try Thermals.retrying(for: 1, now: { clock }, sleep: { clock += $0 }) { () throws(SMC.Failure) in
+            attempts += 1
+            throw .result(0x82)
+        }
+    }
+    #expect(attempts == 11)
+}
+
+@Test func takeoverDoesNotRetryOtherFailures() {
+    var attempts = 0
+    #expect(throws: SMC.Failure.result(0x86)) {
+        try Thermals.retrying(for: 6, sleep: { _ in }) { () throws(SMC.Failure) in
+            attempts += 1
+            throw .result(0x86)
+        }
+    }
+    #expect(attempts == 1)
+}
+
+@Test func noUnlockMeansNoRetry() {
+    var attempts = 0
+    #expect(throws: SMC.Failure.result(0x82)) {
+        try Thermals.retrying(for: 0, sleep: { _ in }) { () throws(SMC.Failure) in
+            attempts += 1
+            throw .result(0x82)
+        }
+    }
+    #expect(attempts == 1)
 }
