@@ -1,5 +1,6 @@
 # Builds, signs and notarizes Headroom for a pushed tag `v<version>`, publishes the GitHub release
-# and updates the Homebrew cask (ai-headroom in ScaleXY/homebrew-tap).
+# and updates the Homebrew cask (ai-headroom in ScaleXY/homebrew-tap) and appcast.xml on main, the
+# feed the in-app updater reads.
 #
 #   Headroom-<version>.dmg (+ .sha256)   drag-to-Applications disk image; what Homebrew installs
 #   Headroom-<version>.zip (+ .sha256)   the zipped app that install.sh downloads
@@ -22,6 +23,9 @@
 #   APP_STORE_CONNECT_KEY_ID       that key's ID
 #   APP_STORE_CONNECT_ISSUER_ID    the issuer ID shown above the keys in App Store Connect
 #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   an Apple ID with an app-specific password
+#   SPARKLE_ED_PRIVATE_KEY         the EdDSA key that signs in-app updates, as `generate_keys -x` exports
+#                                  it (its public half is SUPublicEDKey in Packaging/Info.plist).
+#                                  Without it the release still publishes and the update feed is skipped.
 #   HOMEBREW_TAP_TOKEN             token that can push to ScaleXY/homebrew-tap (fine-grained:
 #                                  Contents read and write on that repository). Without it the
 #                                  release still publishes and the cask update is skipped.
@@ -178,6 +182,43 @@ jobs:
             gh release create "$TAG" "${assets[@]}" "${flags[@]}"
           fi
           echo "dmg_sha256=$(awk '{print $1}' "dist/Headroom-$VERSION.dmg.sha256")" >> "$GITHUB_OUTPUT"
+
+      # In-app updates: sign the zip for Sparkle and list it in appcast.xml on main, the feed every
+      # install checks (SUFeedURL). Pre-releases go in the beta channel (Scripts/appcast.py).
+      - name: Publish the update feed
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::warning::SPARKLE_ED_PRIVATE_KEY isn't set, so the app won't offer $VERSION as an update."
+            exit 0
+          fi
+          if ! plutil -extract SUPublicEDKey raw build/Headroom.app/Contents/Info.plist >/dev/null 2>&1; then
+            echo "::error::Packaging/Info.plist has no SUPublicEDKey, so this build can't verify updates."
+            exit 1
+          fi
+          zip="dist/Headroom-$VERSION.zip"
+          signature=$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/sign_update --ed-key-file - "$zip")
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Headroom-$VERSION.zip"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          feed="$RUNNER_TEMP/feed"
+          # Another push can land on main meanwhile; start again from the new tip.
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            rm -rf "$feed" && git worktree prune
+            git worktree add --quiet --detach "$feed" origin/main
+            python3 -I Scripts/appcast.py "$feed/appcast.xml" "$VERSION" "$BUILD" "$url" "$signature"
+            git -C "$feed" add appcast.xml
+            git -C "$feed" commit --quiet -m "chore(appcast): Headroom $VERSION"
+            if git -C "$feed" push --quiet origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Couldn't push appcast.xml to main."
+          exit 1
 
       - name: Remove the signing keychain
         if: always()

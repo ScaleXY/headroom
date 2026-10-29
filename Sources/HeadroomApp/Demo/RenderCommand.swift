@@ -106,6 +106,18 @@ enum RenderCommand {
                 }
             }
         }
+        if name == "all" || name == "updates" {
+            for theme in themes {
+                for (label, state) in PopoverPage.updateStates {
+                    if let rep = PopoverPage.renderUpdateBanner(state, theme: theme) {
+                        write(rep, to: outDir.appendingPathComponent("update-\(label)-\(theme.isDark ? "dark" : "light").png")); written += 1
+                    }
+                    if let rep = PopoverPage.renderSettings(section: .updates, theme: theme, update: state) {
+                        write(rep, to: outDir.appendingPathComponent("settings-updates-\(label)-\(theme.isDark ? "dark" : "light").png")); written += 1
+                    }
+                }
+            }
+        }
         print("rendered \(written) image(s) to \(outDir.path)")
         return 0
     }
@@ -259,7 +271,23 @@ enum PopoverPage {
     }
 
     /// One Settings section at window size, from scratch settings.
-    static func renderSettings(section: SettingsView.Section, theme: Theme, configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
+    static let updateStates: [(String, AppUpdater.State)] = [
+        ("uptodate", .upToDate), ("available", .available("0.2.0")), ("downloading", .downloading("0.2.0", progress: 0.42)),
+        ("installing", .installing("0.2.0")), ("ready", .ready("0.2.0")), ("failed", .failed("Couldn't reach the update server.")),
+    ]
+
+    /// The popover banner on its own, at popover width.
+    static func renderUpdateBanner(_ state: AppUpdater.State, theme: Theme) -> NSBitmapImageRep? {
+        let w = PopoverChrome.width, pad = PopoverChrome.pad
+        let h = UpdateBannerRenderer.height + pad * 2
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            ctx.fill(CGPath(rect: CGRect(x: 0, y: 0, width: w, height: h), transform: nil), theme.windowFill)
+            UpdateBannerRenderer.draw(state, rect: CGRect(x: pad, y: pad, width: w - pad * 2, height: UpdateBannerRenderer.height), theme: theme, ctx: ctx, out: nil)
+        }
+    }
+
+    static func renderSettings(section: SettingsView.Section, theme: Theme, update: AppUpdater.State = .upToDate,
+                               configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
         let suite = "com.scalexy.headroom.render.settings"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
@@ -267,7 +295,7 @@ enum PopoverPage {
         let settings = AppSettings(defaults: defaults)
         settings.alwaysShowSessionTimer = true
         configure?(settings)
-        let view = SettingsView(settings: settings, model: nil)
+        let view = SettingsView(settings: settings, model: nil, updater: AppUpdater(settings: settings, preview: update))
         view.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         let size = SettingsView.size
         return renderImage(size: size, appearance: view.appearance) { ctx in

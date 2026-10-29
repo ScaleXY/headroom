@@ -19,11 +19,13 @@ sed -i '' -E "s/(public static let version = )\"[^\"]*\"/\1\"$version\"/" Source
 sed -i '' -E "s/\"Headroom [^\"]*\"/\"Headroom $version\"/" Packaging/headroom.1
 plist_set() { sed -i '' -E "s|(<key>$1</key><string>)[^<]*(</string>)|\\1$2\\2|" Packaging/Info.plist; }
 plist_set CFBundleShortVersionString "${version%%-*}"
+plist_set HeadroomVersion "$version"
 [[ -n $build ]] && plist_set CFBundleVersion "$build"
 
 grep -q "^VERSION *:= $version\$" Makefile
 grep -qF "\"$version\"" Sources/HeadroomCLI/HeadroomCLI.swift
 grep -qF "\"Headroom $version\"" Packaging/headroom.1
 [[ $(plutil -extract CFBundleShortVersionString raw Packaging/Info.plist) == "${version%%-*}" ]]
+[[ $(plutil -extract HeadroomVersion raw Packaging/Info.plist) == "$version" ]]
 [[ -z $build || $(plutil -extract CFBundleVersion raw Packaging/Info.plist) == "$build" ]]
 echo "Set the version to $version${build:+ (build $build)}."

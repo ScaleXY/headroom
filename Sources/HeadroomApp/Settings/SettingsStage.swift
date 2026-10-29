@@ -5,7 +5,8 @@ import HeadroomKit
 /// section changes. Drawn with the live renderers, so every preview is exact.
 @MainActor
 enum SettingsStage {
-    static func draw(_ section: SettingsView.Section, rect: CGRect, settings: AppSettings, model: AppModel?, theme t: Theme, ctx: CGContext) {
+    static func draw(_ section: SettingsView.Section, rect: CGRect, settings: AppSettings, model: AppModel?, updater: AppUpdater? = nil,
+                     theme t: Theme, ctx: CGContext) {
         let shape = rounded(rect, 18)
         OnboardingStage.drawWallpaper(shape, rect: rect, theme: t, ctx: ctx)
         ctx.withState {
@@ -17,6 +18,7 @@ enum SettingsStage {
             case .session: OnboardingStage.session(rect, settings: settings, theme: t, ctx: ctx)
             case .notifications: notifications(rect, settings: settings, theme: t, ctx: ctx)
             case .advanced: terminal(rect, theme: t, ctx: ctx)
+            case .updates: update(rect, settings: settings, updater: updater, theme: t, ctx: ctx)
             }
         }
         ctx.innerStroke(shape, t.isDark ? white(0.08) : black(0.06), width: 1)
@@ -39,6 +41,50 @@ enum SettingsStage {
             PaceCardRenderer.draw(model, origin: .zero, width: width, theme: t, ctx: ctx)
         }
         Text("LIVE PREVIEW", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 30, align: .center, in: ctx)
+    }
+
+    /// The popover as it looks with an update waiting: header, banner, and the card under it.
+    private static func update(_ rect: CGRect, settings: AppSettings, updater: AppUpdater?, theme t: Theme, ctx: CGContext) {
+        let live = updater?.state
+        let state: AppUpdater.State = live?.offersUpdate == true ? live! : .available(nextVersion)
+        var presenter = Presenter(now: Demo.now, policy: settings.policy, options: settings.presentation)
+        presenter.locale = Display.locale
+        var input = Demo.claudeMockup(now: Demo.now)
+        input.weekCostMicros = nil
+        let card = presenter.paceCard(input)
+        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
+        let cardHeight = PaceCardRenderer.draw(card, origin: .zero, width: cw, theme: t, ctx: nil)
+        let h = pad + PopoverChrome.headerHeight + UpdateBannerRenderer.space + cardHeight + PopoverChrome.footerHeight + pad
+        let room = CGRect(x: rect.minX + 18, y: rect.minY + 40, width: rect.width - 36, height: rect.height - 40 - 64)
+        let k = min(room.width / w, room.height / h, 1)
+        ctx.withState {
+            ctx.translateBy(x: rect.midX - w * k / 2, y: room.minY + max(0, (room.height - h * k) / 2))
+            ctx.scaleBy(x: k, y: k)
+            let window = CGRect(x: 0, y: 0, width: w, height: h)
+            ctx.withState {
+                ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: black(t.isDark ? 0.5 : 0.2).cgColor)
+                ctx.fill(rounded(window, PopoverChrome.radius), t.windowFill)
+            }
+            PopoverChrome.drawWindow(window, theme: t, ctx: ctx)
+            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: 0, theme: t, ctx: ctx, out: nil)
+            var y = pad + PopoverChrome.headerHeight
+            UpdateBannerRenderer.draw(state, rect: CGRect(x: pad, y: y, width: cw, height: UpdateBannerRenderer.height), theme: t, ctx: ctx, out: nil)
+            y += UpdateBannerRenderer.space
+            y += PaceCardRenderer.draw(card, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx)
+            PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: y, width: cw, theme: t, ctx: ctx, out: nil)
+        }
+        Text("IN THE POPOVER", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 44, align: .center, in: ctx)
+        Text("One click, and Headroom is back in seconds.", F.sf(12, 500), t.muted).draw(x: rect.midX, capCenter: rect.maxY - 25, align: .center, in: ctx)
+    }
+
+    /// A plausible next version for the preview: this one with its last number bumped.
+    private static var nextVersion: String {
+        let current = AppUpdater.currentVersion ?? "0.1.0"
+        let core = current.split(separator: "-").first.map(String.init) ?? current
+        var parts = core.split(separator: ".").compactMap { Int($0) }
+        guard !parts.isEmpty else { return "0.2.0" }
+        parts[parts.count - 1] += 1
+        return parts.map(String.init).joined(separator: ".")
     }
 
     /// The alerts that are on, as macOS would stack them.

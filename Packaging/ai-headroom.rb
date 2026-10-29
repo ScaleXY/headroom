@@ -10,6 +10,8 @@ cask "ai-headroom" do
   desc "Menu bar pace meter for Claude and Codex plan allowances"
   homepage "https://github.com/ScaleXY/headroom"
 
+  # Headroom updates itself in place (Sparkle); brew upgrade --greedy still works.
+  auto_updates true
   conflicts_with cask: "headroom"
   depends_on arch: :arm64
   depends_on macos: :sequoia

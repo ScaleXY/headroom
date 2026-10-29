@@ -12,11 +12,16 @@
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>0.1.1</string>
 	<key>CFBundleVersion</key><string>5</string>
+	<key>HeadroomVersion</key><string>0.1.1-beta.5</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key><string>15.0</string>
 	<key>LSUIElement</key><true/>
 	<key>NSHumanReadableCopyright</key><string>Made by ScaleXY. Public domain under The Unlicense.</string>
 	<key>NSSupportsAutomaticTermination</key><false/>
 	<key>NSSupportsSuddenTermination</key><false/>
+	<key>SUFeedURL</key><string>https://raw.githubusercontent.com/ScaleXY/headroom/main/appcast.xml</string>
+	<key>SUPublicEDKey</key><string>kWx5MgaEqrjM2ROlxDVzYj2nZuJSrORe3SC72tfFXJc=</string>
+	<key>SUEnableAutomaticChecks</key><true/>
+	<key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict>
 </plist>

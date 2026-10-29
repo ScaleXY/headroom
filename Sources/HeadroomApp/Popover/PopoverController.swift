@@ -6,14 +6,16 @@ import HeadroomKit
 @MainActor
 final class PopoverController: NSObject {
     let model: AppModel
+    let updater: AppUpdater?
     var openSettings: (() -> Void)?
     private var panel: NSPanel?
     private var root: PopoverRootView?
     private var monitors: [Any] = []
     var isShown: Bool { panel != nil }
 
-    init(model: AppModel) {
+    init(model: AppModel, updater: AppUpdater? = nil) {
         self.model = model
+        self.updater = updater
     }
 
     func toggle(relativeTo button: NSStatusBarButton) {
@@ -145,7 +147,9 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
 
     var theme: Theme { Theme.current(for: effectiveAppearance) }
 
-    var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + (tab == 1 && cards.historyWeek == nil ? 36 : 0) }
+    private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
+    private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }
+    var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (tab == 1 && cards.historyWeek == nil ? 36 : 0) }
     var bottomHeight: CGFloat { PopoverChrome.footerHeight + PopoverChrome.pad }
 
     var preferredHeight: CGFloat { topHeight + cards.contentHeight + bottomHeight }
@@ -178,6 +182,8 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     }
 
     override func updateLayer() {
+        // Fresh regions each pass, so a banner that's gone can't be clicked.
+        out = RenderOutput()
         CPUCanvas.update(self) { ctx in self.drawContent(ctx) }
         for r in out.regions where r.tooltip != nil { addToolTip(r.rect, owner: self, userData: nil) }
     }
@@ -194,8 +200,12 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         } else {
             PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: tab, theme: t, ctx: ctx, out: out)
         }
+        if showsBanner, let state = controller?.updater?.state {
+            let r = CGRect(x: pad, y: pad + PopoverChrome.headerHeight, width: cw, height: UpdateBannerRenderer.height)
+            UpdateBannerRenderer.draw(state, rect: r, theme: t, ctx: ctx, out: out)
+        }
         if tab == 1 && cards.historyWeek == nil {
-            let y = pad + PopoverChrome.headerHeight
+            let y = pad + PopoverChrome.headerHeight + bannerSpace
             let modes = Segmented(items: ["All", "New only"], selected: model.settings.activityMode.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
             modes.draw(in: CGRect(x: pad + 1, y: y, width: modes.width, height: 26), theme: t, ctx: ctx, out: out) { .activityMode($0) }
             let ranges = Segmented(items: ActivityRange.allCases.map(\.label), selected: model.settings.activityRange.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
@@ -227,6 +237,10 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         case .settings:
             controller?.close()
             controller?.openSettings?()
+        case .update:
+            controller?.updater?.installAndRelaunch()
+        case .dismissUpdate:
+            controller?.updater?.snooze()
         default: break
         }
     }
