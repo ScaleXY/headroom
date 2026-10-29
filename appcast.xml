@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>Headroom</title>
+    <link>https://github.com/ScaleXY/headroom</link>
+    <description>Headroom releases</description>
+    <item>
+      <title>Headroom 0.1.7</title>
+      <pubDate>Thu, 29 Oct 2026 10:35:42 GMT</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.1.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/ScaleXY/headroom/releases/tag/v0.1.7</sparkle:fullReleaseNotesLink>
+      <enclosure url="https://github.com/ScaleXY/headroom/releases/download/v0.1.7/Headroom-0.1.7.zip" type="application/octet-stream" sparkle:edSignature="uzOOq3sRIuVtMPoeBFpGWpL+7XOrzHTVhb3H0OTVHg3TYtuXgRaDaD/M0ZuClhhPeiWuAF1F1pziC1iQxhoRDw==" length="3961047" />
+    </item>
+  </channel>
+</rss>
