@@ -435,6 +435,8 @@ final class AppModel {
             if let acct {
                 input.samples = acct.windows.mapValues(\.samples)
                 if let session = acct.session { input.samples[LimitWindow.sessionID()] = session.samples }
+                let since = Date().addingTimeInterval(-(Presenter.sessionTrailHours + 5) * 3600)
+                input.pastSessions = acct.finishedSessions(since: since, now: Date())
             }
             input.smoothedState = acct?.tracker?.shown
             if let early = acct?.earlyResetAt, let start = reading.headline?.windowStart, early >= start { input.earlyResetAt = early }

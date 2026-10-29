@@ -65,7 +65,12 @@ struct MeterModel: Equatable {
 }
 
 struct GlideModel: Equatable {
-    struct Point: Equatable { var t: Double; var used: Double }
+    struct Point: Equatable {
+        var t: Double
+        var used: Double
+        /// Starts again after a reset: the line steps straight up to here instead of joining the last point.
+        var refill = false
+    }
     /// Window length in hours (168 for a week).
     var hours: Double
     /// Local window start, for day boundaries and labels.
@@ -81,11 +86,14 @@ struct GlideModel: Equatable {
     var state: PacingState
     /// Override line color (history view uses the brand color).
     var brandLine: Provider? = nil
+    /// Where the even-pace diagonal starts (it always ends at `hours`); nil hides it.
+    var evenPaceFrom: Double? = 0
 
     static func == (a: GlideModel, b: GlideModel) -> Bool {
         a.hours == b.hours && a.windowStart == b.windowStart && a.nowT == b.nowT && a.points == b.points
             && a.projectionEnd.t == b.projectionEnd.t && a.projectionEnd.remaining == b.projectionEnd.remaining
             && a.runsOut == b.runsOut && a.endLabel == b.endLabel && a.state == b.state && a.brandLine == b.brandLine
+            && a.evenPaceFrom == b.evenPaceFrom
     }
 }
 

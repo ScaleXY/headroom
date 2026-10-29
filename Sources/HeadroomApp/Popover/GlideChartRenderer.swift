@@ -25,17 +25,23 @@ enum GlideChartRenderer {
         let col: NSColor = g.brandLine.map { theme.isDark ? Brand.of($0).light : Brand.of($0).base } ?? theme.pacing(g.state).text
         let warnCol = theme.rose
 
-        // The 5-hour session: hour lines, labelled at the line.
-        let hourly = hours <= 12
+        // The 5-hour session: hour lines, labelled at the line (every 4 hours across a day).
+        let hourly = hours <= 30
+        let hourStep: Double = hours <= 12 ? 1 : 4
         // Day boundaries at local midnight; weekly boundaries for long (monthly) windows.
         let weekly = hours > 240
         var bounds: [Double] = [0]
         if hourly {
             // From the first full hour after the start.
             var h = (calendar.dateInterval(of: .hour, for: g.windowStart)?.end ?? g.windowStart).timeIntervalSince(g.windowStart) / 3600
+            if hourStep > 1 {
+                // Land on local hours that divide evenly: 12, 4, 8…
+                let hour = Double(calendar.component(.hour, from: g.windowStart.addingTimeInterval(h * 3600)))
+                h += (hourStep - hour.truncatingRemainder(dividingBy: hourStep)).truncatingRemainder(dividingBy: hourStep)
+            }
             while h < hours - 0.01 {
                 if h > 0.01 { bounds.append(h) }
-                h += 1
+                h += hourStep
             }
         } else if let firstMidnight = calendar.nextDate(after: g.windowStart, matching: DateComponents(hour: 0, minute: 0), matchingPolicy: .nextTime) {
             var d = firstMidnight
@@ -89,17 +95,22 @@ enum GlideChartRenderer {
             label.draw(x: cx + 0.35, baseline: H - 5, align: .center, in: ctx)
         }
 
-        // Even pace diagonal.
-        ctx.stroke(line(0, Y(1), W, Y(0)), theme.chartDash, width: 1, dash: [3, 4])
+        // Even pace diagonal (for a trail, just the current session).
+        if let from = g.evenPaceFrom { ctx.stroke(line(X(from), Y(1), W, Y(0)), theme.chartDash, width: 1, dash: [3, 4]) }
 
-        // History → runs split at gaps > 2 h.
-        let pts = g.points.filter { $0.t >= 0 && $0.t <= g.nowT + 0.01 }.sorted { $0.t < $1.t }
-        // Split at real gaps first (Mac asleep or off), then thin each run for a smooth curve.
+        // History → runs, split at resets and at gaps > 2 h.
+        let pts = g.points.enumerated().filter { $0.element.t >= 0 && $0.element.t <= g.nowT + 0.01 }
+            .sorted { ($0.element.t, $0.offset) < ($1.element.t, $1.offset) }.map(\.element)
+        // A gap (Mac asleep or off) is only dotted when usage moved across it; flat, nothing happened.
         var rawRuns: [[GlideModel.Point]] = []
-        var lastT: Double? = nil
+        var refills: Set<Int> = [] // runs that step up from the one before
         for p in pts {
-            if let lt = lastT, p.t - lt <= min(2.0, hours / 6), !rawRuns.isEmpty { rawRuns[rawRuns.count - 1].append(p) } else { rawRuns.append([p]) }
-            lastT = p.t
+            if let last = rawRuns.last?.last, !p.refill, p.t - last.t <= min(2.0, hours / 6) || abs(p.used - last.used) < 0.005 {
+                rawRuns[rawRuns.count - 1].append(p)
+            } else {
+                if p.refill, !rawRuns.isEmpty { refills.insert(rawRuns.count) }
+                rawRuns.append([p])
+            }
         }
         var runs: [[CGPoint]] = rawRuns.map { run in decimate(run, step: hours / 56).map { CGPoint(x: X($0.t), y: Y(1 - $0.used)) } }
         let nowUsed = pts.last?.used ?? (1 - endR)
@@ -107,18 +118,15 @@ enum GlideChartRenderer {
         if runs.isEmpty { runs = [[CGPoint(x: 0, y: Y(1)), CGPoint(x: nx, y: ny)]] }
         if let l = runs.last?.last, abs(l.x - nx) > 0.5 { runs[runs.count - 1].append(CGPoint(x: nx, y: ny)) }
 
-        let curve = CGMutablePath()
         var gapSegments: [(CGPoint, CGPoint)] = []
-        for (i, run) in runs.enumerated() {
-            let s = smoothPath(run)
-            if i == 0 { curve.addPath(s) } else {
-                if let prev = runs[i - 1].last, let first = run.first { gapSegments.append((prev, first)); curve.addLine(to: first) }
-                curve.addPath(s)
-            }
+        var steps: [(CGPoint, CGPoint)] = []
+        for i in runs.indices.dropFirst() {
+            guard let prev = runs[i - 1].last, let first = runs[i].first else { continue }
+            if refills.contains(i) { steps.append((prev, first)) } else { gapSegments.append((prev, first)) }
         }
-        // Area fill under the whole history.
+        // Area fill under the whole history: one outline, the runs joined by their gaps and steps.
         let area = CGMutablePath()
-        area.addPath(curveForArea(runs))
+        for run in runs { appendSmooth(run, to: area) }
         area.addLine(to: CGPoint(x: nx, y: Y(0)))
         area.addLine(to: CGPoint(x: runs.first?.first?.x ?? 0, y: Y(0)))
         area.closeSubpath()
@@ -135,6 +143,10 @@ enum GlideChartRenderer {
                 ctx.glowStroke(s, color: col, width: 4, blur: 5.2)
             }
             ctx.stroke(s, col, width: 2.1, cap: .round, join: .round)
+        }
+        // A reset refills the headroom: a straight step up.
+        for (a, b) in steps {
+            ctx.withState { ctx.setAlpha(0.7); ctx.stroke(line(a.x, a.y, b.x, b.y), col, width: 1.4, cap: .round) }
         }
         for (a, b) in gapSegments {
             ctx.withState { ctx.setAlpha(0.85); ctx.stroke(line(a.x, a.y, b.x, b.y), col, width: 2, dash: [0.1, 4.4], cap: .round) }
@@ -168,18 +180,40 @@ enum GlideChartRenderer {
         let dot = CGMutablePath(); dot.addEllipse(in: CGRect(x: nx - 3.8, y: ny - 3.8, width: 7.6, height: 7.6))
         ctx.fill(dot, col)
         ctx.stroke(dot, theme.cardSolid, width: 2)
-        let cw: CGFloat = 28
-        let cx = min(max(nx, cw / 2 + 1), W - cw / 2 - 1)
-        let chip = rounded(CGRect(x: cx - cw / 2, y: ny - 23, width: cw, height: 13), 6.5)
+        // The chip sits above the dot unless the line runs through there (a steep dive into now):
+        // then it takes the first clear spot around the dot, or the least crowded one.
+        let cw: CGFloat = 28, ch: CGFloat = 13
+        let near = (runs.last ?? []).filter { $0.x >= nx - 2 * cw } + [CGPoint(x: nx, y: ny), CGPoint(x: ex, y: ey)]
+        func crossings(_ r: CGRect) -> Int {
+            let box = r.insetBy(dx: -2, dy: -2)
+            return zip(near, near.dropFirst()).reduce(0) { n, seg in
+                let (a, b) = seg
+                let steps = max(1, Int(hypot(b.x - a.x, b.y - a.y)))
+                return n + (0...steps).filter { i in
+                    let f = CGFloat(i) / CGFloat(steps)
+                    return box.contains(CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f))
+                }.count
+            }
+        }
+        let spots = [(0, -23), (1, -21), (-1, 8), (0, 10), (-1, -21), (1, 8)].map { side, dy -> CGRect in
+            let x = side == 0 ? nx - cw / 2 : side > 0 ? nx + 6 : nx - 6 - cw
+            return CGRect(x: min(max(x, 1), W - cw - 1), y: min(max(ny + CGFloat(dy), 0), bot - ch - 2), width: cw, height: ch)
+        }
+        let chipRect = spots.first { crossings($0) == 0 } ?? spots.min { crossings($0) < crossings($1) }!
+        let chip = rounded(chipRect, 6.5)
+        ctx.fill(chip, theme.cardSolid.fade(0.85))
         ctx.fill(chip, col.fade(0.16))
         ctx.stroke(chip, col.fade(0.4), width: 0.6)
-        Text("NOW", F.sf(7.8, 800), col, kern: 0.8).draw(x: cx + 0.4, baseline: ny - 13.6, align: .center, in: ctx)
+        Text("NOW", F.sf(7.8, 800), col, kern: 0.8).draw(x: chipRect.midX + 0.4, baseline: chipRect.maxY - 3.6, align: .center, in: ctx)
 
         // EVEN PACE label in the emptier half, outlined in the card color.
-        let evenAt = g.nowT > hours * 0.6 ? g.nowT * 0.75 : g.nowT + (hours - g.nowT) * 0.6
+        guard let from = g.evenPaceFrom, X(hours) - X(from) > 120 else { return }
+        let span = hours - from, nowIn = g.nowT - from
+        let evenAt = from + (nowIn > span * 0.6 ? nowIn * 0.75 : nowIn + (span - nowIn) * 0.6)
+        let evenY = Y(1 - (evenAt - from) / span)
         // Leave it out when it would sit on the end label; the dashed line reads on its own.
-        guard !CGRect(x: X(evenAt) - 30, y: Y(1 - evenAt / hours) - 14, width: 60, height: 16).intersects(endRect) else { return }
-        let ly = Y(1 - evenAt / hours) - 6
+        guard !CGRect(x: X(evenAt) - 30, y: evenY - 14, width: 60, height: 16).intersects(endRect) else { return }
+        let ly = evenY - 6
         let label = NSMutableAttributedString(string: "EVEN PACE", attributes: [.font: F.sf(8.5, 650), .kern: 0.6, .foregroundColor: theme.chartLabel])
         drawOutlined(label, center: CGPoint(x: X(evenAt), y: ly), outline: theme.cardSolid, ctx: ctx)
     }
@@ -188,33 +222,19 @@ enum GlideChartRenderer {
         let p = CGMutablePath(); p.move(to: CGPoint(x: x1, y: y1)); p.addLine(to: CGPoint(x: x2, y: y2)); return p
     }
 
-    private static func curveForArea(_ runs: [[CGPoint]]) -> CGPath {
-        let p = CGMutablePath()
-        for (i, run) in runs.enumerated() {
-            let s = smoothPath(run)
-            if i == 0 { p.addPath(s) } else if let f = run.first { p.addLine(to: f); p.addPath(smoothPathContinuing(run)) }
-            _ = s
-        }
-        return p
-    }
-
-    /// Same as smoothPath but continues the current subpath (no moveTo).
-    private static func smoothPathContinuing(_ pts: [CGPoint]) -> CGPath {
-        let full = smoothPath(pts)
-        let p = CGMutablePath()
-        var first = true
-        full.applyWithBlock { el in
+    /// Appends `smoothPath(pts)` to the current subpath of `p`, joined to it by a straight line.
+    private static func appendSmooth(_ pts: [CGPoint], to p: CGMutablePath) {
+        guard let first = pts.first else { return }
+        if p.isEmpty { p.move(to: first) } else { p.addLine(to: first) }
+        smoothPath(pts).applyWithBlock { el in
             let e = el.pointee
             switch e.type {
-            case .moveToPoint: if first { first = false } // skip
             case .addLineToPoint: p.addLine(to: e.points[0])
             case .addCurveToPoint: p.addCurve(to: e.points[2], control1: e.points[0], control2: e.points[1])
             case .addQuadCurveToPoint: p.addQuadCurve(to: e.points[1], control: e.points[0])
-            case .closeSubpath: break
-            @unknown default: break
+            default: break
             }
         }
-        return p
     }
 
     /// Keeps at most one point per `step` hours (plus the last), so the curve stays smooth.
