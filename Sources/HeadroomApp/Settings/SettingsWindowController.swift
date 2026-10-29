@@ -150,7 +150,8 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     private let updater: AppUpdater?
     var openWelcome: (() -> Void)?
     private(set) var section: Section = .general
-    private var notifyStatus = ""
+    // Never empty: an empty TextBlock throws when drawn, and the permission check answers later.
+    private var notifyStatus = "Checking notification permission…"
     private var cliStatus = ""
     private var cliMessage: String?
     private var priceFields: [Provider: NSTextField] = [:]
