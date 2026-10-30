@@ -10,6 +10,7 @@
 #   make dmg        build dist/Headroom-<version>.dmg (drag to Applications) with a SHA-256 checksum
 #   make dmg-background  redraw assets/dmg-background.tiff, the DMG window background (needs Chrome)
 #   make notarize   notarize and staple the DMG (needs NOTARY_PROFILE, see below)
+#   make mobile-icon      redraw the iPhone, iPad and Watch app icon from assets/icon.svg (opaque, full-bleed)
 #   make mobile-project   generate Mobile/Headroom.xcodeproj from Mobile/project.yml (needs XcodeGen)
 #   make mobile-build     build the iPhone, iPad and Watch apps for the simulators (unsigned)
 #   make mobile-previews  render complications, Live Activity, widgets and phone screens to PNGs
@@ -95,7 +96,7 @@ ifneq ($(wildcard $(PROFILE)),)
 endif
 
 .PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize \
-        mobile-project mobile-build mobile-previews
+        mobile-project mobile-build mobile-previews mobile-icon
 
 all: build
 
@@ -212,6 +213,9 @@ install: app
 
 # iPhone, iPad and Apple Watch. The project is generated, never committed.
 MOBILE_DD := build/mobile
+
+mobile-icon:
+	Scripts/make-mobile-icon.sh
 
 mobile-project:
 	@command -v xcodegen >/dev/null || { echo "Install XcodeGen first: brew install xcodegen"; exit 1; }
