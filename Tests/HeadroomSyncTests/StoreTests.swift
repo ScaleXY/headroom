@@ -1,10 +1,13 @@
+import CoreData
 import Foundation
 import SwiftData
 import Testing
 import HeadroomKit
 @testable import HeadroomSync
 
-@Suite struct StoreTests {
+/// Everything that builds a SwiftData container or a Core Data model runs here, one test at a time:
+/// building several at once from the same model classes races inside Core Data and can crash.
+@Suite(.serialized) struct StoreTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     func store() throws -> SyncStore { SyncStore(container: try SyncContainer.make(.memory, cloudKit: false)) }
@@ -68,6 +71,19 @@ import HeadroomKit
         c = try await s.counts(deviceID: "A")
         #expect(c.devices == 0 && c.live == 0 && c.activity == 0)
         #expect(try await s.counts().devices == 1)
+    }
+
+    /// What `--init-cloudkit-schema` sends to CloudKit: four entities, payloads and account keys encrypted.
+    @Test func theSchemaBecomesTheModelCloudKitMirrors() throws {
+        let model = try #require(NSManagedObjectModel.makeManagedObjectModel(for: HeadroomSchemaV1.models))
+        #expect(Set(model.entities.compactMap(\.name)) == ["DeviceRecord", "AccountLiveRecord", "AccountArchiveRecord", "ActivityDayRecord"])
+        for entity in model.entities {
+            #expect(entity.relationshipsByName.isEmpty)
+            #expect(entity.attributesByName["payload"]?.allowsCloudEncryption == true)
+            if entity.name != "DeviceRecord" { #expect(entity.attributesByName["accountKey"]?.allowsCloudEncryption == true) }
+            // CloudKit mirroring needs every attribute optional or defaulted.
+            for a in entity.attributesByName.values { #expect(a.isOptional || a.defaultValue != nil, "\(entity.name ?? "").\(a.name)") }
+        }
     }
 
     @Test func skipsPayloadsFromANewerApp() async throws {
