@@ -1,6 +1,8 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
+import HeadroomSync
 import os
 
 /// Diagnostics: counts and timings only (no paths, tokens or account data).
@@ -14,6 +16,9 @@ struct PersistedState: Codable, Sendable {
     var lastGood: [String: LimitReading] = [:]
     var claudeRefreshLastRun: Date?
     var codexAccountKey: String?
+    /// When each provider's account changed, for attributing synced activity. Optional, so state
+    /// saved before sync existed still decodes (an added required field would wipe the history).
+    var accountTimeline: AccountTimeline?
 }
 
 /// Owns every Core component and turns their results into presentation input. Main actor;
@@ -56,6 +61,10 @@ final class AppModel {
     private var observers: [NSObjectProtocol] = []
     private let snapshotWriter = SnapshotWriter()
     private let widgets = WidgetPublisher()
+    /// iPhone & Watch sync (Settings → iPhone & Watch).
+    let publisher = CloudPublisher()
+    /// Which account each provider was signed in with, and since when.
+    private(set) var timeline = AccountTimeline()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -63,6 +72,7 @@ final class AppModel {
         let persisted = PlistStore<PersistedState>.standard(named: "state.plist").load() ?? PersistedState()
         history = persisted.history
         codexAccountKey = persisted.codexAccountKey
+        timeline = persisted.accountTimeline ?? AccountTimeline()
         for p in Provider.allCases {
             faults[p] = FaultMachine(provider: p, lastGood: persisted.lastGood[p.rawValue])
         }
@@ -106,6 +116,7 @@ final class AppModel {
         // Read limits right away on launch.
         scheduler.refreshNow()
         tick()
+        if settings.syncEnabled { Task { await publisher.start(model: self) } }
     }
 
     func applyCLIOverrides() async {
@@ -123,6 +134,11 @@ final class AppModel {
             // CLI-missing faults retry on settings changes.
             scheduler.refreshNow()
             tick()
+        }
+        if settings.syncEnabled, !publisher.isRunning, publisher.status == .off {
+            Task { await publisher.start(model: self) }
+        } else if !settings.syncEnabled, publisher.isRunning {
+            publisher.stop()
         }
         changed()
     }
@@ -203,6 +219,7 @@ final class AppModel {
         var merged = reading
         // Keep the plan, credits and caps from the last full read for the same account.
         if let current, current.accountKey == reading.accountKey {
+            merged.accountEmail = current.accountEmail
             merged.resetCredits = current.resetCredits
             merged.resetCreditsAvailable = current.resetCreditsAvailable
             if merged.plan == nil { merged.plan = current.plan }
@@ -221,11 +238,13 @@ final class AppModel {
         for p in Provider.allCases { if let g = faults[p]?.lastGood { state.lastGood[p.rawValue] = g } }
         state.claudeRefreshLastRun = await refresher.lastRunDate
         state.codexAccountKey = codexAccountKey
+        state.accountTimeline = timeline
         try? store.save(state)
         Memory.relieve()
     }
 
     func flushOnQuit() async {
+        await publisher.quit()
         await save()
     }
 
@@ -326,6 +345,8 @@ final class AppModel {
         faults[p] = machine
         history.record(reading, now: reading.fetchedAt)
         updateTracker(p, reading: reading)
+        let key = reading.accountKey ?? PayloadBuilder.deviceScopedKey(p, deviceID: publisher.deviceID)
+        if timeline.record(p, accountKey: key, at: reading.fetchedAt) { timeline.prune(before: Date().addingTimeInterval(-90 * 86400)) }
     }
 
     private func updateTracker(_ p: Provider, reading: LimitReading) {
@@ -490,6 +511,7 @@ final class AppModel {
 
     private func writeSnapshot() {
         widgets.update(WidgetFeedBuilder(now: Date()).build(model: self))
+        publisher.update()
         let snapshot = SnapshotBuilder(now: Date()).build(model: self)
         var body = snapshot
         body.generatedAt = .distantPast

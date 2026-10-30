@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// The popover's fixed chrome: window surface, header (mark + tabs), Activity controls and footer.
 @MainActor

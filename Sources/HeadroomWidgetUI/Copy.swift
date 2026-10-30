@@ -2,23 +2,23 @@ import Foundation
 import HeadroomKit
 
 /// Widget copy, in the popover's voice and with its formatters.
-struct Copy {
-    var now: Date
-    var calendar: Calendar = .current
-    var locale: Locale = .current
+public struct Copy {
+    public var now: Date
+    public var calendar: Calendar = .current
+    public var locale: Locale = .current
 
     /// "10:41 AM" today, "Thu 6 PM" later.
-    func when(_ date: Date) -> String {
+    public func when(_ date: Date) -> String {
         TimeFormat.dayOffset(date, now: now, calendar: calendar) == 0
             ? TimeFormat.shortClock(date, calendar: calendar, locale: locale)
             : TimeFormat.shortDayTime(date, now: now, calendar: calendar, locale: locale)
     }
 
-    func percent(_ f: Double) -> String { "\(Int((max(0, f) * 100).rounded()))%" }
+    public func percent(_ f: Double) -> String { "\(Int((max(0, f) * 100).rounded()))%" }
 
     /// What a dial's needle means, in a few words, and the zone it's in. A forecast passed in
     /// (the session's, the Pace graph's) is said in its own words, so the widgets agree.
-    func burn(_ b: WidgetBurn, left: Double, resetsAt: Date?, idle: Bool = false,
+    public func burn(_ b: WidgetBurn, left: Double, resetsAt: Date?, idle: Bool = false,
               runsOutAt: Date? = nil, leftAtReset: Double? = nil) -> (text: String, state: PacingState?) {
         if left <= 0.0005 {
             return (resetsAt.map { "Out · back \(when($0))" } ?? "Out", .veryTight)
@@ -36,12 +36,12 @@ struct Copy {
     }
 
     /// "70% left at the reset", or "Lasts to the reset" when next to nothing would be.
-    func atReset(_ left: Double) -> String {
+    public func atReset(_ left: Double) -> String {
         left >= 0.005 ? "\(percent(left)) left at the reset" : "Lasts to the reset"
     }
 
     /// The session's forecast line, as the Pace card says it.
-    func session(_ s: WidgetSession) -> String {
+    public func session(_ s: WidgetSession) -> String {
         switch s.outlook {
         case .idle: "Starts with your next prompt"
         case .blocked: s.resetsAt.map { "Back at \(TimeFormat.shortClock($0, calendar: calendar, locale: locale))" } ?? "Used up"
@@ -52,12 +52,18 @@ struct Copy {
     }
 
     /// "renews in 20h" / "renews Wed".
-    func renews(_ date: Date) -> String {
+    public func renews(_ date: Date) -> String {
         "renews in " + TimeFormat.compact(max(0, date.timeIntervalSince(now)))
     }
 
-    func ago(_ date: Date) -> String {
+    public func ago(_ date: Date) -> String {
         let f = TimeFormat.freshness(since: date, now: now)
         return f == "now" ? "just now" : "\(f) ago"
+    }
+
+    public init(now: Date, calendar: Calendar = .current, locale: Locale = .current) {
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
     }
 }

@@ -115,6 +115,10 @@ macOS lets the chip get hot before the fans really spin up, which slows long AI 
 
 Fan speeds can only be set as root, so Headroom ships a small helper for it. The first time you turn Fan Control on, macOS asks you to allow Headroom under **Allow in the Background** in **System Settings → General → Login Items & Extensions**. The helper gives the fans back to macOS as soon as you turn Fan Control off or Headroom quits or crashes. Like Keep Awake, it comes back on at the next launch. Quit other fan apps such as Macs Fan Control first, or they'll fight over the fans.
 
+## On your iPhone, iPad and Apple Watch
+
+Turn on **Settings → iPhone & Watch** and Headroom on iPhone, iPad and Apple Watch shows the same Pace card, 5-hour panel, Burn-o-meter and Activity, with Home Screen widgets, Lock Screen and watch-face complications, and a Live Activity that counts down your 5-hour session. Several Macs, or several Claude and Codex accounts? Each account is one card, however many Macs report it, and its activity adds up across them.
+
 ## Also in your terminal
 
 <img src="media/terminal.png" alt="The headroom command showing the weekly summary, a one-line status, and waiting for the session to reset">
@@ -127,8 +131,9 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 
 - Headroom only **reads** your usage. It never sends a prompt, never uses one of your reset credits, and never changes your sign-in.
 - Nothing runs as root unless you turn on Fan Control, and then only its small fan helper, which accepts requests from Headroom alone.
-- Your token counts come from files already on your Mac. Nothing you type is stored, and nothing is uploaded.
-- The only places it connects to are Anthropic's usage page and, if you leave it on, the Claude and OpenAI status pages. No analytics, ever. Notifications are local.
+- Your token counts come from files already on your Mac. Nothing you type is stored.
+- **Nothing leaves your Apple Account, even when you sync.** Turn on iPhone & Watch sync and your readings, history, token counts and account emails travel through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server and no sign-up, so we never see any of it. Prompts, project names, file paths and sign-in details never sync.
+- Headroom connects only to Anthropic's usage page, your iCloud when sync is on and, if you leave it on, the Claude and OpenAI status pages. No analytics, ever. Notifications are local.
 - It's light: about 17 MB of memory and no CPU while it waits.
 
 ## Update or remove

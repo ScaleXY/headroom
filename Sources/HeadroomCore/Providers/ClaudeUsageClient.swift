@@ -11,19 +11,22 @@ public actor ClaudeUsageClient {
     let refresher: ClaudeRefresher?
     let clock: any ProviderClock
     let accountKey: @Sendable () -> String?
+    let accountEmail: @Sendable () -> String?
 
     public init(
         transport: any HTTPTransport = URLSessionTransport(),
         credentials: any ClaudeCredentialSource = ClaudeCredentialReader(),
         refresher: ClaudeRefresher?,
         clock: any ProviderClock = SystemClock(),
-        accountKey: @escaping @Sendable () -> String? = { ClaudeAccountKey.read() }
+        accountKey: @escaping @Sendable () -> String? = { ClaudeAccountKey.read() },
+        accountEmail: @escaping @Sendable () -> String? = { ClaudeAccountKey.email() }
     ) {
         self.transport = transport
         self.credentials = credentials
         self.refresher = refresher
         self.clock = clock
         self.accountKey = accountKey
+        self.accountEmail = accountEmail
     }
 
     /// One read. Refreshes through `claude -p /usage` at most once (and only when the throttle
@@ -78,7 +81,8 @@ public actor ClaudeUsageClient {
             switch response.status {
             case 200:
                 do {
-                    let reading = try ClaudeUsageParser.parse(response.body, fetchedAt: clock.now, plan: creds.plan, accountKey: key)
+                    var reading = try ClaudeUsageParser.parse(response.body, fetchedAt: clock.now, plan: creds.plan, accountKey: key)
+                    if key != nil { reading.accountEmail = accountEmail() }
                     return .success(reading)
                 } catch {
                     return .failure(error.fault, fallback: fallback)

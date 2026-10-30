@@ -220,8 +220,14 @@ public enum SnapshotFile {
         if let override = ProcessInfo.processInfo.environment["HEADROOM_HOME"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
+        #if os(macOS)
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Headroom", isDirectory: true)
+        #else
+        // No snapshot is written off the Mac; this only keeps the API whole.
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Headroom", isDirectory: true)
+        #endif
     }
 
     public static var url: URL { directory.appendingPathComponent("snapshot.json") }
@@ -256,7 +262,11 @@ public enum SnapshotFile {
 
     /// Whether the app that wrote the snapshot is still running.
     public static func writerIsAlive(_ s: Snapshot) -> Bool {
+        #if os(macOS)
         s.appPID > 0 && kill(s.appPID, 0) == 0
+        #else
+        false
+        #endif
     }
 }
 

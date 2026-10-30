@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// The left half of the welcome window: a wallpaper-like stage that shows what each step does,
 /// drawn with the same renderers as the live app so the previews are exact.

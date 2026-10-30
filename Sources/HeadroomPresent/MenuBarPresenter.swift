@@ -3,7 +3,7 @@ import HeadroomKit
 
 extension Presenter {
     /// Menu bar model for one provider, following the binding-constraint order (PLAN §2.3).
-    func menuBar(_ input: PaceInput, majorOutage: String? = nil) -> (model: MenuBarProviderModel, urgency: UrgencyInput)? {
+    public func menuBar(_ input: PaceInput, majorOutage: String? = nil) -> (model: MenuBarProviderModel, urgency: UrgencyInput)? {
         guard let reading = input.reading, let headline = reading.headline, headline.resetsAt != nil else {
             guard input.fault != nil else { return nil }
             let m = MenuBarProviderModel(provider: input.provider, state: .onPace, cells: 0, hourglass: false, session: nil,
@@ -71,7 +71,7 @@ extension Presenter {
     }
 
     /// Applies the Settings mode: Both · Most urgent · Claude · Codex.
-    func menuBarItems(_ inputs: [PaceInput], mode: MenuBarMode, enabled: Set<Provider>, majorOutage: [Provider: String] = [:]) -> [MenuBarProviderModel] {
+    public func menuBarItems(_ inputs: [PaceInput], mode: MenuBarMode, enabled: Set<Provider>, majorOutage: [Provider: String] = [:]) -> [MenuBarProviderModel] {
         let built = inputs.filter { enabled.contains($0.provider) }.compactMap { menuBar($0, majorOutage: majorOutage[$0.provider]) }
         switch mode {
         case .both: return built.map(\.model)

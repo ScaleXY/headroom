@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 import HeadroomSMC
 
 /// The single status item. Redraws only when its render key changes.

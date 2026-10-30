@@ -1,6 +1,7 @@
 import Foundation
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 
 /// Builds `snapshot.json` from the same inputs the cards use, so the CLI and the popover agree.
 @MainActor

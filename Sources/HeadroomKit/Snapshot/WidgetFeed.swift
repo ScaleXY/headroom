@@ -18,6 +18,9 @@ public struct WidgetFeed: Codable, Sendable, Hashable {
 
     public func provider(_ p: Provider) -> WidgetProvider? { providers.first { $0.id == p } }
 
+    /// The entry for one account (`WidgetProvider.key`).
+    public func account(_ key: String) -> WidgetProvider? { providers.first { $0.key == key } }
+
     /// The provider a one-provider widget shows: the one that needs watching most.
     public var focus: WidgetProvider? {
         providers.filter { $0.week != nil || $0.session != nil }.max { $0.urgency < $1.urgency } ?? providers.first
@@ -33,11 +36,16 @@ public struct WidgetFeed: Codable, Sendable, Hashable {
         if let override = ProcessInfo.processInfo.environment["HEADROOM_HOME"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true).appendingPathComponent(fileName)
         }
+        #if os(macOS)
         var home = FileManager.default.homeDirectoryForCurrentUser.path
         if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir { home = String(cString: dir) }
         return URL(fileURLWithPath: home, isDirectory: true)
             .appendingPathComponent("Library/Application Support/Headroom", isDirectory: true)
             .appendingPathComponent(fileName)
+        #else
+        // iOS and watchOS read the feed from their App Group (`HeadroomSync.FeedFile`).
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
+        #endif
     }
 
     public static func read(from url: URL = url) -> WidgetFeed? {
@@ -45,6 +53,30 @@ public struct WidgetFeed: Codable, Sendable, Hashable {
               let feed = try? SnapshotFile.decoder().decode(WidgetFeed.self, from: data),
               feed.schema == currentSchema else { return nil }
         return feed
+    }
+}
+
+/// Where the iOS and watchOS apps leave `feed.json` for their widget extensions.
+public enum FeedFile {
+    public static let appGroup = "group.com.scalexy.headroom"
+    public static let fileName = "feed.json"
+
+    public static var url: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?.appendingPathComponent(fileName)
+    }
+
+    public static func read(from url: URL? = url) -> WidgetFeed? {
+        url.flatMap { WidgetFeed.read(from: $0) }
+    }
+
+    /// Writes atomically. Returns false when nothing changed (apart from `generatedAt`).
+    @discardableResult
+    public static func write(_ feed: WidgetFeed, to url: URL? = url, previous: inout Data?) -> Bool {
+        guard let url, let data = try? SnapshotFile.encoder().encode(feed), data != previous else { return false }
+        previous = data
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+        return true
     }
 }
 
@@ -65,6 +97,39 @@ public struct WidgetProvider: Codable, Sendable, Hashable {
     /// Blocked by a limit (or an outage) until then.
     public var blockedUntil: Date?
 
+    // Filled by the iPhone and Watch, which can show several accounts per provider. The Mac's
+    // `widgets.json` leaves them nil (one account per provider), so its schema stays at 1.
+
+    /// The merged account this entry describes (`provider:accountKey`).
+    public var account: String? = nil
+    /// The account's email, when the provider exposes one.
+    public var email: String? = nil
+    /// "Claude", or "Claude · athul" when there are two Claude accounts.
+    public var shortLabel: String? = nil
+    /// The Mac that sent the reading ("MacBook Pro").
+    public var sourceDevice: String? = nil
+    /// Signed in on some Mac, or read in the last week.
+    public var isActive: Bool? = nil
+    /// Cost of each of the last 24 hours, oldest first.
+    public var hourlyCostUSD: [Double]? = nil
+    /// Tokens in each of the last 168 hours, oldest first.
+    public var hourly7d: [Int64]? = nil
+    /// The busiest models over the last 7 days.
+    public var topModels: [WidgetModelShare]? = nil
+    /// The last 30 local days, oldest first.
+    public var daily30: [WidgetDay]? = nil
+    /// The last few 5-hour sessions, oldest first.
+    public var recentSessions: [WidgetSessionSummary]? = nil
+    /// The last few finished weeks, oldest first.
+    public var pastWeeks: [WidgetWeekSummary]? = nil
+    /// The plan's weekly share of its monthly price.
+    public var planWeeklyUSD: Double? = nil
+
+    /// Unique among a feed's entries: the account when known, the provider otherwise.
+    public var key: String { account ?? id.rawValue }
+    /// The label for roomy layouts: the email, or the provider name.
+    public var label: String { email ?? id.displayName }
+
     public init(id: Provider, plan: String? = nil, readingAt: Date? = nil, fault: String? = nil, week: WidgetWeek? = nil,
                 session: WidgetSession? = nil, hourlyTokens: [Int64] = [], tokens24h: Int64 = 0, cost24hUSD: Double = 0,
                 weekCostUSD: Double? = nil, blockedUntil: Date? = nil) {
@@ -80,6 +145,38 @@ public struct WidgetProvider: Codable, Sendable, Hashable {
         let state = Double(week?.state.rawValue ?? 0)
         return state * 2 + (burns.max() ?? 0)
     }
+}
+
+/// One model's share of recent activity.
+public struct WidgetModelShare: Codable, Sendable, Hashable {
+    public var name: String
+    public var tokens: Int64
+    public var costUSD: Double
+    public init(name: String, tokens: Int64, costUSD: Double) { self.name = name; self.tokens = tokens; self.costUSD = costUSD }
+}
+
+/// One local day of activity.
+public struct WidgetDay: Codable, Sendable, Hashable {
+    public var start: Date
+    public var tokens: Int64
+    public var costUSD: Double
+    public init(start: Date, tokens: Int64, costUSD: Double) { self.start = start; self.tokens = tokens; self.costUSD = costUSD }
+}
+
+/// One finished (or running) 5-hour session.
+public struct WidgetSessionSummary: Codable, Sendable, Hashable {
+    public var resetsAt: Date
+    public var peak: Double
+    public var hitLimit: Bool
+    public init(resetsAt: Date, peak: Double, hitLimit: Bool) { self.resetsAt = resetsAt; self.peak = peak; self.hitLimit = hitLimit }
+}
+
+/// One finished week.
+public struct WidgetWeekSummary: Codable, Sendable, Hashable {
+    public var end: Date
+    public var finalUsed: Double
+    public var ranOut: Bool
+    public init(end: Date, finalUsed: Double, ranOut: Bool) { self.end = end; self.finalUsed = finalUsed; self.ranOut = ranOut }
 }
 
 /// The weekly (or monthly) allowance: the popover's hero, meter, graph and verdict.

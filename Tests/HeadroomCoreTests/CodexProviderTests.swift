@@ -157,6 +157,11 @@ func happyChannel(account: String = "codex/openai-free-account-read.json", limit
         #expect(CodexRateLimitParser.account(result("codex/custom-provider-account-read.json")).fault == nil)
     }
 
+    @Test func accountEmailIsReadForSyncLabels() {
+        #expect(CodexRateLimitParser.email(result("codex/openai-free-account-read.json")) == "user@example.com")
+        #expect(CodexRateLimitParser.email(result("codex/signed-out-account-read.json")) == nil)
+    }
+
     @Test func passiveLogLimits() throws {
         let json = #"{"limit_id":"codex","limit_name":null,"primary":{"used_percent":34.0,"window_minutes":300,"resets_at":1792504200},"secondary":{"used_percent":61.5,"window_minutes":10080,"resets_at":1792846800},"credits":{"has_credits":false,"unlimited":false,"balance":null},"individual_limit":null,"spend_control_reached":null,"plan_type":"plus","rate_limit_reached_type":null}"#
         let p = try JSONDecoder().decode(CodexPassiveRateLimits.self, from: Data(json.utf8))

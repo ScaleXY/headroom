@@ -1,6 +1,7 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 
 /// The popover: a borderless glass panel under the status item. Built on open, torn down on close.
 @MainActor
@@ -339,30 +340,8 @@ final class CardsView: NSView, NSViewToolTipOwner {
         let acct = input.reading.flatMap { model.history.account(p, $0.accountKey) }
         let records = Array((acct?.weeks ?? []).suffix(7))
         weekRecords[p] = records
-        guard records.count >= 1, let reading = input.reading, let headline = reading.headline, headline.resetsAt != nil else {
-            return PastWeeksModel(provider: p, weeks: [], planChange: nil, chips: [], collecting: true)
-        }
-        let a = PacingEngine.analyze(window: headline, samples: input.samples[headline.id] ?? [], now: Date())
-        var cols = records.map { r in
-            WeekColumn(used: r.finalUsed, ranOutHoursEarly: r.hoursEarly, sessionHits: r.sessionHits, earlyResets: r.earlyReset ? 1 : 0,
-                       caption: "Week to \(TimeFormat.monthDay(r.scheduledEnd, calendar: .current, locale: .current)) · \(Int((r.finalUsed * 100).rounded()))% used")
-        }
-        let projected: Double = a.projectedRunOut.map { $0 < a.resetsAt ? 1 : 1 - (a.projectedUnusedAtReset ?? 0) } ?? (1 - (a.projectedUnusedAtReset ?? a.remaining))
-        cols.append(WeekColumn(used: 1 - a.remaining, projected: max(projected, 1 - a.remaining), sessionHits: acct?.sessionHitsThisWindow ?? 0,
-                               earlyResets: acct?.earlyResetAt != nil ? 1 : 0, isCurrent: true, caption: "This week · \(Int(((1 - a.remaining) * 100).rounded()))% used so far"))
-        var change: (after: Int, pill: String)? = nil
-        let plans = records.map(\.plan) + [reading.plan?.pill]
-        for i in 1..<plans.count where plans[i] != plans[i - 1] && plans[i] != nil && plans[i - 1] != nil { change = (i - 1, plans[i] ?? "") }
-        let ranOut = records.filter(\.ranOut).count
-        var chips: [(color: PastWeeksModel.ChipDot, text: String)] = [(.rose, "ran out \(ranOut) of \(records.count)")]
-        let early = records.filter(\.earlyReset).count
-        if early > 0 {
-            chips.append((.spark, "\(early) early reset\(early == 1 ? "" : "s")"))
-        } else {
-            let unused = records.map { max(0, 1 - $0.finalUsed) }.reduce(0, +) / Double(records.count)
-            chips.append((.azure, "\(Int((unused * 100).rounded()))% unused avg"))
-        }
-        return PastWeeksModel(provider: p, weeks: cols, planChange: change, chips: chips, collecting: false)
+        return HistoryPresenter.pastWeeks(input, records: records, sessionHitsThisWindow: acct?.sessionHitsThisWindow ?? 0,
+                                          earlyResetAt: acct?.earlyResetAt)
     }
 
     private func measure() -> CGFloat {

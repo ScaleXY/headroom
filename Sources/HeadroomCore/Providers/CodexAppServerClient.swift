@@ -81,8 +81,10 @@ public actor CodexAppServerClient {
             guard let accountMsg = try await response(channel, id: 2) else {
                 return .failure(.failed(reason: "Codex app-server closed early."))
             }
+            var email: String?
             if let result = accountMsg["result"] as? [String: Any] {
                 if let fault = CodexRateLimitParser.account(result).fault { return .failure(fault) }
+                email = CodexRateLimitParser.email(result)
             } else if accountMsg["error"] != nil {
                 return .failure(.signedOut)
             }
@@ -92,7 +94,9 @@ public actor CodexAppServerClient {
             }
             if let result = limitsMsg["result"] as? [String: Any] {
                 do {
-                    return .success(try CodexRateLimitParser.rateLimits(result, fetchedAt: clock.now))
+                    var reading = try CodexRateLimitParser.rateLimits(result, fetchedAt: clock.now)
+                    reading.accountEmail = email
+                    return .success(reading)
                 } catch {
                     return .failure(error.fault)
                 }

@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 import UserNotifications
 
 /// Local notifications for the moments worth an interruption: the 5-hour session nearing or

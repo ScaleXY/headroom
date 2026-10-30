@@ -1,0 +1,77 @@
+# Builds Headroom for iPhone, iPad and Apple Watch for a pushed tag `mobile-v<version>` and uploads
+# it to App Store Connect (TestFlight). Submission for review stays a manual step in App Store Connect.
+#
+#   git tag -a mobile-v1.0.0 -m "<what's new>" && git push origin mobile-v1.0.0
+#
+# Scripts/set-version.sh --mobile stamps the version; the build number is this workflow's run number.
+# Signing is automatic, through the App Store Connect API key the Mac release already uses:
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY          the API key (AuthKey_<id>.p8), as is or base64
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID       that key's ID
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID    the issuer ID
+#   APPLE_DEVELOPER_ACCOUNT_TEAM_ID                        the team ID
+# The key needs the App Manager role so Xcode can create the distribution certificate and profiles.
+# Before the first upload: register the App IDs, the iCloud container iCloud.com.scalexy.headroom
+# and the App Group group.com.scalexy.headroom, and deploy the CloudKit schema to Production
+# (plans/ios-app/07-build-release-qa.md §6).
+
+name: Mobile Release
+
+on:
+  push:
+    tags: ["mobile-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Archive and upload to TestFlight
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set the version from the tag
+        run: Scripts/set-version.sh --mobile "${TAG#mobile-v}" "${{ github.run_number }}"
+
+      - name: Test
+        run: swift test
+
+      - name: Generate the project
+        run: brew install xcodegen && make mobile-project
+
+      - name: Archive and upload
+        env:
+          KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
+          KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_TEAM_ID }}
+        run: |
+          for name in KEY KEY_ID ISSUER_ID TEAM_ID; do
+            [ -n "${!name}" ] || { echo "::error::Missing the App Store Connect secrets. See the top of this workflow."; exit 1; }
+          done
+          key="$RUNNER_TEMP/AuthKey.p8"
+          case "$KEY" in
+            *"BEGIN PRIVATE KEY"*) printf '%s\n' "$KEY" > "$key" ;;
+            *) printf '%s' "$KEY" | base64 --decode > "$key" ;;
+          esac
+          auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID")
+
+          xcodebuild archive -project Mobile/Headroom.xcodeproj -scheme Headroom -destination "generic/platform=iOS" \
+            -archivePath build/Headroom.xcarchive HEADROOM_TEAM_ID="$TEAM_ID" HEADROOM_CLOUDKIT=YES "${auth[@]}"
+
+          export_options="$RUNNER_TEMP/ExportOptions.plist"
+          plutil -create xml1 "$export_options"
+          plutil -insert method -string app-store-connect "$export_options"
+          plutil -insert destination -string upload "$export_options"
+          plutil -insert teamID -string "$TEAM_ID" "$export_options"
+          plutil -insert signingStyle -string automatic "$export_options"
+          xcodebuild -exportArchive -archivePath build/Headroom.xcarchive -exportOptionsPlist "$export_options" \
+            -exportPath build/export "${auth[@]}"
+          rm -f "$key"

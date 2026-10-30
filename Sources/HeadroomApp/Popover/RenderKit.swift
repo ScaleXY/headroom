@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// An interactive area produced while rendering (tooltips, menus, clicks).
 struct HitRegion {

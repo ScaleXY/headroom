@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 import HeadroomSMC
 
 /// User preferences (Settings window). Backed by UserDefaults; nothing secret is stored here.
@@ -149,6 +150,20 @@ final class AppSettings {
         changed()
     }
 
+    // MARK: iPhone & Watch
+
+    /// Sync to the user's private iCloud for Headroom on iPhone, iPad and Apple Watch.
+    var syncEnabled: Bool {
+        get { defaults.bool(forKey: "sync.enabled") }
+        set { defaults.set(newValue, forKey: "sync.enabled"); changed() }
+    }
+
+    /// When this Mac first turned sync on (cleared by "Remove from iCloud").
+    var syncSince: Date? {
+        get { defaults.object(forKey: "sync.since") as? Date }
+        set { defaults.set(newValue, forKey: "sync.since") }
+    }
+
     // MARK: Keep awake (caffeinate)
 
     /// The assertions Keep Awake holds. Idle sleep only by default, like `caffeinate` itself.
@@ -247,34 +262,6 @@ final class AppSettings {
     }
 }
 
-/// How the 5-hour session appears on each Pace card.
-enum SessionDetail: String, CaseIterable, Sendable {
-    /// Its own panel with a timeline and a forecast; it moves to the top once it warns.
-    case detailed
-    /// A row in the details list, and a banner once it warns.
-    case compact
-
-    var title: String { self == .detailed ? "Detailed" : "Compact" }
-}
-
-/// The optional pieces of a Pace card.
-enum CardPart: String, CaseIterable, Sendable {
-    case weekMeter, weekGraph, sessionMeter, sessionGraph
-}
-
-/// What the five menu bar cells measure.
-enum MeterFocus: String, CaseIterable, Sendable {
-    case week, session, tighter
-
-    var title: String {
-        switch self {
-        case .week: "This week"
-        case .session: "5-hour session"
-        case .tighter: "Whichever is tighter"
-        }
-    }
-}
-
 enum AppAppearance: String, CaseIterable, Sendable {
     case system, light, dark
 
@@ -303,14 +290,4 @@ enum NotificationKind: String, CaseIterable, Sendable {
         case .creditsExpiring: "Reset credits about to lapse"
         }
     }
-}
-
-/// Settings that shape what the cards and the menu bar show.
-struct PresentationOptions: Equatable, Sendable {
-    var sessionDetail: SessionDetail = .detailed
-    var meterFocus: MeterFocus = .week
-    var alwaysShowSessionTimer = false
-    var showPercent = false
-    /// Meters and graphs to draw on each Pace card.
-    var parts: Set<CardPart> = Set(CardPart.allCases)
 }

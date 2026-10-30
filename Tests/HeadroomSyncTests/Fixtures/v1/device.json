@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "name": "Fixture MacBook Pro",
+  "model": "Mac15,7",
+  "appVersion": "0.4.0",
+  "enabledProviders": ["claude", "codex", "futureProvider"],
+  "currentAccounts": {"claude": "claude-0123456789abcdef"},
+  "sessionWarnAt": 0.6,
+  "planPriceOverrides": {"claude": 200},
+  "outages": {},
+  "state": "sleeping",
+  "syncSince": 783000000,
+  "someFieldFromANewerApp": {"nested": true}
+}

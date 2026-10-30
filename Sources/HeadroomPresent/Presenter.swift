@@ -1,34 +1,45 @@
-import AppKit
-import HeadroomCore
+import Foundation
 import HeadroomKit
 
 /// Everything the Pace card needs for one provider, gathered from live state or a fixture.
-struct PaceInput {
-    var provider: Provider
-    var reading: LimitReading?
+public struct PaceInput {
+    public var provider: Provider
+    public var reading: LimitReading?
     /// Glide history per window id.
-    var samples: [String: [UsageSample]] = [:]
+    public var samples: [String: [UsageSample]] = [:]
     /// Finished 5-hour sessions from about the last day, oldest first: the session graph's trail.
-    var pastSessions: [SessionRecord] = []
-    var fault: Fault? = nil
+    public var pastSessions: [SessionRecord] = []
+    public var fault: Fault? = nil
     /// Tracker-smoothed state, when available (live app). Fixtures use the raw analysis.
-    var smoothedState: PacingState? = nil
-    var weekCostMicros: Int64? = nil
-    var planMonthlyOverride: Double? = nil
+    public var smoothedState: PacingState? = nil
+    public var weekCostMicros: Int64? = nil
+    public var planMonthlyOverride: Double? = nil
     /// Start of the current window when it reset early (an early reset happened this week).
-    var earlyResetAt: Date? = nil
+    public var earlyResetAt: Date? = nil
+
+    public init(provider: Provider, reading: LimitReading? = nil, samples: [String: [UsageSample]] = [:], pastSessions: [SessionRecord] = [], fault: Fault? = nil, smoothedState: PacingState? = nil, weekCostMicros: Int64? = nil, planMonthlyOverride: Double? = nil, earlyResetAt: Date? = nil) {
+        self.provider = provider
+        self.reading = reading
+        self.samples = samples
+        self.pastSessions = pastSessions
+        self.fault = fault
+        self.smoothedState = smoothedState
+        self.weekCostMicros = weekCostMicros
+        self.planMonthlyOverride = planMonthlyOverride
+        self.earlyResetAt = earlyResetAt
+    }
 }
 
 /// Turns Kit analyses into card models: the single place UI copy is assembled.
 @MainActor
-struct Presenter {
-    var now: Date
-    var calendar: Calendar = Display.calendar
-    var locale: Locale = Display.locale
-    var policy: PacingPolicy = .standard
-    var options = PresentationOptions()
+public struct Presenter {
+    public var now: Date
+    public var calendar: Calendar = Display.calendar
+    public var locale: Locale = Display.locale
+    public var policy: PacingPolicy = .standard
+    public var options = PresentationOptions()
 
-    func paceCard(_ input: PaceInput) -> PaceCardModel {
+    public func paceCard(_ input: PaceInput) -> PaceCardModel {
         let p = input.provider
         guard let reading = input.reading else {
             return PaceCardModel(
@@ -120,7 +131,7 @@ struct Presenter {
 
     // MARK: Pieces
 
-    func sessionModule(_ s: SessionStatus, forecast f: SessionForecast, weekLeft: Double?, samples: [UsageSample] = [],
+    public func sessionModule(_ s: SessionStatus, forecast f: SessionForecast, weekLeft: Double?, samples: [UsageSample] = [],
                        past: [SessionRecord] = []) -> SessionModuleModel {
         let clock: (Date) -> String = { TimeFormat.clock($0, calendar: calendar, locale: locale) }
         var m = SessionModuleModel(level: s.level, outlook: f.outlook, tone: f.pacingState, used: f.used, elapsed: f.elapsed,
@@ -179,7 +190,7 @@ struct Presenter {
     }
 
     /// Hours of 5-hour headroom the session graph shows between sessions, ending now.
-    static let sessionTrailHours: Double = 24
+    public nonisolated static let sessionTrailHours: Double = 24
 
     /// The 5-hour session graph. While a session runs it spans that session, start to reset, so now
     /// sits where it is in the window and the forecast runs on to the reset. Between sessions it is
@@ -255,7 +266,7 @@ struct Presenter {
     }
 
     /// "<1m", "48m", "2h", "2h 12m".
-    static func hoursMinutes(_ seconds: TimeInterval) -> String {
+    public static func hoursMinutes(_ seconds: TimeInterval) -> String {
         let minutes = Int((max(0, seconds) / 60).rounded())
         if minutes < 1 { return "<1m" }
         if minutes < 60 { return "\(minutes)m" }
@@ -355,5 +366,13 @@ struct Presenter {
         }
     }
 
-    func percent(_ f: Double) -> String { "\(Int((max(0, f) * 100).rounded()))%" }
+    public func percent(_ f: Double) -> String { "\(Int((max(0, f) * 100).rounded()))%" }
+
+    public init(now: Date, calendar: Calendar = Display.calendar, locale: Locale = Display.locale, policy: PacingPolicy = .standard, options: PresentationOptions = PresentationOptions()) {
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
+        self.policy = policy
+        self.options = options
+    }
 }

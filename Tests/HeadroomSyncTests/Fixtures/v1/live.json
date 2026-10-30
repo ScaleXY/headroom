@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "reading": {
+    "provider": "claude",
+    "fetchedAt": 783100000,
+    "source": "api",
+    "plan": {"raw": "max_20x", "tier": "default_claude_max_20x", "pill": "MAX 20×", "isEnterprise": false, "monthlyPriceUSD": 200},
+    "windows": [
+      {"id": "session", "kind": "session", "used": 0.42, "resetsAt": 783110000, "isActive": true},
+      {"id": "weekly", "kind": "weekly", "used": 0.31, "resetsAt": 783400000, "isActive": true}
+    ],
+    "resetCredits": [],
+    "accountKey": "claude-0123456789abcdef"
+  },
+  "fault": {"offline": {}},
+  "faultAt": 783100500,
+  "shownState": 1,
+  "headlineID": "weekly",
+  "sessionHitsThisWindow": 2,
+  "windows": [
+    {"id": "weekly", "resetsAt": 783400000, "duration": 604800, "series": {"t": [978307200, 978310800], "u": [0.29, 0.31]}},
+    {"id": "model:fable", "resetsAt": "not a date"}
+  ],
+  "session": {"id": "session", "resetsAt": 783110000, "duration": 18000, "series": {"t": [978307200], "u": [0.42, 0.5]}},
+  "isCurrent": true,
+  "email": "fixture@example.com"
+}

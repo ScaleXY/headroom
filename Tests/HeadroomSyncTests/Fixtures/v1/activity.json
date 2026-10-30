@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "day": 20403,
+  "slots": [
+    {"slot": 1958688, "model": "claude-opus-4-6", "tokens": {"newInput": 10, "cacheWrite5m": 20, "cacheWrite1h": 0, "cacheRead": 300, "output": 40},
+     "micros": 12345, "unpricedTokens": 0, "classMicros": [100, 200, 300, 400]},
+    {"slot": 1958689, "model": "gpt-5-codex", "tokens": {"newInput": 5, "cacheWrite5m": 0, "cacheWrite1h": 0, "cacheRead": 0, "output": 1}},
+    {"model": "missing slot is skipped"}
+  ]
+}

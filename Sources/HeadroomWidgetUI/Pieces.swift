@@ -5,23 +5,27 @@ import SwiftUI
 // MARK: - Brand
 
 /// A brand mark from `assets/brand`, scaled from its 24×24 viewBox into the frame.
-struct MarkShape: Shape {
-    var provider: Provider
+public struct MarkShape: Shape {
+    public var provider: Provider
 
-    func path(in rect: CGRect) -> Path {
+    public func path(in rect: CGRect) -> Path {
         let s = min(rect.width, rect.height) / 24
         var t = CGAffineTransform(translationX: rect.midX - 12 * s, y: rect.midY - 12 * s).scaledBy(x: s, y: s)
         let cg = BrandPaths.path(named: provider == .claude ? "claude" : "openai")
         return Path(cg.copy(using: &t) ?? cg)
     }
+
+    public init(provider: Provider) {
+        self.provider = provider
+    }
 }
 
 /// The provider tile: brand gradient squircle with the mark, as on the Pace card.
-struct BrandTile: View {
-    var provider: Provider
-    var size: CGFloat
+public struct BrandTile: View {
+    public var provider: Provider
+    public var size: CGFloat
 
-    var body: some View {
+    public var body: some View {
         let b = BrandColors.of(provider)
         let shape = RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
         ZStack {
@@ -33,15 +37,20 @@ struct BrandTile: View {
         .frame(width: size, height: size)
         .shadow(color: black(0.22), radius: size * 0.1, y: size * 0.05)
     }
+
+    public init(provider: Provider, size: CGFloat) {
+        self.provider = provider
+        self.size = size
+    }
 }
 
 /// "MAX 20×" in the brand's tint.
-struct PlanPill: View {
-    var provider: Provider
-    var text: String
+public struct PlanPill: View {
+    public var provider: Provider
+    public var text: String
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let b = BrandColors.of(provider), p = Palette(scheme)
         Text(text.uppercased())
             .font(.system(size: 7.5, weight: .heavy))
@@ -53,17 +62,22 @@ struct PlanPill: View {
             .lineLimit(1)
             .fixedSize()
     }
+
+    public init(provider: Provider, text: String) {
+        self.provider = provider
+        self.text = text
+    }
 }
 
 /// Provider tile, name and plan: the header every one-provider widget opens with.
-struct ProviderHeader: View {
-    var provider: WidgetProvider
-    var tile: CGFloat = 16
-    var name = true
-    var trailing: String? = nil
+public struct ProviderHeader: View {
+    public var provider: WidgetProvider
+    public var tile: CGFloat = 16
+    public var name = true
+    public var trailing: String? = nil
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         HStack(spacing: 6) {
             BrandTile(provider: provider.id, size: tile)
@@ -75,20 +89,27 @@ struct ProviderHeader: View {
             if let trailing { Caps(trailing) }
         }
     }
+
+    public init(provider: WidgetProvider, tile: CGFloat = 16, name: Bool = true, trailing: String? = nil) {
+        self.provider = provider
+        self.tile = tile
+        self.name = name
+        self.trailing = trailing
+    }
 }
 
 // MARK: - Type
 
 /// A small-capitals label ("EVEN PACE", "TO RESET").
-struct Caps: View {
-    var text: String
-    var size: CGFloat
-    var color: Color?
+public struct Caps: View {
+    public var text: String
+    public var size: CGFloat
+    public var color: Color?
     @Environment(\.colorScheme) private var scheme
 
-    init(_ text: String, size: CGFloat = 8, color: Color? = nil) { self.text = text; self.size = size; self.color = color }
+    public init(_ text: String, size: CGFloat = 8, color: Color? = nil) { self.text = text; self.size = size; self.color = color }
 
-    var body: some View {
+    public var body: some View {
         Text(text.uppercased())
             .font(.system(size: size, weight: .bold))
             .tracking(size * 0.09)
@@ -98,28 +119,33 @@ struct Caps: View {
 }
 
 /// A status dot with a soft halo, colored by what it reports.
-struct Dot: View {
-    var color: Color
-    var size: CGFloat = 5
+public struct Dot: View {
+    public var color: Color
+    public var size: CGFloat = 5
 
-    var body: some View {
+    public var body: some View {
         Circle().fill(color).frame(width: size, height: size)
             .background(Circle().fill(color.opacity(0.22)).frame(width: size * 2.2, height: size * 2.2))
+    }
+
+    public init(color: Color, size: CGFloat = 5) {
+        self.color = color
+        self.size = size
     }
 }
 
 // MARK: - Meters
 
 /// The five-cell level meter, the same one the menu bar and the Pace card show.
-struct CellMeter: View {
-    var state: PacingState
-    var cells: Int
-    var caret: Double? = nil
-    var height: CGFloat = 12
-    var dim = false
+public struct CellMeter: View {
+    public var state: PacingState
+    public var cells: Int
+    public var caret: Double? = nil
+    public var height: CGFloat = 12
+    public var dim = false
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), t = p.tone(state)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: height * 0.22) {
@@ -147,11 +173,19 @@ struct CellMeter: View {
             }
         }
     }
+
+    public init(state: PacingState, cells: Int, caret: Double? = nil, height: CGFloat = 12, dim: Bool = false) {
+        self.state = state
+        self.cells = cells
+        self.caret = caret
+        self.height = height
+        self.dim = dim
+    }
 }
 
 /// The even-pace caret under a meter: a small upward triangle.
-struct Caret: Shape {
-    func path(in r: CGRect) -> Path {
+public struct Caret: Shape {
+    public func path(in r: CGRect) -> Path {
         Path { p in
             p.move(to: CGPoint(x: r.midX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
             p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.closeSubpath()
@@ -160,13 +194,13 @@ struct Caret: Shape {
 }
 
 /// A progress ring from 12 o'clock, clockwise, with a glow on the lit arc.
-struct Ring: View {
-    var fraction: Double
-    var tone: Tone
-    var width: CGFloat
+public struct Ring: View {
+    public var fraction: Double
+    public var tone: Tone
+    public var width: CGFloat
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), f = min(max(fraction, 0), 1)
         ZStack {
             Circle().inset(by: width / 2).stroke(p.meterEmpty, lineWidth: width)
@@ -179,14 +213,20 @@ struct Ring: View {
                 .opacity(f > 0 ? 1 : 0)
         }
     }
+
+    public init(fraction: Double, tone: Tone, width: CGFloat) {
+        self.fraction = fraction
+        self.tone = tone
+        self.width = width
+    }
 }
 
 /// The hourglass glyph ("use it before it renews"), from the app's 14×20 viewBox.
-struct Hourglass: View {
-    var color: Color
-    var height: CGFloat = 10
+public struct Hourglass: View {
+    public var color: Color
+    public var height: CGFloat = 10
 
-    var body: some View {
+    public var body: some View {
         let k = height / 20
         ZStack {
             SVGShape(d: "M2 1.6h10M2 18.4h10", box: CGSize(width: 14, height: 20)).stroke(color, style: StrokeStyle(lineWidth: 2.2 * k, lineCap: .round))
@@ -197,27 +237,37 @@ struct Hourglass: View {
         }
         .frame(width: height * 0.7, height: height)
     }
+
+    public init(color: Color, height: CGFloat = 10) {
+        self.color = color
+        self.height = height
+    }
 }
 
 /// SVG path data scaled from its viewBox into the frame.
-struct SVGShape: Shape {
-    var d: String
-    var box: CGSize
+public struct SVGShape: Shape {
+    public var d: String
+    public var box: CGSize
 
-    func path(in rect: CGRect) -> Path {
+    public func path(in rect: CGRect) -> Path {
         var t = CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.width / box.width, y: rect.height / box.height)
         let cg = SVGPath.parse(d)
         return Path(cg.copy(using: &t) ?? cg)
     }
+
+    public init(d: String, box: CGSize) {
+        self.d = d
+        self.box = box
+    }
 }
 
 /// The warning triangle the graphs end on when the allowance runs out first.
-struct WarningGlyph: View {
-    var fill: Color
-    var ink: Color
-    var size: CGFloat = 12
+public struct WarningGlyph: View {
+    public var fill: Color
+    public var ink: Color
+    public var size: CGFloat = 12
 
-    var body: some View {
+    public var body: some View {
         ZStack {
             SVGShape(d: "M7 1.2c.5 0 .9.3 1.2.7l5.5 9.7c.5.9-.1 2-1.2 2H1.5c-1 0-1.7-1.1-1.2-2l5.5-9.7c.3-.4.7-.7 1.2-.7z",
                      box: CGSize(width: 14, height: 14)).fill(fill)
@@ -226,16 +276,22 @@ struct WarningGlyph: View {
         }
         .frame(width: size, height: size)
     }
+
+    public init(fill: Color, ink: Color, size: CGFloat = 12) {
+        self.fill = fill
+        self.ink = ink
+        self.size = size
+    }
 }
 
 // MARK: - Identity
 
 /// The Headroom meter-H, for the empty state.
-struct HeadroomMarkView: View {
-    var size: CGFloat
+public struct HeadroomMarkView: View {
+    public var size: CGFloat
     private static let cells: [UInt32] = [0x4A8EFF, 0x7DB4FF, 0xECEDF1, 0xFFC248, 0xFF6982]
 
-    var body: some View {
+    public var body: some View {
         let s = size / 64
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 15 * s, style: .continuous)
@@ -256,6 +312,10 @@ struct HeadroomMarkView: View {
                 .frame(width: 16 * s, height: 5 * s).offset(x: 24 * s, y: 28.8 * s)
         }
         .frame(width: size, height: size)
+    }
+
+    public init(size: CGFloat) {
+        self.size = size
     }
 }
 

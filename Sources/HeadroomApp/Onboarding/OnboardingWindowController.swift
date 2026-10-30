@@ -1,6 +1,7 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 import ServiceManagement
 
 /// The welcome window: five short steps that set Headroom up the way the user wants it.

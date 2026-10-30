@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// Draws one Pace card (PLAN §7, mockup "Pace, dark"). Returns the card height.
 @MainActor

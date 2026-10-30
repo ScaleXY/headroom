@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// Past weeks (PLAN §7): used share of each renewal week against a ghost track to 100%.
 @MainActor

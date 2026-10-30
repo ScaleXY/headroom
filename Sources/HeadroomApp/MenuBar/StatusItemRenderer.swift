@@ -1,42 +1,6 @@
 import AppKit
 import HeadroomKit
-
-/// What the menu bar shows for one provider (PLAN §3.5). Hashable: it is the render key.
-struct MenuBarProviderModel: Hashable {
-    var provider: Provider
-    var state: PacingState
-    var cells: Int
-    var hourglass: Bool
-    /// Session warning ring + countdown ("48m") while the 5-hour session is ≥ 75%.
-    var session: SessionWarning?
-    /// Blocked (session/weekly/model cap at 100%, or major outage): ⏸ + countdown.
-    var blockedCountdown: String?
-    var fault: Bool
-    var spoken: String
-    /// "82%" after the meter (Settings).
-    var percent: String? = nil
-    /// The cells show the 5-hour session rather than the week.
-    var tracksSession = false
-
-    struct SessionWarning: Hashable {
-        var level: SessionLevel
-        var used: Double
-        var countdown: String
-    }
-}
-
-enum MenuBarMode: String, CaseIterable, Codable, Sendable {
-    case both, mostUrgent, claude, codex
-
-    var title: String {
-        switch self {
-        case .both: "Both"
-        case .mostUrgent: "Most urgent"
-        case .claude: "Claude"
-        case .codex: "Codex"
-        }
-    }
-}
+import HeadroomPresent
 
 @MainActor
 enum StatusItemRenderer {

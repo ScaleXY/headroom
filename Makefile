@@ -10,12 +10,20 @@
 #   make dmg        build dist/Headroom-<version>.dmg (drag to Applications) with a SHA-256 checksum
 #   make dmg-background  redraw assets/dmg-background.tiff, the DMG window background (needs Chrome)
 #   make notarize   notarize and staple the DMG (needs NOTARY_PROFILE, see below)
+#   make mobile-project   generate Mobile/Headroom.xcodeproj from Mobile/project.yml (needs XcodeGen)
+#   make mobile-build     build the iPhone, iPad and Watch apps for the simulators (unsigned)
+#   make mobile-previews  render complications, Live Activity, widgets and phone screens to PNGs
 #
 # Distribution builds need a "Developer ID Application" certificate in the keychain; it is picked
 # over Apple Development automatically and signs with a secure timestamp, as notarization requires.
 # Store notary credentials once with `xcrun notarytool store-credentials <profile>`, then run
 # `make dmg notarize NOTARY_PROFILE=<profile>` (add NOTARY_KEYCHAIN=<path> when the profile lives
 # outside the default keychain, as it does in CI).
+#
+# iPhone & Watch sync needs iCloud entitlements, which macOS only honors with an embedded
+# provisioning profile. Put Headroom's at Packaging/profiles/headroom.provisionprofile (gitignored):
+# a Developer ID profile for releases, or a macOS development profile with CLOUDKIT_ENV=Development.
+# Without one (a build from source) the app is signed exactly as before and runs with sync unavailable.
 #
 # Tagged releases are built by .github/workflows/release.yml: push a tag `v<version>` and the
 # workflow stamps that version in with Scripts/set-version.sh (run it yourself to bump it here).
@@ -35,8 +43,14 @@ DEVELOPER_ID := $(call identity,Developer ID Application)
 IDENTITY  ?= $(or $(DEVELOPER_ID),$(call identity,Apple Development))
 # Notarization needs a secure timestamp; local development builds skip the network round trip.
 TIMESTAMP ?= $(if $(DEVELOPER_ID),--timestamp,--timestamp=none)
+# iCloud for iPhone & Watch sync (see above). Developer ID builds can only use Production.
+PROFILE      ?= Packaging/profiles/headroom.provisionprofile
+CLOUDKIT_ENV ?= $(if $(DEVELOPER_ID),Production,Development)
+APS_ENV      ?= $(if $(DEVELOPER_ID),production,development)
+ENTITLEMENTS := build/Headroom.entitlements
 
-.PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize
+.PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize \
+        mobile-project mobile-build mobile-previews
 
 all: build
 
@@ -122,7 +136,18 @@ app: build
 	@# The fan helper and the app each check that the other carries this identifier and their team.
 	codesign --force $(TIMESTAMP) --options runtime --identifier $(BUNDLE_ID).fan --sign "$(IDENTITY)" $(APP)/Contents/MacOS/HeadroomFanHelper
 	codesign --force $(TIMESTAMP) --options runtime --entitlements Packaging/Widgets/HeadroomWidgets.entitlements --sign "$(IDENTITY)" $(WIDGETS)
-	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)
+	@# With the profile: iCloud entitlements for sync. Without: as before, and sync says it's unavailable.
+	@if [ -f "$(PROFILE)" ]; then \
+		cp "$(PROFILE)" $(APP)/Contents/embedded.provisionprofile; \
+		team=$$(security cms -D -i "$(PROFILE)" | plutil -extract TeamIdentifier.0 raw -o - -); \
+		sed -e "s/@TEAM_ID@/$$team/g" -e "s/@CLOUDKIT_ENV@/$(CLOUDKIT_ENV)/" -e "s/@APS_ENV@/$(APS_ENV)/" \
+			Packaging/Headroom.entitlements.in > $(ENTITLEMENTS); \
+		Scripts/check-entitlements.sh "$(PROFILE)" $(ENTITLEMENTS); \
+		codesign --force $(TIMESTAMP) --options runtime --entitlements $(ENTITLEMENTS) --sign "$(IDENTITY)" $(APP); \
+	else \
+		echo "No $(PROFILE): building without iPhone & Watch sync."; \
+		codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP); \
+	fi
 	codesign --verify --deep --strict $(APP)
 	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper $(WIDGETS)
 
@@ -135,6 +160,22 @@ install: app
 	ln -sf /Applications/Headroom.app/Contents/MacOS/headroom $(HOME)/.local/bin/headroom
 	ln -sf /Applications/Headroom.app/Contents/Resources/headroom.1 $(HOME)/.local/share/man/man1/headroom.1
 	open /Applications/Headroom.app
+
+# iPhone, iPad and Apple Watch. The project is generated, never committed.
+MOBILE_DD := build/mobile
+
+mobile-project:
+	@command -v xcodegen >/dev/null || { echo "Install XcodeGen first: brew install xcodegen"; exit 1; }
+	cd Mobile && xcodegen generate --spec project.yml
+
+mobile-build: mobile-project
+	xcodebuild -project Mobile/Headroom.xcodeproj -scheme Headroom -destination "generic/platform=iOS Simulator" \
+		-derivedDataPath $(MOBILE_DD) CODE_SIGNING_ALLOWED=NO build
+	xcodebuild -project Mobile/Headroom.xcodeproj -scheme HeadroomWatch -destination "generic/platform=watchOS Simulator" \
+		-derivedDataPath $(MOBILE_DD) CODE_SIGNING_ALLOWED=NO build
+
+mobile-previews:
+	swift run HeadroomWidgetPreview build/previews --mobile
 
 clean:
 	rm -rf build .build dist
