@@ -178,29 +178,34 @@ struct Presenter {
         return m
     }
 
-    /// Hours of 5-hour headroom the session graph shows, ending at the current session's reset.
+    /// Hours of 5-hour headroom the session graph shows between sessions, ending now.
     static let sessionTrailHours: Double = 24
 
-    /// The last day of 5-hour headroom: each session dips as it's used and refills at its reset,
-    /// then the current one runs on to where the recent burn takes it. Nil when there's nothing to show.
+    /// The 5-hour session graph. While a session runs it spans that session, start to reset, so now
+    /// sits where it is in the window and the forecast runs on to the reset. Between sessions it is
+    /// the last day: each session dips as it's used and refills at its reset. Nil when there's nothing to show.
     private func sessionGlide(_ f: SessionForecast, samples: [UsageSample], past: [SessionRecord], state: PacingState) -> GlideModel? {
-        let hours = Self.sessionTrailHours
-        let end = f.isActive ? (f.resetsAt ?? now) : now
-        let origin = end.addingTimeInterval(-hours * 3600)
+        let live: (start: Date, reset: Date)? = f.isActive ? f.startedAt.flatMap { s in f.resetsAt.map { (s, $0) } } : nil
+        let end = live?.reset ?? now
+        let origin = live?.start ?? end.addingTimeInterval(-Self.sessionTrailHours * 3600)
+        let hours = end.timeIntervalSince(origin) / 3600
         func t(_ d: Date) -> Double { d.timeIntervalSince(origin) / 3600 }
 
         var points: [GlideModel.Point] = []
-        // A session starts empty with its first message, fills up, and refills at its reset.
+        var lastReset: Date?
+        // A session starts empty with its first message, fills up, and refills at its reset. A start
+        // is the reset less five hours, and resets drift by a moment between readings: one that falls
+        // just before the last reset would be drawn inside the session before it.
         func add(start: Date, samples: [UsageSample], until: Date) {
+            let start = max(start, lastReset ?? start)
             points.append(GlideModel.Point(t: t(start), used: 0))
             points += samples.filter { $0.time > start && $0.time <= until }.map { GlideModel.Point(t: t($0.time), used: $0.used) }
         }
-        let liveStart = f.isActive ? f.startedAt : nil
-        for record in past.sorted(by: { $0.start < $1.start }) where record.resetsAt > origin && record.resetsAt <= (liveStart ?? now) {
+        for record in past.sorted(by: { $0.start < $1.start }) where live == nil && record.resetsAt > origin && record.resetsAt <= now {
             let before = points.count
             if record.samples.isEmpty {
                 // Saved before samples were kept: only the peak is known, so the climb is drawn as a gap.
-                points.append(GlideModel.Point(t: t(record.start), used: 0))
+                points.append(GlideModel.Point(t: t(max(record.start, lastReset ?? record.start)), used: 0))
                 points.append(GlideModel.Point(t: t(record.hitLimitAt ?? record.resetsAt), used: record.peakUsed))
             } else {
                 add(start: record.start, samples: record.samples, until: record.resetsAt)
@@ -208,6 +213,7 @@ struct Presenter {
             guard points.count > before, let last = points.last else { continue }
             if last.t < t(record.resetsAt) { points.append(GlideModel.Point(t: t(record.resetsAt), used: last.used)) }
             points.append(GlideModel.Point(t: t(record.resetsAt), used: 0, refill: true))
+            lastReset = record.resetsAt
         }
         let pastDip = points.contains { $0.used > 0 && $0.t > 0 }
 
@@ -215,11 +221,9 @@ struct Presenter {
         var projection = (t: nowT, remaining: 1.0)
         var runsOut = false
         var label: String? = nil
-        var evenFrom: Double? = nil
-        if f.isActive, let start = f.startedAt {
-            add(start: start, samples: samples, until: now)
+        if let live {
+            add(start: live.start, samples: samples, until: now)
             points.append(GlideModel.Point(t: nowT, used: f.used))
-            evenFrom = t(start)
             projection = (nowT, f.remaining)
             if f.outlook == .blocked {
                 projection = (nowT, 0)
@@ -245,7 +249,8 @@ struct Presenter {
 
         var g = GlideModel(hours: hours, windowStart: origin, nowT: nowT, points: points, projectionEnd: projection,
                            runsOut: runsOut, endLabel: label, state: state)
-        g.evenPaceFrom = evenFrom
+        // No even-pace diagonal: the meter above marks even pace.
+        g.evenPaceFrom = nil
         return g
     }
 

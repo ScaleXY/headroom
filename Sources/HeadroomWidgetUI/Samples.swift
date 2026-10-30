@@ -94,19 +94,20 @@ public enum WidgetSamples {
                               weekCostUSD: 214.6)
     }
 
-    /// The current session plus two earlier ones (one ran dry), as the 24-hour trail.
+    /// A running session, graphed start to reset; between sessions, two earlier ones (one ran dry)
+    /// as the 24-hour trail. The app's feed draws them the same way.
     static func sessionSample(now: Date, used: Double, burn: Double, elapsed: Double?) -> WidgetSession {
         let active = elapsed != nil && used > 0
         let start = now.addingTimeInterval(-(elapsed ?? 0) * 3600)
         let reset = start.addingTimeInterval(5 * 3600)
         let end = active ? reset : now
-        let chartStart = end.addingTimeInterval(-24 * 3600)
+        let chartStart = active ? start : end.addingTimeInterval(-24 * 3600)
         func T(_ d: Date) -> Double { d.timeIntervalSince(chartStart) / 3600 }
 
         var pts: [WidgetPoint] = []
         // Earlier sessions: (hours before the current start, peak, hours to peak).
         let past: [(Double, Double, Double)] = [(15.5, 0.62, 3.6), (8.2, 1.0, 3.1)]
-        for (ago, peak, rise) in past {
+        for (ago, peak, rise) in past where !active {
             let s = (active ? start : now).addingTimeInterval(-ago * 3600)
             for i in 0...12 {
                 let f = Double(i) / 12
@@ -138,7 +139,7 @@ public enum WidgetSamples {
             }
         }
         let nowT = T(now)
-        let chart = WidgetChart(start: chartStart, hours: 24, nowT: nowT, points: pts,
+        let chart = WidgetChart(start: chartStart, hours: end.timeIntervalSince(chartStart) / 3600, nowT: nowT, points: pts,
                                 endT: runsOutAt.map(T) ?? T(end), endRemaining: active ? (runsOutAt == nil ? (leftAtReset ?? max(0, 1 - used)) : 0) : 1,
                                 runsOut: runsOutAt != nil, evenFrom: nil)
         return WidgetSession(used: active ? used : 0, resetsAt: active ? reset : nil, startedAt: active ? start : nil, level: level,

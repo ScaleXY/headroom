@@ -25,7 +25,7 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
         switch self {
         case .burn: "How fast you're spending, against the pace that lasts to the reset."
         case .pace: "What's left this week, where it's heading and when it renews."
-        case .session: "Time to the 5-hour reset, and the last day of sessions."
+        case .session: "Time to the 5-hour reset, and how the session is going."
         }
     }
 
@@ -594,7 +594,7 @@ struct SessionWidget: View {
             .frame(width: 118)
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Caps("Last 24 hours", size: 7.5)
+                    Caps(s.isIdle ? "Last 24 hours" : "This session", size: 7.5)
                     Spacer()
                     StaleNote(ctx: ctx)
                 }

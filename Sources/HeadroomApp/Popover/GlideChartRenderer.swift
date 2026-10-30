@@ -95,7 +95,7 @@ enum GlideChartRenderer {
             label.draw(x: cx + 0.35, baseline: H - 5, align: .center, in: ctx)
         }
 
-        // Even pace diagonal (for a trail, just the current session).
+        // Even pace diagonal (the week's glide; the session trail goes without).
         if let from = g.evenPaceFrom { ctx.stroke(line(X(from), Y(1), W, Y(0)), theme.chartDash, width: 1, dash: [3, 4]) }
 
         // History → runs, split at resets and at gaps > 2 h.
@@ -136,7 +136,8 @@ enum GlideChartRenderer {
         ctx.stroke(line(nx, ny, nx, Y(0)), col.fade(0.45), width: 1, dash: [2, 3])
 
         // Line with glow; gaps dotted.
-        for run in runs {
+        // A run that never moves (a reset straight into a gap) would draw as a lone dot.
+        for run in runs where run.contains(where: { $0 != run[0] }) {
             let s = smoothPath(run)
             ctx.withState {
                 ctx.setAlpha(0.55)

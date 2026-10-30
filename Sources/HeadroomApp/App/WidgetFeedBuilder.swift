@@ -63,8 +63,7 @@ struct WidgetFeedBuilder {
                 burn: WidgetBurn(perHour: f.isActive ? f.burnPerHour : 0,
                                  averagePerHour: f.isActive && elapsedHours > 0.05 ? f.used / elapsedHours : nil,
                                  lastingPerHour: f.isActive ? (hoursLeft > 0 ? f.remaining / hoursLeft : 0) : 1),
-                // The session trail goes without the even-pace guide: unlabeled at widget size, it reads as a forecast.
-                chart: card.sessionModule?.glide.map { chart($0, limit: 220, even: false) }
+                chart: card.sessionModule?.glide.map { chart($0, limit: 220) }
             )
         }
 
@@ -76,11 +75,11 @@ struct WidgetFeedBuilder {
         return out
     }
 
-    private func chart(_ g: GlideModel, limit: Int, even: Bool = true) -> WidgetChart {
+    private func chart(_ g: GlideModel, limit: Int) -> WidgetChart {
         let points = g.points.map { WidgetPoint(t: $0.t, u: $0.used, refill: $0.refill) }
         return WidgetChart(start: g.windowStart, hours: g.hours, nowT: g.nowT, points: BurnGauge.thin(points, limit: limit),
                            endT: g.projectionEnd.t, endRemaining: g.projectionEnd.remaining, runsOut: g.runsOut,
-                           evenFrom: even ? g.evenPaceFrom : nil)
+                           evenFrom: g.evenPaceFrom)
     }
 }
 
