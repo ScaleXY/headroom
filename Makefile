@@ -48,6 +48,51 @@ PROFILE      ?= Packaging/profiles/headroom.provisionprofile
 CLOUDKIT_ENV ?= $(if $(DEVELOPER_ID),Production,Development)
 APS_ENV      ?= $(if $(DEVELOPER_ID),production,development)
 ENTITLEMENTS := build/Headroom.entitlements
+# Profiles can also come from the environment as base64, the way CI stores them. A Development
+# build (CLOUDKIT_ENV=Development, for --init-cloudkit-schema) uses the development profile;
+# otherwise the Developer ID profile fills in when PROFILE is missing.
+ifeq ($(CLOUDKIT_ENV),Development)
+  ifneq ($(APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DEVELOPMENT_BASE64),)
+    PROFILE := build/profiles/development.provisionprofile
+    $(shell mkdir -p build/profiles && printf '%s' "$$APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DEVELOPMENT_BASE64" | base64 --decode > $(PROFILE))
+    APS_ENV   := development
+    TIMESTAMP := --timestamp=none
+  endif
+else ifeq ($(wildcard $(PROFILE)),)
+  ifneq ($(APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64),)
+    PROFILE := build/profiles/developer-id.provisionprofile
+    $(shell mkdir -p build/profiles && printf '%s' "$$APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64" | base64 --decode > $(PROFILE))
+  endif
+endif
+# The Apple Development certificate can come from the environment too (a .p12 as base64, see
+# Scripts/p12-signing.sh): Development builds sign with it through a throwaway keychain that only
+# lives while `make app` signs.
+SIGN_KEYCHAIN :=
+ifeq ($(CLOUDKIT_ENV),Development)
+  ifneq ($(APPLE_DEVELOPER_ACCOUNT_APPLE_DEVELOPMENT_CERTIFICATE_P12_BASE64),)
+    ifneq ($(origin IDENTITY),command line)
+      IDENTITY := $(or $(shell Scripts/p12-signing.sh identity),P12_UNREADABLE)
+    endif
+    SIGN_KEYCHAIN := $(abspath build/signing.keychain-db)
+  endif
+endif
+CODESIGN := codesign $(if $(SIGN_KEYCHAIN),--keychain $(SIGN_KEYCHAIN))
+# With a profile, the whole bundle must be signed by a certificate the profile lists; any other
+# gets the app killed at launch.
+ifneq ($(wildcard $(PROFILE)),)
+  PROFILE_CERTS := $(shell Scripts/profile-certificates.sh $(PROFILE))
+  ifneq ($(SIGN_KEYCHAIN),)
+    ifeq ($(filter $(IDENTITY),$(PROFILE_CERTS)),)
+      SIGN_ERROR := The certificate from APPLE_DEVELOPER_ACCOUNT_APPLE_DEVELOPMENT_CERTIFICATE_P12_BASE64 ($(IDENTITY)) isn't in $(PROFILE), which lists $(PROFILE_CERTS).
+    endif
+  else ifneq ($(origin IDENTITY),command line)
+    KEYCHAIN_IDS := $(shell security find-identity -v -p codesigning | awk '/\)/ {print $$2}')
+    IDENTITY := $(or $(firstword $(filter $(PROFILE_CERTS),$(KEYCHAIN_IDS))),NO_PROFILE_CERTIFICATE)
+    ifeq ($(IDENTITY),NO_PROFILE_CERTIFICATE)
+      SIGN_ERROR := None of the certificates in $(PROFILE) ($(PROFILE_CERTS)) can sign here. Set the APPLE_DEVELOPER_ACCOUNT_APPLE_DEVELOPMENT_CERTIFICATE_* variables, or edit the profile to list your certificate.
+    endif
+  endif
+endif
 
 .PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize \
         mobile-project mobile-build mobile-previews
@@ -105,6 +150,8 @@ notarize:
 	@cat $(DMG).sha256
 
 app: build
+	@$(if $(SIGN_ERROR),echo "error: $(SIGN_ERROR)"; exit 1)
+	@$(if $(filter P12_UNREADABLE,$(IDENTITY)),echo "error: couldn't read the .p12 from the environment (see above)."; exit 1)
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/brand $(APP)/Contents/Library/LaunchDaemons
 	cp Packaging/Info.plist $(APP)/Contents/Info.plist
@@ -128,14 +175,15 @@ app: build
 	cp $(RELEASE)/HeadroomWidgets $(WIDGETS)/Contents/MacOS/HeadroomWidgets
 	cp assets/brand/claude.svg assets/brand/openai.svg $(WIDGETS)/Contents/Resources/brand/
 	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper $(WIDGETS)/Contents/MacOS/HeadroomWidgets
-	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)/Contents/MacOS/headroom
+	@$(if $(SIGN_KEYCHAIN),Scripts/p12-signing.sh open $(SIGN_KEYCHAIN))
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)/Contents/MacOS/headroom
 	@# Sparkle inside out: its helpers, then the framework, then the app.
-	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Autoupdate
-	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Updater.app
-	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Autoupdate
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Updater.app
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)
 	@# The fan helper and the app each check that the other carries this identifier and their team.
-	codesign --force $(TIMESTAMP) --options runtime --identifier $(BUNDLE_ID).fan --sign "$(IDENTITY)" $(APP)/Contents/MacOS/HeadroomFanHelper
-	codesign --force $(TIMESTAMP) --options runtime --entitlements Packaging/Widgets/HeadroomWidgets.entitlements --sign "$(IDENTITY)" $(WIDGETS)
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --identifier $(BUNDLE_ID).fan --sign "$(IDENTITY)" $(APP)/Contents/MacOS/HeadroomFanHelper
+	$(CODESIGN) --force $(TIMESTAMP) --options runtime --entitlements Packaging/Widgets/HeadroomWidgets.entitlements --sign "$(IDENTITY)" $(WIDGETS)
 	@# With the profile: iCloud entitlements for sync. Without: as before, and sync says it's unavailable.
 	@if [ -f "$(PROFILE)" ]; then \
 		cp "$(PROFILE)" $(APP)/Contents/embedded.provisionprofile; \
@@ -143,11 +191,12 @@ app: build
 		sed -e "s/@TEAM_ID@/$$team/g" -e "s/@CLOUDKIT_ENV@/$(CLOUDKIT_ENV)/" -e "s/@APS_ENV@/$(APS_ENV)/" \
 			Packaging/Headroom.entitlements.in > $(ENTITLEMENTS); \
 		Scripts/check-entitlements.sh "$(PROFILE)" $(ENTITLEMENTS); \
-		codesign --force $(TIMESTAMP) --options runtime --entitlements $(ENTITLEMENTS) --sign "$(IDENTITY)" $(APP); \
+		$(CODESIGN) --force $(TIMESTAMP) --options runtime --entitlements $(ENTITLEMENTS) --sign "$(IDENTITY)" $(APP); \
 	else \
 		echo "No $(PROFILE): building without iPhone & Watch sync."; \
-		codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP); \
+		$(CODESIGN) --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP); \
 	fi
+	@$(if $(SIGN_KEYCHAIN),Scripts/p12-signing.sh close $(SIGN_KEYCHAIN))
 	codesign --verify --deep --strict $(APP)
 	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper $(WIDGETS)
 

@@ -57,7 +57,7 @@ enum DeviceIdentity {
         guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return nil }
         var chars = [CChar](repeating: 0, count: size)
         guard sysctlbyname("hw.model", &chars, &size, nil, 0) == 0 else { return nil }
-        return String(cString: chars)
+        return String(decoding: chars.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
     private static var platformUUID: String? {
