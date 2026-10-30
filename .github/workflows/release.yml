@@ -21,6 +21,11 @@
 #       the .p12's export password
 #   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY
 #       its name, "Developer ID Application: <name> (<team>)", or SHA-1
+#   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64
+#       base64 of the Developer ID provisioning profile for com.scalexy.headroom with iCloud (CloudKit,
+#       container iCloud.com.scalexy.headroom) and Push Notifications. It turns on iPhone & Watch sync;
+#       without it the release still builds, with sync unavailable. Profiles expire: renew it in the
+#       developer portal before then (Scripts/check-entitlements.sh fails the build once it has).
 #   Notarization uses the App Store Connect API key when it's set, else the Apple ID:
 #   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY          the API key (AuthKey_<id>.p8), as is or base64
 #   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID       that key's ID
@@ -145,6 +150,17 @@ jobs:
 
           echo "RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
+      - name: Install the provisioning profile (iPhone & Watch sync)
+        env:
+          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::warning::No provisioning profile: this release can't sync to iPhone and Apple Watch."
+            exit 0
+          fi
+          mkdir -p Packaging/profiles
+          printf '%s' "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64" | base64 --decode > Packaging/profiles/headroom.provisionprofile
+
       # One make run builds the app once: the DMG is notarized and stapled (the app inside it too),
       # then the zip is made from that stapled app.
       - name: Build, sign and notarize
@@ -161,6 +177,10 @@ jobs:
           xcrun stapler validate "dist/Headroom-$VERSION.dmg"
           spctl --assess --type open --context context:primary-signature --verbose "dist/Headroom-$VERSION.dmg"
           spctl --assess --type execute --verbose build/Headroom.app
+          if [ -f Packaging/profiles/headroom.provisionprofile ]; then
+            codesign -d --entitlements - --xml build/Headroom.app | grep -q "iCloud.com.scalexy.headroom" \
+              || { echo "::error::The app is missing its iCloud entitlement."; exit 1; }
+          fi
 
       - name: Publish the release
         id: publish

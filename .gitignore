@@ -1,10 +1,17 @@
 # Only code is committed. Planning docs, mockups and prompts stay local.
 /docs/
+/plans/
+# Provisioning profiles (CI decodes Headroom's from a secret)
+/Packaging/profiles/
 # SwiftPM / Xcode
 .build/
 .swiftpm/
 /build/
 *.xcodeproj/xcuserdata/
+# Generated from Mobile/project.yml (make mobile-project)
+/Mobile/*.xcodeproj/
+/Mobile/*/Info.plist
+/Mobile/*/*.entitlements
 *.xcworkspace/xcuserdata/
 DerivedData/
 # macOS
