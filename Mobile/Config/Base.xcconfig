@@ -1,9 +1,9 @@
 // Settings shared by the iPhone, iPad and Watch targets. Versions are stamped by
-// Scripts/set-version.sh --mobile from `mobile-v<version>` tags.
-HEADROOM_MOBILE_VERSION = 1.0.0
-HEADROOM_MOBILE_BUILD = 1
+// Scripts/set-version.sh from `v<version>` tags, the same version as the Mac app.
+HEADROOM_MOBILE_VERSION = 0.4.4
+HEADROOM_MOBILE_BUILD = 44
 // The Apple developer team that signs the apps (set on the command line or in CI).
-HEADROOM_TEAM_ID =
+HEADROOM_TEAM_ID = B2AA43A5CZ
 // YES once the build is signed with the iCloud container and App Group; NO keeps the app on
 // sample data (unsigned simulator and CI builds can't use CloudKit).
-HEADROOM_CLOUDKIT = NO
+HEADROOM_CLOUDKIT = YES
