@@ -21,7 +21,7 @@
 #       the .p12's export password
 #   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_APPLICATION_CERTIFICATE_IDENTITY
 #       its name, "Developer ID Application: <name> (<team>)", or SHA-1
-#   APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64
+#   APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64
 #       base64 of the Developer ID provisioning profile for com.scalexy.headroom with iCloud (CloudKit,
 #       container iCloud.com.scalexy.headroom) and Push Notifications. It turns on iPhone & Watch sync;
 #       without it the release still builds, with sync unavailable. Profiles expire: renew it in the
@@ -152,14 +152,14 @@ jobs:
 
       - name: Install the provisioning profile (iPhone & Watch sync)
         env:
-          APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64 }}
         run: |
-          if [ -z "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64" ]; then
+          if [ -z "$APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64" ]; then
             echo "::warning::No provisioning profile: this release can't sync to iPhone and Apple Watch."
             exit 0
           fi
           mkdir -p Packaging/profiles
-          printf '%s' "$APPLE_DEVELOPER_ACCOUNT_DEVELOPER_ID_PROVISIONING_PROFILE_BASE64" | base64 --decode > Packaging/profiles/headroom.provisionprofile
+          printf '%s' "$APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_MAC_APP_DIRECT_BASE64" | base64 --decode > Packaging/profiles/headroom.provisionprofile
 
       # One make run builds the app once: the DMG is notarized and stapled (the app inside it too),
       # then the zip is made from that stapled app.
