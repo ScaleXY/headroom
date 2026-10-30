@@ -39,7 +39,8 @@ final class WatchServices {
     private var receiver: PhoneRelayReceiver?
 
     private init() {
-        let cloudKit = Bundle.main.object(forInfoDictionaryKey: "HeadroomCloudKit") as? Bool ?? false
+        // The build setting arrives as the string "YES"/"NO", which `as? Bool` never matches.
+        let cloudKit = (Bundle.main.object(forInfoDictionaryKey: "HeadroomCloudKit") as? NSString)?.boolValue ?? false
         var live: (any SyncReading)?
         if cloudKit, let container = try? SyncContainer.make(.appGroup(FeedFile.appGroup), cloudKit: true) {
             live = SyncStore(container: container)
