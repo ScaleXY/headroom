@@ -24,6 +24,17 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+  configs:
+    Debug:
+      HEADROOM_APS_ENVIRONMENT: development
+    # Release builds sign straight for the App Store with distribution profiles (no devices
+    # needed). CI installs the profiles and passes their names as HEADROOM_PROFILE_*.
+    Release:
+      HEADROOM_APS_ENVIRONMENT: production
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: Apple Distribution
+      "CODE_SIGN_IDENTITY[sdk=iphoneos*]": Apple Distribution
+      "CODE_SIGN_IDENTITY[sdk=watchos*]": Apple Distribution
 
 targets:
   Headroom:
@@ -48,7 +59,7 @@ targets:
     entitlements:
       path: App/Headroom.entitlements
       properties:
-        aps-environment: development
+        aps-environment: $(HEADROOM_APS_ENVIRONMENT)
         com.apple.developer.icloud-container-identifiers: [iCloud.com.scalexy.headroom]
         com.apple.developer.icloud-services: [CloudKit]
         com.apple.security.application-groups: [group.com.scalexy.headroom]
@@ -78,6 +89,10 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_APP
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: $(HEADROOM_PROFILE_APP)
+          CODE_SIGN_IDENTITY: Apple Distribution
 
   HeadroomMobileWidgets:
     type: app-extension
@@ -108,6 +123,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.mobile-widgets
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_EXTENSION
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: $(HEADROOM_PROFILE_WIDGETS)
+          CODE_SIGN_IDENTITY: Apple Distribution
 
   HeadroomWatch:
     type: application
@@ -130,7 +149,7 @@ targets:
     entitlements:
       path: Watch/HeadroomWatch.entitlements
       properties:
-        aps-environment: development
+        aps-environment: $(HEADROOM_APS_ENVIRONMENT)
         com.apple.developer.icloud-container-identifiers: [iCloud.com.scalexy.headroom]
         com.apple.developer.icloud-services: [CloudKit]
         com.apple.security.application-groups: [group.com.scalexy.headroom]
@@ -150,6 +169,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.watchkitapp
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_APP
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: $(HEADROOM_PROFILE_WATCH)
+          CODE_SIGN_IDENTITY: Apple Distribution
 
   HeadroomWatchWidgets:
     type: app-extension
@@ -179,6 +202,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.watchkitapp.widgets
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_EXTENSION
+      configs:
+        Release:
+          PROVISIONING_PROFILE_SPECIFIER: $(HEADROOM_PROFILE_WATCH_WIDGETS)
+          CODE_SIGN_IDENTITY: Apple Distribution
 
 schemes:
   Headroom:
