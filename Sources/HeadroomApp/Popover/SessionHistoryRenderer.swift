@@ -1,12 +1,13 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 
 /// 5-hour sessions: the peak of each recent session, so a run of near-misses is easy to spot.
 @MainActor
 enum SessionHistoryRenderer {
     static let sectionHeaderHeight: CGFloat = 30
-    static let maxBars = 18
+    static let maxBars = HistoryPresenter.maxSessionBars
 
     static func drawSectionHeader(x: CGFloat, y: CGFloat, width: CGFloat, warnAt: Double, theme: Theme, ctx: CGContext) {
         let mid = y + 14
@@ -22,27 +23,7 @@ enum SessionHistoryRenderer {
     /// Builds the card model from stored sessions (newest last).
     static func model(_ p: Provider, sessions: [SessionRecord], warnAt: Double, now: Date,
                       calendar: Calendar = Display.calendar, locale: Locale = Display.locale) -> SessionHistoryModel {
-        let shown = Array(sessions.suffix(maxBars))
-        var lastDay: Int?
-        let bars = shown.map { s -> SessionBar in
-            let day = calendar.ordinality(of: .day, in: .era, for: s.start)
-            let label = day != lastDay ? TimeFormat.weekdayShort(s.start, calendar: calendar, locale: locale).uppercased() : nil
-            lastDay = day
-            let span = TimeFormat.shortDayTime(s.start, now: now, calendar: calendar, locale: locale) + " – " + TimeFormat.shortClock(s.resetsAt, calendar: calendar, locale: locale)
-            var tip = "\(span) · peak \(Int((s.peakUsed * 100).rounded()))%"
-            if let short = s.cutShort, s.hitLimit { tip += " · hit the limit \(Presenter.hoursMinutes(short)) before the reset" }
-            if s.inProgress { tip = "Running now · \(Int((s.peakUsed * 100).rounded()))% used so far" }
-            return SessionBar(peak: min(max(s.peakUsed, 0), 1), hitLimit: s.hitLimit, inProgress: s.inProgress, dayLabel: label, tooltip: tip)
-        }
-        let week = sessions.filter { !$0.inProgress && $0.start > now.addingTimeInterval(-7 * 86400) }
-        var chips: [(color: PastWeeksModel.ChipDot, text: String)] = []
-        if !week.isEmpty {
-            let hits = week.filter(\.hitLimit).count
-            chips.append((.rose, "\(hits) of \(week.count) hit the limit"))
-            let avg = week.map(\.peakUsed).reduce(0, +) / Double(week.count)
-            chips.append((.azure, "\(Int((avg * 100).rounded()))% avg peak"))
-        }
-        return SessionHistoryModel(provider: p, bars: bars, warnAt: warnAt, chips: chips)
+        HistoryPresenter.sessions(p, sessions: sessions, warnAt: warnAt, now: now, calendar: calendar, locale: locale)
     }
 
     @discardableResult

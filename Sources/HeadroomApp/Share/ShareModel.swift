@@ -1,5 +1,6 @@
 import Foundation
 import HeadroomKit
+import HeadroomPresent
 
 /// Everything a share may contain (PLAN §8). By construction it has no field for project names,
 /// paths, session IDs or historical glide curves, so none can leak into a card or text block.

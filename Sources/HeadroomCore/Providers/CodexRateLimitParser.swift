@@ -37,6 +37,12 @@ public enum CodexRateLimitParser {
         }
     }
 
+    /// The ChatGPT account's email from `account/read`, for labelling synced accounts.
+    public static func email(_ result: [String: Any]) -> String? {
+        guard let email = (result["account"] as? [String: Any])?["email"] as? String, !email.isEmpty else { return nil }
+        return email
+    }
+
     public static func rateLimits(_ result: [String: Any], fetchedAt: Date) throws(ProviderFailure) -> LimitReading {
         let byID = result["rateLimitsByLimitId"] as? [String: [String: Any]] ?? [:]
         guard let main = (byID["codex"] ?? (result["rateLimits"] as? [String: Any])) else {

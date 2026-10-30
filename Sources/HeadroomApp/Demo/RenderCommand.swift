@@ -1,6 +1,7 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 
 /// `HeadroomApp --render <scenario|all> --out <dir> [--light|--dark]`: draws surfaces offscreen
 /// to PNG at 2×, for the visual pass against the mockups. Never touches live data.

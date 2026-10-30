@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// The weekly glide path (PLAN §3.4): remaining allowance over the window, drawn in the
 /// mockup's 300×124 coordinate space and scaled to the card width.

@@ -1,5 +1,9 @@
 import AppKit
+import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
+import HeadroomWidgetUI
+import SwiftUI
 
 /// The right half of Settings: the welcome window's wallpaper stage, showing what the current
 /// section changes. Drawn with the live renderers, so every preview is exact.
@@ -17,6 +21,7 @@ enum SettingsStage {
             case .card: card(rect, settings: settings, theme: t, ctx: ctx)
             case .session: OnboardingStage.session(rect, settings: settings, theme: t, ctx: ctx)
             case .notifications: notifications(rect, settings: settings, theme: t, ctx: ctx)
+            case .sync: phone(rect, theme: t, ctx: ctx)
             case .advanced: terminal(rect, theme: t, ctx: ctx)
             case .updates: update(rect, settings: settings, updater: updater, theme: t, ctx: ctx)
             }
@@ -110,6 +115,49 @@ enum SettingsStage {
             y += OnboardingStage.notification(title: title, body: body, x: x, y: y, w: w, theme: t, ctx: ctx) + 10
         }
         Text("\(on.count) OF \(samples.count) ON", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 30, align: .center, in: ctx)
+    }
+
+    /// An iPhone Lock Screen with the complications and the session Live Activity, drawn by the
+    /// same SwiftUI views the iPhone uses, from the mockup readings.
+    private static func phone(_ rect: CGRect, theme t: Theme, ctx: CGContext) {
+        let screen = CGSize(width: 300, height: 640)
+        guard let image = lockScreen(size: screen) else { return }
+        let room = CGRect(x: rect.minX + 30, y: rect.minY + 34, width: rect.width - 60, height: rect.height - 34 - 76)
+        let k = min(room.width / screen.width, room.height / screen.height)
+        let phone = CGRect(x: rect.midX - screen.width * k / 2, y: room.minY, width: screen.width * k, height: screen.height * k)
+        let bezel = rounded(phone.insetBy(dx: -7 * k, dy: -7 * k), 50 * k)
+        ctx.withState {
+            ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 30, color: black(t.isDark ? 0.55 : 0.25).cgColor)
+            ctx.fill(bezel, rgb(0x0B0B0D))
+        }
+        ctx.innerStroke(bezel, white(0.14), width: 1)
+        ctx.withState {
+            ctx.addPath(rounded(phone, 44 * k)); ctx.clip()
+            ctx.translateBy(x: phone.minX, y: phone.maxY)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(image, in: CGRect(origin: .zero, size: phone.size))
+        }
+        let island = CGRect(x: phone.midX - 46 * k, y: phone.minY + 11 * k, width: 92 * k, height: 27 * k)
+        ctx.fill(rounded(island, island.height / 2), rgb(0x000000))
+        Text("ON YOUR IPHONE", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 44, align: .center, in: ctx)
+        Text("Complications, widgets and a Live Activity.", F.sf(12, 500), t.muted).draw(x: rect.midX, capCenter: rect.maxY - 25, align: .center, in: ctx)
+    }
+
+    private static var lockScreenCache: CGImage?
+
+    /// The Lock Screen at 2×, from the mockup readings (drawn once).
+    private static func lockScreen(size: CGSize) -> CGImage? {
+        if let lockScreenCache { return lockScreenCache }
+        let now = Demo.now
+        var feed = WidgetFeedBuilder(now: now).build([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)],
+                                                     presenter: Presenter(now: now, locale: Display.locale), buckets: UsageBuckets())
+        feed.generatedAt = now
+        let preview = LockScreenPreview(feed: feed, now: now).frame(width: size.width, height: size.height)
+            .environment(\.calendar, Display.calendar).environment(\.timeZone, Display.calendar.timeZone).environment(\.locale, Display.locale)
+        let renderer = ImageRenderer(content: preview)
+        renderer.scale = 2
+        lockScreenCache = renderer.cgImage
+        return lockScreenCache
     }
 
     /// `headroom` in a Terminal window: what the command line tool prints.

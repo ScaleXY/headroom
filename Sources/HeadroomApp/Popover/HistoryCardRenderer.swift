@@ -1,6 +1,7 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 
 /// History view (PLAN §7): one week's glide path in the brand color, "Week to Sep 30 · 66% used".
 @MainActor

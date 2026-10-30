@@ -1,6 +1,7 @@
 import AppKit
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 import ServiceManagement
 import UserNotifications
 
@@ -70,7 +71,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     static let stageWidth: CGFloat = 320
 
     enum Section: Int, CaseIterable, Hashable {
-        case general, menuBar, card, session, notifications, advanced, updates
+        case general, menuBar, card, session, notifications, sync, advanced, updates
 
         var title: String {
             switch self {
@@ -79,6 +80,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .card: "Pace Card"
             case .session: "5-Hour Session"
             case .notifications: "Notifications"
+            case .sync: "iPhone & Watch"
             case .advanced: "Advanced"
             case .updates: "Updates"
             }
@@ -91,6 +93,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .card: "chart.xyaxis.line"
             case .session: "timer"
             case .notifications: "bell.badge.fill"
+            case .sync: "iphone"
             case .advanced: "terminal.fill"
             case .updates: "arrow.down"
             }
@@ -104,6 +107,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .card: (0x9B95FF, 0x5B52E6)
             case .session: (0xFFCB55, 0xE99200)
             case .notifications: (0xFF6F86, 0xDD2448)
+            case .sync: (0x5AC8FA, 0x1E88E5)
             case .advanced: (0x6E7480, 0x33373F)
             case .updates: (0x5ED88A, 0x1DA653)
             }
@@ -116,6 +120,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .card: ("Your Pace card.", "Meters and graphs for the week and for the 5-hour session. Keep what you read, hide what you don't.")
             case .session: ("Never get cut off\nmid-session.", "Pick when the session starts warning. From there it turns amber, counts down in the menu bar and can let you know.")
             case .notifications: ("Only what's worth a ping.", "Each alert fires once per session or week. Headroom never repeats itself.")
+            case .sync: ("Your headroom,\nin your pocket.", "Headroom on iPhone, iPad and Apple Watch shows these readings, with widgets, complications and a Live Activity for the 5-hour session.")
             case .advanced: ("Fine-tuning.", "Plan prices for the cost comparison, the command-line tool, and where to find the CLIs.")
             case .updates: ("Always the latest.", "Headroom updates in place and reopens where it was. Your settings and history stay put.")
             }
@@ -141,6 +146,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case choose(String)
         case revealPricing
         case checkUpdates, installUpdate, cancelUpdate
+        case syncToggle, syncRemove
         case autoCheck, autoDownload
         case betaUpdates(Bool)
     }
@@ -245,6 +251,8 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .autoCheck: updater.map { $0.automaticChecks.toggle() }
         case .autoDownload: updater.map { $0.automaticDownloads.toggle() }
         case .betaUpdates(let on): updater?.betaUpdates = on
+        case .syncToggle: s.syncEnabled.toggle()
+        case .syncRemove: confirmRemoveSync()
         }
         needsDisplay = true
     }
@@ -465,6 +473,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .card: drawCard(x: x0, y: y, w: w, ctx: ctx)
         case .session: drawSession(x: x0, y: y, w: w, ctx: ctx)
         case .notifications: drawNotifications(x: x0, y: y, w: w, ctx: ctx)
+        case .sync: drawSync(x: x0, y: y, w: w, ctx: ctx)
         case .advanced: drawAdvanced(x: x0, w: w, ctx: ctx)
         case .updates: drawUpdates(x: x0, y: y, w: w, ctx: ctx)
         }
@@ -703,6 +712,111 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         Text(pricing.map { "API rates as of \($0)." } ?? "API rates bundled with this version.", F.sf(12, 500), t.muted)
             .draw(x: x, capCenter: l.footer + 6, in: ctx)
         button("Edit prices…", right: x + w, mid: l.footer + 6, style: .plain, height: 26, action: Action.revealPricing, ctx: ctx)
+    }
+
+    /// The privacy promise, as the README states it.
+    static let syncPromise = "Nothing leaves your Apple Account. Readings, history, token counts and account emails travel through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server, so we never see any of it. Prompts, project names, file paths and sign-in details never sync."
+
+    private func drawSync(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
+        let t = theme
+        var cy = y
+        let on = settings.syncEnabled
+        let card = CGRect(x: x, y: cy, width: w, height: 84)
+        let shape = rounded(card, 16)
+        let blue = t.pacing(.plenty)
+        ctx.fill(shape, t.isDark ? white(0.045) : .white)
+        if on {
+            ctx.fillRadial(in: shape, center: CGPoint(x: card.minX, y: card.minY), radii: CGSize(width: 260, height: 140),
+                           color: blue.bottom.fade(t.isDark ? 0.16 : 0.08), fadeAt: 0.8)
+        }
+        ctx.innerStroke(shape, on ? blue.bottom.fade(t.isDark ? 0.5 : 0.35) : (t.isDark ? white(0.08) : black(0.08)), width: on ? 1.5 : 1)
+        let tile = CGRect(x: card.minX + 16, y: card.midY - 20, width: 40, height: 40)
+        let tileShape = rounded(tile, 11)
+        ctx.fillVertical(tileShape, rgb(0x5AC8FA), rgb(0x1E88E5))
+        CanvasControlView.drawSymbol("iphone.gen3", in: tile.insetBy(dx: 10, dy: 9), color: .white, ctx: ctx)
+        let tx = tile.maxX + 14
+        Text("Sync to iPhone & Watch", F.sf(14.5, 650), t.ink, kern: -0.1).draw(x: tx, capCenter: card.midY - 10, in: ctx)
+        let b = button(on ? "Turn Off" : "Turn On", right: card.maxX - 16, mid: card.midY, style: on ? .plain : .primary, height: 30,
+                       action: Action.syncToggle, ctx: ctx)
+        let (status, dot) = syncStatus()
+        let font = F.sf(12, 500)
+        var line = status
+        while Text(line, font, .black).width > b.minX - 14 - (tx + 13), line.count > 4 { line = String(line.dropLast(2)) + "…" }
+        drawStatusDot(center: CGPoint(x: tx + 3, y: card.midY + 11), color: dot, ctx: ctx)
+        Text(line, font, t.muted).draw(x: tx + 13, capCenter: card.midY + 11, in: ctx)
+        cy += card.height + 22
+
+        sectionLabel("ACCOUNTS ON THIS MAC", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let accounts = syncedAccounts()
+        if accounts.isEmpty {
+            Text("Accounts appear after Headroom's first reading.", F.sf(12, 500), t.muted2)
+                .draw(x: x, capCenter: cy + 14, in: ctx)
+            cy += 34
+        }
+        for a in accounts.prefix(4) {
+            let r = CGRect(x: x, y: cy, width: w, height: 40)
+            ctx.fill(rounded(r, 11), t.groupFill)
+            ctx.innerStroke(rounded(r, 11), t.groupBorder, width: 0.5)
+            BrandMark.drawTile(a.provider, in: CGRect(x: r.minX + 10, y: r.midY - 10, width: 20, height: 20), ctx: ctx)
+            Text(a.title, F.sf(12.5, 600), t.ink).draw(x: r.minX + 40, capCenter: r.midY, in: ctx)
+            Text(a.detail, F.sf(11.5, 500), t.muted).draw(x: r.maxX - 12, capCenter: r.midY, align: .right, in: ctx)
+            cy += 40 + 8
+        }
+        cy += 12
+        hint(symbol: "lock.shield", Self.syncPromise, x: x, y: cy, w: w, ctx: ctx)
+        let promise = TextBlock(Self.syncPromise, F.sf(12, 450), t.muted, width: w - 50, lineHeight: 16)
+        cy += promise.height + 22 + 16
+        if on || settings.syncSince != nil {
+            button("Remove Headroom Data from iCloud…", right: x + w, mid: cy + 14, style: .plain, height: 28, action: Action.syncRemove, ctx: ctx)
+        }
+    }
+
+    /// The status line under the sync card, and its dot.
+    private func syncStatus() -> (String, NSColor) {
+        let t = theme
+        guard settings.syncEnabled else { return ("Off", t.muted2) }
+        switch model?.publisher.status ?? .off {
+        case .off, .starting: return ("Connecting to iCloud…", t.pacing(.tight).bottom)
+        case .synced(let at):
+            let ago = TimeFormat.freshness(since: at, now: Date())
+            return (ago == "now" ? "Synced just now" : "Synced \(ago) ago", rgb(0x30D158))
+        case .unavailable(.unsignedBuild): return ("This build can't sync: it wasn't signed with Headroom's iCloud profile.", t.muted2)
+        case .unavailable(.noAccount): return ("Not signed in to iCloud. Open System Settings → Apple Account.", t.pacing(.veryTight).bottom)
+        case .unavailable(.restricted): return ("iCloud is restricted on this Mac.", t.pacing(.veryTight).bottom)
+        case .unavailable(.couldNotDetermine): return ("Couldn't reach iCloud. Headroom will try again.", t.pacing(.tight).bottom)
+        case .failed(let message): return (message, t.pacing(.veryTight).bottom)
+        }
+    }
+
+    /// The accounts this Mac posts: the email when known, the plan otherwise.
+    private func syncedAccounts() -> [(provider: Provider, title: String, detail: String)] {
+        guard let model else { return [] }
+        return Provider.allCases.compactMap { p -> (Provider, String, String)? in
+            guard settings.enabledProviders.contains(p), let r = model.faults[p]?.lastGood else { return nil }
+            let title = r.accountEmail ?? p.displayName
+            let detail = [r.accountEmail == nil ? nil : p.displayName, r.plan?.pill, "signed in now"].compactMap { $0 }.joined(separator: " · ")
+            return (p, title, detail)
+        }
+    }
+
+    private func confirmRemoveSync() {
+        let alert = NSAlert()
+        alert.messageText = "Remove Headroom data from iCloud?"
+        alert.informativeText = "This Mac's readings, history and activity are deleted from iCloud, and your iPhone, iPad and Apple Watch stop showing them. Everything stays on this Mac, and sync turns off."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard let window, let model else { return }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { @MainActor in
+                if !model.publisher.isRunning { await model.publisher.start(model: model) }
+                await model.publisher.removeFromICloud()
+                self.settings.syncEnabled = false
+                self.needsDisplay = true
+            }
+        }
     }
 
     private func drawUpdates(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {

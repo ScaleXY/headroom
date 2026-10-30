@@ -255,6 +255,13 @@ func keychainJSON(token: String = "tok-123", expiresMs: Double, sub: String = "m
         #expect(key?.contains("org-1111") == false)
         #expect(ClaudeAccountKey.parse(Data("{}".utf8)) == nil)
     }
+
+    @Test func accountEmailIsReadForSyncLabels() {
+        let json = #"{"oauthAccount":{"organizationUuid":"org-1111","accountUuid":"acc-2222","emailAddress":"a@b.c"}}"#
+        #expect(ClaudeAccountKey.parseEmail(Data(json.utf8)) == "a@b.c")
+        #expect(ClaudeAccountKey.parseEmail(Data(#"{"oauthAccount":{"emailAddress":""}}"#.utf8)) == nil)
+        #expect(ClaudeAccountKey.parseEmail(Data("{}".utf8)) == nil)
+    }
 }
 
 // MARK: - Client

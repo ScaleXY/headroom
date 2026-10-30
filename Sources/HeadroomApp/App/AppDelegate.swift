@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.openSettings = open
         statusItem.openSettings = open
         statusItem.openWelcome = { [weak self] in self?.showOnboarding() }
+        model.publisher.onStatus = { [weak self] in self?.settingsWindow?.refresh() }
         model.onChange = { [weak self] in
             self?.statusItem.update()
             self?.popover.refresh()

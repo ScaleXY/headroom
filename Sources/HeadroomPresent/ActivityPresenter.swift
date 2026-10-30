@@ -2,38 +2,59 @@ import Foundation
 import HeadroomKit
 
 /// One hour of usage for one provider/model/project, as stored by the bucket store.
-struct HourAggregate: Sendable, Hashable {
-    var provider: Provider
-    var hour: Date
-    var model: String
-    var project: String?
-    var tokens: TokenCounts
-    var micros: Int64
-    var priced: Bool
+public struct HourAggregate: Sendable, Hashable {
+    public var provider: Provider
+    public var hour: Date
+    public var model: String
+    public var project: String?
+    public var tokens: TokenCounts
+    public var micros: Int64
+    public var priced: Bool
     /// Micro-dollars by token class (no heap allocation per aggregate).
-    var classMicros: ClassMicros = .init()
+    public var classMicros: ClassMicros = .init()
+
+    public init(provider: Provider, hour: Date, model: String, project: String? = nil, tokens: TokenCounts, micros: Int64, priced: Bool, classMicros: ClassMicros = .init()) {
+        self.provider = provider
+        self.hour = hour
+        self.model = model
+        self.project = project
+        self.tokens = tokens
+        self.micros = micros
+        self.priced = priced
+        self.classMicros = classMicros
+    }
 }
 
-struct ClassMicros: Sendable, Hashable {
-    var input: Int64 = 0, cacheWrite: Int64 = 0, cacheRead: Int64 = 0, output: Int64 = 0
-    var isEmpty: Bool { input == 0 && cacheWrite == 0 && cacheRead == 0 && output == 0 }
+public struct ClassMicros: Sendable, Hashable {
+    public var input: Int64 = 0, cacheWrite: Int64 = 0, cacheRead: Int64 = 0, output: Int64 = 0
+    public var isEmpty: Bool { input == 0 && cacheWrite == 0 && cacheRead == 0 && output == 0 }
+
+    public init(input: Int64 = 0, cacheWrite: Int64 = 0, cacheRead: Int64 = 0, output: Int64 = 0) {
+        self.input = input; self.cacheWrite = cacheWrite; self.cacheRead = cacheRead; self.output = output
+    }
 }
 
 /// Builds Activity cards from hourly aggregates for a range and a selection.
 @MainActor
-struct ActivityPresenter {
-    var now: Date
-    var calendar: Calendar = Display.calendar
-    var locale: Locale = Display.locale
-    var pricing: PricingEngine?
+public struct ActivityPresenter {
+    public var now: Date
+    public var calendar: Calendar = Display.calendar
+    public var locale: Locale = Display.locale
+    public var pricing: PricingEngine?
 
-    struct Bins {
-        var starts: [Date]
-        var step: (Date) -> Date
-        var labels: [(Int, String)]
+    public struct Bins {
+        public var starts: [Date]
+        public var step: (Date) -> Date
+        public var labels: [(Int, String)]
+
+        public init(starts: [Date], step: @escaping (Date) -> Date, labels: [(Int, String)]) {
+            self.starts = starts
+            self.step = step
+            self.labels = labels
+        }
     }
 
-    func bins(for range: ActivityRange) -> Bins {
+    public func bins(for range: ActivityRange) -> Bins {
         switch range {
         case .day:
             let current = calendar.dateInterval(of: .hour, for: now)?.start ?? now
@@ -57,7 +78,7 @@ struct ActivityPresenter {
         }
     }
 
-    func card(_ provider: Provider, aggregates: [HourAggregate], range: ActivityRange, selection: Range<Int>?) -> ActivityCardModel {
+    public func card(_ provider: Provider, aggregates: [HourAggregate], range: ActivityRange, selection: Range<Int>?) -> ActivityCardModel {
         let b = bins(for: range)
         let n = b.starts.count
         let sel = (selection ?? 0..<n).clamped(to: 0..<n)
@@ -134,7 +155,7 @@ struct ActivityPresenter {
     }
 
     /// "claude-opus-5-5" → "Opus 5.5"; other providers keep their IDs.
-    func displayModel(_ raw: String) -> String {
+    public func displayModel(_ raw: String) -> String {
         let id = ModelID.normalize(raw)
         guard id.hasPrefix("claude-") else { return id }
         let parts = id.dropFirst("claude-".count).split(separator: "-")
@@ -150,9 +171,9 @@ struct ActivityPresenter {
     }
 
     private func clean(_ s: String) -> String { s.replacingOccurrences(of: "\u{202F}", with: " ") }
-    func hourLabel(_ d: Date) -> String { clean(formatter("j").string(from: d)) }
-    func weekday(_ d: Date) -> String { formatter("EEE").string(from: d).uppercased() }
-    func monthDay(_ d: Date) -> String { formatter("MMMd").string(from: d) }
+    public func hourLabel(_ d: Date) -> String { clean(formatter("j").string(from: d)) }
+    public func weekday(_ d: Date) -> String { formatter("EEE").string(from: d).uppercased() }
+    public func monthDay(_ d: Date) -> String { formatter("MMMd").string(from: d) }
 
     private func rangeLabel(_ r: ActivityRange) -> (String, String) {
         switch r {
@@ -163,7 +184,7 @@ struct ActivityPresenter {
     }
 
     /// "Mon 2 – 6 PM · 4h" / "Mon, 2 – 6 PM · 4 hours".
-    func spanLabels(_ a: Date, _ b: Date, range: ActivityRange) -> (String, String) {
+    public func spanLabels(_ a: Date, _ b: Date, range: ActivityRange) -> (String, String) {
         let dur = b.timeIntervalSince(a)
         let durShort = TimeFormat.compact(dur)
         let durLong = TimeFormat.spokenSpan(dur)
@@ -181,5 +202,12 @@ struct ActivityPresenter {
         }
         let wdB = formatter("EEE").string(from: b)
         return ("\(wd) \(hA) – \(wdB) \(hB) · \(durShort)", "\(wd) \(hA) – \(wdB) \(hB) · \(durLong)")
+    }
+
+    public init(now: Date, calendar: Calendar = Display.calendar, locale: Locale = Display.locale, pricing: PricingEngine? = nil) {
+        self.now = now
+        self.calendar = calendar
+        self.locale = locale
+        self.pricing = pricing
     }
 }

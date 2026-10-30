@@ -1,5 +1,4 @@
 import Foundation
-import HeadroomKit
 
 /// Glide history and past weeks, keyed by account (PLAN §4.3 item 7). History starts at
 /// install; nothing is estimated or backfilled.

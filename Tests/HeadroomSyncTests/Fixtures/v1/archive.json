@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "weeks": [
+    {"start": 782200000, "end": 782804800, "scheduledEnd": 782804800, "finalUsed": 1.0, "ranOutAt": 782780000,
+     "sessionHits": 3, "earlyReset": false, "plan": "MAX 20×", "samples": [{"time": 782200000, "used": 0}, {"time": 782780000, "used": 1}]},
+    {"start": "broken"}
+  ],
+  "sessions": [
+    {"start": 783000000, "resetsAt": 783018000, "peakUsed": 0.97, "hitLimitAt": null},
+    {"start": 783020000, "resetsAt": 783038000, "peakUsed": 1.0, "hitLimitAt": 783030000, "inProgress": false,
+     "samples": [{"time": 783025000, "used": 0.5}]}
+  ]
+}

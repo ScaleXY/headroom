@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// Copy Card (1200×675) and Copy Snapshot, drawn offscreen at 2× (PLAN §8, mockup "Copy Card").
 @MainActor

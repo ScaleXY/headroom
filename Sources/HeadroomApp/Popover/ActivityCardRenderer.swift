@@ -1,5 +1,6 @@
 import AppKit
 import HeadroomKit
+import HeadroomPresent
 
 /// Activity card (PLAN §7, mockup "Activity, light, All").
 @MainActor

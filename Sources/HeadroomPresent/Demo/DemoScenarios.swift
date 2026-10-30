@@ -1,23 +1,22 @@
-import AppKit
-import HeadroomCore
+import Foundation
 import HeadroomKit
 
 /// Fixture-driven states for every surface, so the visual pass can reach each one without
 /// waiting for real usage (`HeadroomApp --demo <name>` or `--render <name>`).
 @MainActor
-enum Demo {
+public enum Demo {
     /// Tuesday 2026-10-20 10:00 local — the mockup's moment.
-    static var now: Date {
+    public static var now: Date {
         var c = DateComponents()
         c.year = 2026; c.month = 10; c.day = 20; c.hour = 10; c.minute = 0
         return Display.calendar.date(from: c)!
     }
 
-    static func at(_ base: Date, hours: Double) -> Date { base.addingTimeInterval(hours * 3600) }
+    public static func at(_ base: Date, hours: Double) -> Date { base.addingTimeInterval(hours * 3600) }
 
     /// Port of the mockup's `series()`: cumulative used fraction sampled hourly, with daytime
     /// activity and a deterministic jitter.
-    static func series(total: Double, nowH: Int, startHour: Int, seed: Int, shape: ((Int) -> Double)? = nil) -> [Double] {
+    public static func series(total: Double, nowH: Int, startHour: Int, seed: Int, shape: ((Int) -> Double)? = nil) -> [Double] {
         var s = seed
         func rnd() -> Double { s = (s * 16807) % 2147483647; return Double(s) / 2147483647 }
         var w: [Double] = []
@@ -33,19 +32,25 @@ enum Demo {
         return c
     }
 
-    static func samples(_ cum: [Double], start: Date) -> [UsageSample] {
+    public static func samples(_ cum: [Double], start: Date) -> [UsageSample] {
         cum.enumerated().map { UsageSample(time: at(start, hours: Double($0.offset)), used: $0.element) }
     }
 
     // MARK: Pace inputs
 
-    struct PaceScenario {
-        var name: String
-        var inputs: [PaceInput]
-        var note: String
+    public struct PaceScenario {
+        public var name: String
+        public var inputs: [PaceInput]
+        public var note: String
+
+        public init(name: String, inputs: [PaceInput], note: String) {
+            self.name = name
+            self.inputs = inputs
+            self.note = note
+        }
     }
 
-    static func claudeMockup(now: Date) -> PaceInput {
+    public static func claudeMockup(now: Date) -> PaceInput {
         let start = at(now, hours: -148)
         let cum = series(total: 0.18, nowH: 148, startHour: 6, seed: 11)
         let weekly = LimitWindow(id: "weekly", kind: .weekly, used: 0.18, resetsAt: at(start, hours: 168), duration: 168 * 3600)
@@ -64,7 +69,7 @@ enum Demo {
                          pastSessions: pastSessions([(-20.5, 0.62, 2.6), (-12.5, 1, 1.4)], now: now), weekCostMicros: 412_000_000)
     }
 
-    static func codexMockup(now: Date) -> PaceInput {
+    public static func codexMockup(now: Date) -> PaceInput {
         let start = at(now, hours: -69)
         let cum = series(total: 0.41, nowH: 69, startHour: 13, seed: 5) { $0 > 45 ? 2.4 : 1 }
         let weekly = LimitWindow(id: "weekly", kind: .weekly, used: 0.41, resetsAt: at(start, hours: 168), duration: 168 * 3600)
@@ -82,7 +87,7 @@ enum Demo {
     }
 
     /// Ten-minute samples for a session `elapsedH` in, with a quiet patch and a busier stretch, ending at `used`.
-    static func sessionSamples(used: Double, elapsedH: Double, now: Date) -> [UsageSample] {
+    public static func sessionSamples(used: Double, elapsedH: Double, now: Date) -> [UsageSample] {
         guard used > 0 else { return [] }
         let start = at(now, hours: -elapsedH)
         let steps = max(1, Int(elapsedH * 6))
@@ -102,7 +107,7 @@ enum Demo {
 
     /// Finished sessions with their samples: each starts `hoursAgo` before now, idles along, then a spike
     /// `spikeAfterH` in takes it to `peak` (a peak of 1 hits the limit and waits out the reset).
-    static func pastSessions(_ specs: [(hoursAgo: Double, peak: Double, spikeAfterH: Double)], now: Date) -> [SessionRecord] {
+    public static func pastSessions(_ specs: [(hoursAgo: Double, peak: Double, spikeAfterH: Double)], now: Date) -> [SessionRecord] {
         specs.map { spec in
             let start = at(now, hours: spec.hoursAgo)
             var out: [UsageSample] = []
@@ -120,7 +125,7 @@ enum Demo {
 
     /// A single-window state for the state gallery: used `u` with `elapsedH` of 168 gone,
     /// and a burn over the last day.
-    static func state(_ p: Provider, used u: Double, elapsedH: Double, lastDayBurn: Double? = nil, session: Double = 0.3,
+    public static func state(_ p: Provider, used u: Double, elapsedH: Double, lastDayBurn: Double? = nil, session: Double = 0.3,
                       fault: Fault? = nil, caps: [LimitWindow] = [], credits: [ResetCredit] = [], now: Date) -> PaceInput {
         let start = at(now, hours: -elapsedH)
         let weekly = LimitWindow(id: "weekly", kind: .weekly, used: u, resetsAt: at(start, hours: 168), duration: 168 * 3600)
@@ -141,7 +146,7 @@ enum Demo {
                          pastSessions: pastSessions([(-19, 0.55, 2.4), (-10.5, 1, 1.6)], now: now), fault: fault, weekCostMicros: p == .claude ? 96_400_000 : 31_200_000)
     }
 
-    static func paceScenarios(now: Date) -> [PaceScenario] {
+    public static func paceScenarios(now: Date) -> [PaceScenario] {
         var out: [PaceScenario] = [
             PaceScenario(name: "mockup", inputs: [claudeMockup(now: now), codexMockup(now: now)], note: "Pace mockup: amber session, Plenty; Codex tight by projection"),
             PaceScenario(name: "plenty", inputs: [state(.claude, used: 0.18, elapsedH: 150, now: now)], note: "Plenty available + hourglass"),
@@ -187,7 +192,7 @@ enum Demo {
 
 extension Demo {
     /// About a week of 5-hour sessions, newest last; the last one still running.
-    static func sessionHistory(_ p: Provider, now: Date) -> [SessionRecord] {
+    public static func sessionHistory(_ p: Provider, now: Date) -> [SessionRecord] {
         let claude: [(dayAgo: Int, hour: Double, peak: Double, hitAfterH: Double?)] = [
             (6, 9, 0.62, nil), (6, 14.5, 0.88, nil), (5, 9.5, 1, 3.6), (5, 15, 0.71, nil), (4, 10, 0.45, nil), (4, 15.5, 0.93, nil),
             (3, 9, 1, 4.1), (3, 14.5, 0.58, nil), (2, 10, 0.34, nil), (2, 16, 0.79, nil), (1, 9, 0.66, nil), (1, 14.5, 1, 3.2),

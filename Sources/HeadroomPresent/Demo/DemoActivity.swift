@@ -4,10 +4,10 @@ import HeadroomKit
 @MainActor
 extension Demo {
     /// Activity "now": Tuesday 9:30 so 24 hourly bars start at 10 AM, like the mockup.
-    static var activityNow: Date { now.addingTimeInterval(-30 * 60) }
+    public static var activityNow: Date { now.addingTimeInterval(-30 * 60) }
 
     /// Hourly aggregates reproducing the mockup's bars (millions of tokens per hour) and model mix.
-    static func activityAggregates(now: Date, pricing: PricingEngine) -> [HourAggregate] {
+    public static func activityAggregates(now: Date, pricing: PricingEngine) -> [HourAggregate] {
         let cv: [Double] = [30, 17, 9, 18, 55, 69.4, 48, 16.6, 4, 8, 24, 15, 8, 1, 0, 0, 0, 0, 0, 0, 0, 1, 9, 20]
         let xv: [Double] = [52, 32, 18, 22, 92, 96, 52, 17, 2, 7, 56, 58, 32, 2, 0, 0, 0, 0, 0, 0, 1, 0, 36, 84]
         let cal = Display.calendar
@@ -35,7 +35,7 @@ extension Demo {
         return out
     }
 
-    static func pastWeeks(collecting: Bool = false) -> [PastWeeksModel] {
+    public static func pastWeeks(collecting: Bool = false) -> [PastWeeksModel] {
         if collecting {
             return [PastWeeksModel(provider: .claude, weeks: [], planChange: nil, chips: [], collecting: true),
                     PastWeeksModel(provider: .codex, weeks: [], planChange: nil, chips: [], collecting: true)]

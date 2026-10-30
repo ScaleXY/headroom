@@ -105,6 +105,19 @@ public enum ClaudeAccountKey {
         guard !(org.isEmpty && user.isEmpty) else { return nil }
         return AccountKey.make(prefix: "claude", parts: [org, user])
     }
+
+    /// The signed-in account's email (`oauthAccount.emailAddress`), for labelling synced accounts.
+    public static func email(configPath: String = NSHomeDirectory() + "/.claude.json") -> String? {
+        guard let data = FileManager.default.contents(atPath: configPath) else { return nil }
+        return parseEmail(data)
+    }
+
+    static func parseEmail(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let account = root["oauthAccount"] as? [String: Any],
+              let email = account["emailAddress"] as? String, !email.isEmpty else { return nil }
+        return email
+    }
 }
 
 /// The exact, only `claude` invocation Headroom makes (PLAN §5.1). `/usage` is a local command:

@@ -126,6 +126,9 @@ public struct LimitReading: Codable, Sendable, Hashable {
     public var blockedReason: String?
     /// Hashed account identity. Raw account IDs are never stored.
     public var accountKey: String?
+    /// The account's email, for telling accounts apart on the user's other devices. Optional, so
+    /// state saved before it existed still decodes; never written to `snapshot.json` or `widgets.json`.
+    public var accountEmail: String?
 
     public init(
         provider: Provider,
@@ -136,7 +139,8 @@ public struct LimitReading: Codable, Sendable, Hashable {
         resetCredits: [ResetCredit] = [],
         resetCreditsAvailable: Int? = nil,
         blockedReason: String? = nil,
-        accountKey: String? = nil
+        accountKey: String? = nil,
+        accountEmail: String? = nil
     ) {
         self.provider = provider
         self.fetchedAt = fetchedAt
@@ -147,6 +151,7 @@ public struct LimitReading: Codable, Sendable, Hashable {
         self.resetCreditsAvailable = resetCreditsAvailable
         self.blockedReason = blockedReason
         self.accountKey = accountKey
+        self.accountEmail = accountEmail
     }
 
     public var session: LimitWindow? { windows.first { $0.kind == .session } }

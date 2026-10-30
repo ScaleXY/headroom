@@ -217,7 +217,12 @@ public struct PriceTable: Codable, Sendable, Hashable {
 
     /// The overrides file location used by the app.
     public static var defaultOverrideURL: URL {
+        #if os(macOS)
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Headroom/pricing.override.json")
+        #else
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Headroom/pricing.override.json")
+        #endif
     }
 }
