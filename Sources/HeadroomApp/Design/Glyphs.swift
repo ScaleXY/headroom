@@ -1,4 +1,5 @@
 import AppKit
+import HeadroomArt
 
 /// Small vector glyphs used across the popover, menu bar and share card. Each draws into a
 /// rect using the mockup's viewBox geometry, scaled.

@@ -1,4 +1,5 @@
 import AppKit
+import HeadroomCore
 import HeadroomKit
 
 /// `HeadroomApp --render <scenario|all> --out <dir> [--light|--dark]`: draws surfaces offscreen
@@ -110,6 +111,14 @@ enum RenderCommand {
                         write(rep, to: outDir.appendingPathComponent("settings-\(section.rawValue + 1)-\(theme.isDark ? "dark" : "light").png")); written += 1
                     }
                 }
+            }
+        }
+        if name == "all" || name == "widget-feed" {
+            // The widgets' feed built from the mockup fixtures: `HeadroomWidgetPreview <dir> --feed <file>` draws it.
+            let feed = WidgetFeedBuilder(now: now).build([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)],
+                                                         presenter: Presenter(now: now, locale: Locale(identifier: "en_US")), buckets: UsageBuckets())
+            if let data = try? SnapshotFile.encoder(pretty: true).encode(feed) {
+                try? data.write(to: outDir.appendingPathComponent("widgets-demo.json")); written += 1
             }
         }
         if name == "all" || name == "updates" {
