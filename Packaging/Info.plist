@@ -16,6 +16,13 @@
 	<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key><string>15.0</string>
 	<key>LSUIElement</key><true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>com.scalexy.headroom</string>
+			<key>CFBundleURLSchemes</key><array><string>headroom</string></array>
+		</dict>
+	</array>
 	<key>NSHumanReadableCopyright</key><string>Made by ScaleXY. Public domain under The Unlicense.</string>
 	<key>NSSupportsAutomaticTermination</key><false/>
 	<key>NSSupportsSuddenTermination</key><false/>

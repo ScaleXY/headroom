@@ -3,7 +3,7 @@ import Foundation
 /// Where the 5-hour session is heading: how fast it's burning, whether it lasts to its reset,
 /// and when it would run out. The session counterpart of `PacingAnalysis`.
 public struct SessionForecast: Sendable, Hashable {
-    public enum Outlook: String, Sendable, Hashable {
+    public enum Outlook: String, Codable, Sendable, Hashable {
         /// No session running: nothing used yet, or the last one already reset.
         case idle
         /// At this rate a good share is still left when it resets.

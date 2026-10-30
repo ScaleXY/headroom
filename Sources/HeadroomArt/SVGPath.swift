@@ -3,8 +3,8 @@ import Foundation
 
 /// Parses SVG path data (`d`) into a CGPath. Supports the full command set, including arcs,
 /// so the published brand marks render exactly as shipped in `assets/brand`.
-enum SVGPath {
-    static func parse(_ d: String) -> CGPath {
+public enum SVGPath {
+    public static func parse(_ d: String) -> CGPath {
         var scanner = Scanner(Array(d.utf8))
         let path = CGMutablePath()
         var current = CGPoint.zero, start = CGPoint.zero

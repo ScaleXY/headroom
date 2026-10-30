@@ -55,6 +55,7 @@ final class AppModel {
     private var lastSnapshotBody: Data?
     private var observers: [NSObjectProtocol] = []
     private let snapshotWriter = SnapshotWriter()
+    private let widgets = WidgetPublisher()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -488,6 +489,7 @@ final class AppModel {
     // MARK: Snapshot
 
     private func writeSnapshot() {
+        widgets.update(WidgetFeedBuilder(now: Date()).build(model: self))
         let snapshot = SnapshotBuilder(now: Date()).build(model: self)
         var body = snapshot
         body.generatedAt = .distantPast

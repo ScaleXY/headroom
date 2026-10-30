@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleDisplayName</key><string>Headroom</string>
+	<key>CFBundleExecutable</key><string>HeadroomWidgets</string>
+	<key>CFBundleIdentifier</key><string>com.scalexy.headroom.widgets</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>Headroom Widgets</string>
+	<key>CFBundlePackageType</key><string>XPC!</string>
+	<key>CFBundleShortVersionString</key><string>0.0.0</string>
+	<key>CFBundleVersion</key><string>0</string>
+	<key>LSMinimumSystemVersion</key><string>15.0</string>
+	<key>NSHumanReadableCopyright</key><string>Made by ScaleXY. Public domain under The Unlicense.</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>

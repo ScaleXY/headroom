@@ -1,34 +1,13 @@
 import AppKit
+import HeadroomArt
 import HeadroomKit
 
 /// The real Claude and OpenAI marks, read from `assets/brand/*.svg` (copied into the app's
 /// Resources by `make app`). 24×24 viewBox.
 @MainActor
 enum BrandMark {
-    private static var cache: [Provider: CGPath] = [:]
-
     static func path(_ provider: Provider) -> CGPath {
-        if let p = cache[provider] { return p }
-        let name = provider == .claude ? "claude" : "openai"
-        let p = loadPathData(name).map(SVGPath.parse) ?? CGMutablePath()
-        cache[provider] = p
-        return p
-    }
-
-    private static func loadPathData(_ name: String) -> String? {
-        var candidates: [URL] = []
-        if let u = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "brand") { candidates.append(u) }
-        // Development runs (`swift run`): read straight from the repository.
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        candidates.append(repo.appendingPathComponent("assets/brand/\(name).svg"))
-        for url in candidates {
-            guard let svg = try? String(contentsOf: url, encoding: .utf8),
-                  let r = svg.range(of: #"\sd="([^"]+)""#, options: .regularExpression) else { continue }
-            let attr = svg[r]
-            return String(attr.dropFirst(4).dropLast())
-        }
-        return nil
+        BrandPaths.path(named: provider == .claude ? "claude" : "openai")
     }
 
     /// Draws the mark filling `rect` (square) in `color`.

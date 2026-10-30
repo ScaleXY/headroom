@@ -106,6 +106,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// `headroom://open`: a click on a desktop widget opens the popover.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // Launched by the click itself: the status item isn't there yet, and the app opens as usual.
+        guard urls.contains(where: { $0.scheme == "headroom" }), let item = statusItem, let button = item.item.button else { return }
+        popover.show(relativeTo: button)
+    }
+
     func showOnboarding(step: Int = 0) {
         if onboarding == nil {
             let controller = OnboardingWindowController(settings: settings, model: model)

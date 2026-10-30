@@ -26,6 +26,7 @@ APP       := build/Headroom.app
 DMG       := dist/Headroom-$(VERSION).dmg
 RELEASE   := .build/release
 SPARKLE   := $(APP)/Contents/Frameworks/Sparkle.framework
+WIDGETS   := $(APP)/Contents/PlugIns/HeadroomWidgets.appex
 # dmgbuild lays out the DMG window (background, icon positions) without driving Finder.
 DMGBUILD  := build/dmgbuild/bin/dmgbuild
 # First valid identity of a kind, by SHA-1 (names can be ambiguous).
@@ -43,6 +44,7 @@ build:
 	swift build -c release --product HeadroomApp
 	swift build -c release --product headroom
 	swift build -c release --product HeadroomFanHelper
+	swift build -c release --product HeadroomWidgets
 
 test:
 	swift test
@@ -104,7 +106,14 @@ app: build
 	cp assets/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	cp assets/brand/claude.svg assets/brand/openai.svg $(APP)/Contents/Resources/brand/
 	cp Packaging/headroom.1 $(APP)/Contents/Resources/headroom.1
-	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper
+	@# The desktop widgets: a WidgetKit extension that reads widgets.json, versioned with the app.
+	mkdir -p $(WIDGETS)/Contents/MacOS $(WIDGETS)/Contents/Resources/brand
+	cp Packaging/Widgets/Info.plist $(WIDGETS)/Contents/Info.plist
+	plutil -replace CFBundleShortVersionString -string "$$(plutil -extract CFBundleShortVersionString raw Packaging/Info.plist)" $(WIDGETS)/Contents/Info.plist
+	plutil -replace CFBundleVersion -string "$$(plutil -extract CFBundleVersion raw Packaging/Info.plist)" $(WIDGETS)/Contents/Info.plist
+	cp $(RELEASE)/HeadroomWidgets $(WIDGETS)/Contents/MacOS/HeadroomWidgets
+	cp assets/brand/claude.svg assets/brand/openai.svg $(WIDGETS)/Contents/Resources/brand/
+	strip -x $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper $(WIDGETS)/Contents/MacOS/HeadroomWidgets
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)/Contents/MacOS/headroom
 	@# Sparkle inside out: its helpers, then the framework, then the app.
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)/Versions/B/Autoupdate
@@ -112,9 +121,10 @@ app: build
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(SPARKLE)
 	@# The fan helper and the app each check that the other carries this identifier and their team.
 	codesign --force $(TIMESTAMP) --options runtime --identifier $(BUNDLE_ID).fan --sign "$(IDENTITY)" $(APP)/Contents/MacOS/HeadroomFanHelper
+	codesign --force $(TIMESTAMP) --options runtime --entitlements Packaging/Widgets/HeadroomWidgets.entitlements --sign "$(IDENTITY)" $(WIDGETS)
 	codesign --force $(TIMESTAMP) --options runtime --sign "$(IDENTITY)" $(APP)
 	codesign --verify --deep --strict $(APP)
-	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper
+	@du -sh $(APP)/Contents/MacOS/HeadroomApp $(APP)/Contents/MacOS/headroom $(APP)/Contents/MacOS/HeadroomFanHelper $(WIDGETS)
 
 install: app
 	-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null
