@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "headroom-site",
+  "account_id": "01955cb6ca3be5299fe41117c5849e13",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-07-29",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/download", "/api/*"]
+  },
+  "routes": [{ "pattern": "headroom.taraxio.com", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
