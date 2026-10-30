@@ -2,13 +2,13 @@ import HeadroomKit
 import SwiftUI
 
 /// A mechanical odometer: each digit on its own drum, the neighbors just showing above and below.
-struct Odometer: View {
+public struct Odometer: View {
     /// "12.4M": digits roll, everything else sits between the drums.
-    var text: String
-    var height: CGFloat = 26
+    public var text: String
+    public var height: CGFloat = 26
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         HStack(spacing: height * 0.08) {
             ForEach(Array(text.enumerated()), id: \.offset) { _, ch in
@@ -51,16 +51,21 @@ struct Odometer: View {
         Text("\(d)").font(.system(size: height * 0.62, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
             .frame(height: height * 0.62)
     }
+
+    public init(text: String, height: CGFloat = 26) {
+        self.text = text
+        self.height = height
+    }
 }
 
 /// Tokens per hour across the last day, the current hour lit.
-struct HourBars: View {
-    var tokens: [Int64]
-    var provider: Provider
-    var tone: Tone
+public struct HourBars: View {
+    public var tokens: [Int64]
+    public var provider: Provider
+    public var tone: Tone
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), b = BrandColors.of(provider)
         let top = max(tokens.max() ?? 0, 1)
         GeometryReader { g in
@@ -83,5 +88,11 @@ struct HourBars: View {
             }
             .frame(width: g.size.width, height: g.size.height, alignment: .bottomLeading)
         }
+    }
+
+    public init(tokens: [Int64], provider: Provider, tone: Tone) {
+        self.tokens = tokens
+        self.provider = provider
+        self.tone = tone
     }
 }

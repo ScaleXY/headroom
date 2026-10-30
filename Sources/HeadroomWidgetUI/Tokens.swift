@@ -11,39 +11,39 @@ func white(_ a: Double) -> Color { Color(.sRGB, white: 1, opacity: a) }
 func black(_ a: Double) -> Color { Color(.sRGB, white: 0, opacity: a) }
 
 /// The app's design tokens (`Theme`), resolved for one appearance.
-struct Palette {
-    let dark: Bool
+public struct Palette {
+    public let dark: Bool
 
-    init(_ scheme: ColorScheme) { dark = scheme == .dark }
+    public init(_ scheme: ColorScheme) { dark = scheme == .dark }
 
-    var ink: Color { dark ? hex(0xF4F4F6) : hex(0x1C1C1E) }
-    var muted: Color { dark ? hex(0xF4F4F6, 0.58) : hex(0x1C1C1E, 0.55) }
-    var muted2: Color { dark ? hex(0xF4F4F6, 0.40) : hex(0x1C1C1E, 0.40) }
-    var faint: Color { dark ? hex(0xF4F4F6, 0.26) : hex(0x1C1C1E, 0.26) }
+    public var ink: Color { dark ? hex(0xF4F4F6) : hex(0x1C1C1E) }
+    public var muted: Color { dark ? hex(0xF4F4F6, 0.58) : hex(0x1C1C1E, 0.55) }
+    public var muted2: Color { dark ? hex(0xF4F4F6, 0.40) : hex(0x1C1C1E, 0.40) }
+    public var faint: Color { dark ? hex(0xF4F4F6, 0.26) : hex(0x1C1C1E, 0.26) }
 
-    var cardSolid: Color { dark ? hex(0x1C1D22) : hex(0xFFFFFF) }
-    var groupFill: Color { dark ? black(0.22) : black(0.035) }
-    var groupBorder: Color { dark ? white(0.07) : black(0.05) }
-    var separator: Color { dark ? white(0.07) : black(0.07) }
+    public var cardSolid: Color { dark ? hex(0x1C1D22) : hex(0xFFFFFF) }
+    public var groupFill: Color { dark ? black(0.22) : black(0.035) }
+    public var groupBorder: Color { dark ? white(0.07) : black(0.05) }
+    public var separator: Color { dark ? white(0.07) : black(0.07) }
 
-    var meterTrack: Color { dark ? black(0.32) : black(0.06) }
-    var meterTrackBorder: Color { dark ? white(0.06) : .clear }
-    var meterEmpty: Color { dark ? white(0.07) : black(0.085) }
+    public var meterTrack: Color { dark ? black(0.32) : black(0.06) }
+    public var meterTrackBorder: Color { dark ? white(0.06) : .clear }
+    public var meterEmpty: Color { dark ? white(0.07) : black(0.085) }
 
-    var chartGrid: Color { dark ? white(0.05) : black(0.055) }
-    var chartLabel: Color { dark ? hex(0xF4F4F6, 0.42) : hex(0x1C1C1E, 0.45) }
-    var chartPill: Color { dark ? white(0.10) : black(0.06) }
-    var chartDash: Color { dark ? hex(0xF4F4F6, 0.30) : hex(0x1C1C1E, 0.28) }
-    var chipFill: Color { dark ? white(0.07) : black(0.045) }
-    var chipBorder: Color { dark ? white(0.07) : black(0.04) }
+    public var chartGrid: Color { dark ? white(0.05) : black(0.055) }
+    public var chartLabel: Color { dark ? hex(0xF4F4F6, 0.42) : hex(0x1C1C1E, 0.45) }
+    public var chartPill: Color { dark ? white(0.10) : black(0.06) }
+    public var chartDash: Color { dark ? hex(0xF4F4F6, 0.30) : hex(0x1C1C1E, 0.28) }
+    public var chipFill: Color { dark ? white(0.07) : black(0.045) }
+    public var chipBorder: Color { dark ? white(0.07) : black(0.04) }
 
-    var ok: Color { hex(0x30D158) }
-    var stale: Color { hex(0xFFB020) }
-    var amber: Color { dark ? hex(0xFFC248) : hex(0xB87200) }
-    var rose: Color { dark ? hex(0xFF6982) : hex(0xD21F45) }
-    var azure: Color { dark ? hex(0x6AA8FF) : hex(0x1F6FEB) }
+    public var ok: Color { hex(0x30D158) }
+    public var stale: Color { hex(0xFFB020) }
+    public var amber: Color { dark ? hex(0xFFC248) : hex(0xB87200) }
+    public var rose: Color { dark ? hex(0xFF6982) : hex(0xD21F45) }
+    public var azure: Color { dark ? hex(0x6AA8FF) : hex(0x1F6FEB) }
 
-    func tone(_ state: PacingState) -> Tone {
+    public func tone(_ state: PacingState) -> Tone {
         switch (state, dark) {
         case (.plenty, true): Tone(top: hex(0x8CC2FF), bottom: hex(0x4A8EFF), glow: hex(0x4A8EFF, 0.55), text: hex(0x6AA8FF))
         case (.plenty, false): Tone(top: hex(0x64A8FF), bottom: hex(0x2270F0), glow: hex(0x2270F0, 0.30), text: hex(0x1F6FEB))
@@ -57,7 +57,7 @@ struct Palette {
     }
 
     /// The 5-hour level's color: the forecast's pacing tone until it warns, then amber and rose.
-    func session(_ s: WidgetSession) -> Tone {
+    public func session(_ s: WidgetSession) -> Tone {
         switch s.level {
         case .normal: tone(s.tone)
         case .amber: tone(.tight)
@@ -66,21 +66,28 @@ struct Palette {
     }
 }
 
-struct Tone {
-    let top: Color
-    let bottom: Color
-    let glow: Color
+public struct Tone {
+    public let top: Color
+    public let bottom: Color
+    public let glow: Color
     /// Text, dot and chart line color.
-    let text: Color
+    public let text: Color
 
-    var fill: LinearGradient { LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom) }
+    public var fill: LinearGradient { LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom) }
+
+    public init(top: Color, bottom: Color, glow: Color, text: Color) {
+        self.top = top
+        self.bottom = bottom
+        self.glow = glow
+        self.text = text
+    }
 }
 
 /// Brand identity colors (`Brand` in the app): identity only, never a pacing state.
-struct BrandColors {
-    let base: Color, light: Color, tileTop: Color, tileBottom: Color, markInk: Color, orbDark: Color, orbLight: Color
+public struct BrandColors {
+    public let base: Color, light: Color, tileTop: Color, tileBottom: Color, markInk: Color, orbDark: Color, orbLight: Color
 
-    static func of(_ p: Provider) -> BrandColors {
+    public static func of(_ p: Provider) -> BrandColors {
         switch p {
         case .claude: BrandColors(base: hex(0xD97757), light: hex(0xF0A084), tileTop: hex(0xE8956F), tileBottom: hex(0xC65F3C),
                                   markInk: hex(0xFFF6EF), orbDark: hex(0xD97757, 0.24), orbLight: hex(0xD97757, 0.13))
@@ -89,12 +96,17 @@ struct BrandColors {
         }
     }
 
-    func pill(_ p: Palette) -> Color { p.dark ? light : base }
+    public func pill(_ p: Palette) -> Color { p.dark ? light : base }
+
+    public init(base: Color, light: Color, tileTop: Color, tileBottom: Color, markInk: Color, orbDark: Color, orbLight: Color) {
+        self.base = base; self.light = light; self.tileTop = tileTop; self.tileBottom = tileBottom
+        self.markInk = markInk; self.orbDark = orbDark; self.orbLight = orbLight
+    }
 }
 
 extension WidgetSession {
     /// The forecast as a pacing color (`SessionForecast.pacingState`).
-    var tone: PacingState {
+    public var tone: PacingState {
         switch outlook {
         case .idle: .plenty
         case .blocked: .veryTight
@@ -106,9 +118,9 @@ extension WidgetSession {
 }
 
 /// Type in the app's voice: SF with the mockup's weights and tracking.
-enum Fonts {
+public enum Fonts {
     /// Small capitals label: "EVEN PACE", "5-HOUR".
-    static func caps(_ size: CGFloat = 8.5, _ weight: Font.Weight = .bold) -> Font { .system(size: size, weight: weight) }
-    static func number(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight).monospacedDigit() }
-    static func text(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font { .system(size: size, weight: weight) }
+    public static func caps(_ size: CGFloat = 8.5, _ weight: Font.Weight = .bold) -> Font { .system(size: size, weight: weight) }
+    public static func number(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight).monospacedDigit() }
+    public static func text(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font { .system(size: size, weight: weight) }
 }

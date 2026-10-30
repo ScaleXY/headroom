@@ -3,17 +3,17 @@ import SwiftUI
 
 /// The Pace card's glide graph: headroom over time, the dotted projection from now, the even-pace
 /// diagonal and the time axis. For the 5-hour session it is the last day's trail of dips and refills.
-struct GlideChartView: View {
-    var chart: WidgetChart
-    var tone: Tone
+public struct GlideChartView: View {
+    public var chart: WidgetChart
+    public var tone: Tone
     /// Draws the NOW chip next to the dot.
-    var nowChip = true
-    var labels = true
+    public var nowChip = true
+    public var labels = true
     @Environment(\.colorScheme) private var scheme
 
     private static let labelBand: CGFloat = 14
 
-    var body: some View {
+    public var body: some View {
         GeometryReader { g in
             content(size: g.size)
         }
@@ -134,7 +134,7 @@ struct GlideChartView: View {
     }
 
     /// Catmull-Rom smoothing to cubic Béziers, joined to the current subpath by a straight line.
-    static func appendSmooth(_ pts: [CGPoint], to p: inout Path) {
+    public static func appendSmooth(_ pts: [CGPoint], to p: inout Path) {
         guard let first = pts.first else { return }
         if p.isEmpty { p.move(to: first) } else { p.addLine(to: first) }
         guard pts.count > 1 else { return }
@@ -169,9 +169,14 @@ struct GlideChartView: View {
 
     // MARK: Axis
 
-    struct Axis {
-        var lines: [Double]
-        var labels: [(t: Double, text: String, current: Bool)]
+    public struct Axis {
+        public var lines: [Double]
+        public var labels: [(t: Double, text: String, current: Bool)]
+
+        public init(lines: [Double], labels: [(t: Double, text: String, current: Bool)]) {
+            self.lines = lines
+            self.labels = labels
+        }
     }
 
     @ViewBuilder
@@ -201,7 +206,7 @@ struct GlideChartView: View {
     }
 
     /// Hour lines every 4 hours for a day-long trail (every hour for 5), day lines for a week.
-    static func axis(_ c: WidgetChart, calendar: Calendar = .current) -> Axis {
+    public static func axis(_ c: WidgetChart, calendar: Calendar = .current) -> Axis {
         let hours = max(c.hours, 1)
         var lines: [Double] = []
         var labels: [(Double, String, Bool)] = []
@@ -243,5 +248,12 @@ struct GlideChartView: View {
             }
         }
         return Axis(lines: lines, labels: labels.map { (t: $0.0, text: $0.1, current: $0.2) })
+    }
+
+    public init(chart: WidgetChart, tone: Tone, nowChip: Bool = true, labels: Bool = true) {
+        self.chart = chart
+        self.tone = tone
+        self.nowChip = nowChip
+        self.labels = labels
     }
 }

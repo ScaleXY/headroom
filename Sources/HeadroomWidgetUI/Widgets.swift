@@ -2,7 +2,10 @@ import HeadroomKit
 import SwiftUI
 import WidgetKit
 
-/// The three desktop widgets.
+// Home Screen and desktop widgets. watchOS has no system families; it uses `Accessory`.
+#if !os(watchOS)
+
+/// The widgets: the three desktop ones the Mac shows, and two more for iPhone and iPad.
 public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
     /// The Burn-o-meter: twin dials for the 5-hour session and the week.
     case burn
@@ -10,6 +13,13 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
     case pace
     /// The 5-hour session: a countdown ring and the last day's trail.
     case session
+    /// Every account at once (iPhone and iPad).
+    case accounts
+    /// Tokens and cost over a day, a week or a month (iPhone and iPad).
+    case activity
+
+    /// The kinds the Mac's desktop widget bundle offers.
+    public static let desktop: [HeadroomWidgetKind] = [.burn, .pace, .session]
 
     public var kind: String { "com.scalexy.headroom.widget.\(rawValue)" }
 
@@ -18,6 +28,8 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
         case .burn: "Burn-o-meter"
         case .pace: "Headroom"
         case .session: "5-Hour Session"
+        case .accounts: "Accounts"
+        case .activity: "Activity"
         }
     }
 
@@ -26,14 +38,26 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
         case .burn: "How fast you're spending, against the pace that lasts to the reset."
         case .pace: "What's left this week, where it's heading and when it renews."
         case .session: "Time to the 5-hour reset, and how the session is going."
+        case .accounts: "Every account at a glance, the one that needs watching first."
+        case .activity: "Your tokens and what they would have cost at API prices."
         }
     }
 
     public var families: [WidgetFamily] {
+        #if os(iOS)
+        switch self {
+        case .pace: [.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge]
+        case .burn: [.systemSmall, .systemMedium, .systemLarge]
+        case .session: [.systemSmall, .systemMedium, .systemLarge]
+        case .accounts, .activity: [.systemMedium, .systemLarge, .systemExtraLarge]
+        }
+        #else
         switch self {
         case .burn, .pace: [.systemSmall, .systemMedium, .systemLarge]
         case .session: [.systemSmall, .systemMedium]
+        case .accounts, .activity: [.systemMedium, .systemLarge]
         }
+        #endif
     }
 }
 
@@ -44,19 +68,32 @@ public struct HeadroomWidgetView: View {
     var family: WidgetFamily
     var feed: WidgetFeed?
     var now: Date
+    /// The account a configured widget shows (`WidgetProvider.key`); nil for the most urgent.
+    var account: String?
+    var filter: AccountsFilter
+    var includeInactive: Bool
+    /// The 5-hour widget's Track button (the iPhone passes its Live Activity intent).
+    var trackButton: AnyView?
 
-    public init(kind: HeadroomWidgetKind, family: WidgetFamily, feed: WidgetFeed?, now: Date) {
-        self.kind = kind; self.family = family; self.feed = feed; self.now = now
+    public init(kind: HeadroomWidgetKind, family: WidgetFamily, feed: WidgetFeed?, now: Date, account: String? = nil,
+                filter: AccountsFilter = .all, includeInactive: Bool = false, trackButton: AnyView? = nil) {
+        self.kind = kind; self.family = family; self.feed = feed; self.now = now; self.account = account
+        self.filter = filter; self.includeInactive = includeInactive; self.trackButton = trackButton
     }
 
     public var body: some View {
         Group {
-            if let feed, let focus = feed.focus(for: kind), focus.week != nil || focus.session != nil {
-                let ctx = Context(feed: feed, focus: focus, copy: Copy(now: now), family: family)
+            if kind == .accounts, let feed, feed.providers.contains(where: { $0.week != nil || $0.session != nil }) {
+                AccountsWidget(feed: feed, family: family, now: now, filter: filter, includeInactive: includeInactive)
+            } else if let feed, let focus = account.flatMap(feed.account) ?? feed.focus(for: kind), focus.week != nil || focus.session != nil {
+                let ctx = WidgetContext(feed: feed, focus: focus, copy: Copy(now: now), family: family)
                 switch kind {
                 case .burn: BurnWidget(ctx: ctx)
-                case .pace: PaceWidget(ctx: ctx)
-                case .session: SessionWidget(ctx: ctx)
+                case .pace: family == .systemExtraLarge ? AnyView(PaceDashboardWidget(ctx: ctx)) : AnyView(PaceWidget(ctx: ctx))
+                case .session:
+                    family == .systemLarge ? AnyView(SessionLargeWidget(ctx: ctx, trackButton: trackButton)) : AnyView(SessionWidget(ctx: ctx))
+                case .activity: ActivityWidget(provider: focus, family: family, now: now)
+                case .accounts: EmptyView()
                 }
             } else {
                 EmptyWidget(kind: kind, family: family, waiting: feed != nil)
@@ -66,14 +103,15 @@ public struct HeadroomWidgetView: View {
     }
 
     /// The surface for this widget: the focus provider's orb and, when it's hot, the state's glow.
-    public static func surface(kind: HeadroomWidgetKind, feed: WidgetFeed?) -> WidgetSurface {
-        let focus = feed?.focus(for: kind)
+    public static func surface(kind: HeadroomWidgetKind, feed: WidgetFeed?, account: String? = nil) -> WidgetSurface {
+        let focus = account.flatMap { feed?.account($0) } ?? feed?.focus(for: kind)
         var accent: PacingState?
         switch kind {
         case .burn:
             let ratios = [focus?.session?.burn.ratio, focus?.week?.burn.ratio].compactMap { $0 }
             accent = ratios.max().map { $0.isFinite ? BurnGauge.state($0) : .veryTight }
         case .pace: accent = focus?.week?.state
+        case .accounts, .activity: accent = nil
         case .session:
             if let s = focus?.session { accent = s.level >= .amber ? (s.level == .amber ? .tight : .veryTight) : nil }
         }
@@ -83,7 +121,7 @@ public struct HeadroomWidgetView: View {
 
 extension WidgetFeed {
     /// The provider a one-provider widget shows: whichever needs watching most for what that widget draws.
-    func focus(for kind: HeadroomWidgetKind) -> WidgetProvider? {
+    public func focus(for kind: HeadroomWidgetKind) -> WidgetProvider? {
         let read = providers.filter { $0.week != nil || $0.session != nil }
         func burn(_ p: WidgetProvider) -> Double {
             let r = [p.session.flatMap { $0.isIdle ? nil : $0.burn.ratio }, p.week?.burn.ratio].compactMap { $0 }.max() ?? 0
@@ -101,29 +139,36 @@ extension WidgetFeed {
         switch kind {
         case .burn: pick = read.sorted { burn($0) > burn($1) }
         case .session: pick = read.sorted { session($0) > session($1) }
-        case .pace: pick = read.sorted { (p: WidgetProvider, q: WidgetProvider) in
+        case .pace, .accounts, .activity: pick = read.sorted { (p: WidgetProvider, q: WidgetProvider) in
             (p.blockedUntil != nil ? 100 : week(p)) > (q.blockedUntil != nil ? 100 : week(q)) }
         }
         return pick.first ?? providers.first
     }
 }
 
-struct Context {
-    var feed: WidgetFeed
-    var focus: WidgetProvider
-    var copy: Copy
-    var family: WidgetFamily
+public struct WidgetContext {
+    public var feed: WidgetFeed
+    public var focus: WidgetProvider
+    public var copy: Copy
+    public var family: WidgetFamily
 
-    var stale: Bool { copy.now.timeIntervalSince(feed.generatedAt) > 20 * 60 }
-    var others: [WidgetProvider] { feed.providers.filter { $0.week != nil || $0.session != nil } }
+    public var stale: Bool { copy.now.timeIntervalSince(feed.generatedAt) > 20 * 60 }
+    public var others: [WidgetProvider] { feed.providers.filter { $0.week != nil || $0.session != nil } }
+
+    public init(feed: WidgetFeed, focus: WidgetProvider, copy: Copy, family: WidgetFamily) {
+        self.feed = feed
+        self.focus = focus
+        self.copy = copy
+        self.family = family
+    }
 }
 
 /// "Updated 2h ago" with an amber dot, when the app hasn't written for a while.
-struct StaleNote: View {
-    var ctx: Context
+public struct StaleNote: View {
+    public var ctx: WidgetContext
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         if ctx.stale {
             HStack(spacing: 4) {
                 Dot(color: Palette(scheme).stale, size: 4)
@@ -131,12 +176,16 @@ struct StaleNote: View {
             }
         }
     }
+
+    public init(ctx: WidgetContext) {
+        self.ctx = ctx
+    }
 }
 
 // MARK: - Burn-o-meter
 
-struct BurnWidget: View {
-    var ctx: Context
+public struct BurnWidget: View {
+    public var ctx: WidgetContext
     @Environment(\.colorScheme) private var scheme
 
     private struct Reading {
@@ -165,7 +214,7 @@ struct BurnWidget: View {
         return r
     }
 
-    var body: some View {
+    public var body: some View {
         switch ctx.family {
         case .systemSmall: small
         case .systemLarge: large
@@ -267,29 +316,37 @@ struct BurnWidget: View {
             Text(text).font(Fonts.text(size, .semibold)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.8)
         }
     }
+
+    public init(ctx: WidgetContext) {
+        self.ctx = ctx
+    }
 }
 
 /// "5H" / "WEEK" in a quiet pill.
-struct WindowChip: View {
-    var text: String
+public struct WindowChip: View {
+    public var text: String
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         Caps(text, size: 7.5, color: p.muted)
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(Capsule().fill(p.chipFill))
             .overlay(Capsule().strokeBorder(p.chipBorder, lineWidth: 0.5))
     }
+
+    public init(text: String) {
+        self.text = text
+    }
 }
 
 /// The odometer, the API-rate cost and the last day hour by hour.
-struct TokensPanel: View {
-    var provider: WidgetProvider
-    var tone: Tone
+public struct TokensPanel: View {
+    public var provider: WidgetProvider
+    public var tone: Tone
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         VStack(spacing: 8) {
             HStack(alignment: .bottom) {
@@ -315,15 +372,20 @@ struct TokensPanel: View {
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.groupFill))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(p.groupBorder, lineWidth: 0.5))
     }
+
+    public init(provider: WidgetProvider, tone: Tone) {
+        self.provider = provider
+        self.tone = tone
+    }
 }
 
 // MARK: - Pace
 
-struct PaceWidget: View {
-    var ctx: Context
+public struct PaceWidget: View {
+    public var ctx: WidgetContext
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         switch ctx.family {
         case .systemSmall: small
         case .systemLarge: large
@@ -433,15 +495,19 @@ struct PaceWidget: View {
             }
         }
     }
+
+    public init(ctx: WidgetContext) {
+        self.ctx = ctx
+    }
 }
 
 /// "82%" with a smaller percent sign, as the Pace card sets it.
-struct Hero: View {
-    var left: Double
-    var size: CGFloat
+public struct Hero: View {
+    public var left: Double
+    public var size: CGFloat
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("\(Int((max(0, left) * 100).rounded()))")
@@ -451,29 +517,39 @@ struct Hero: View {
                 .baselineOffset(size * 0.33)
         }
     }
+
+    public init(left: Double, size: CGFloat) {
+        self.left = left
+        self.size = size
+    }
 }
 
-struct RenewLine: View {
-    var week: WidgetWeek
-    var copy: Copy
+public struct RenewLine: View {
+    public var week: WidgetWeek
+    public var copy: Copy
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         HStack(spacing: 4) {
             if week.hourglass { Hourglass(color: p.azure, height: 9) }
             Text(copy.renews(week.resetsAt)).font(Fonts.text(9.5, .semibold)).foregroundStyle(week.hourglass ? p.azure : p.muted2).lineLimit(1)
         }
     }
+
+    public init(week: WidgetWeek, copy: Copy) {
+        self.week = week
+        self.copy = copy
+    }
 }
 
 /// "Plenty available" with the state's dot.
-struct StateChip: View {
-    var state: PacingState
-    var title: String
+public struct StateChip: View {
+    public var state: PacingState
+    public var title: String
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), t = p.tone(state)
         HStack(spacing: 5) {
             Dot(color: t.text, size: 5)
@@ -483,21 +559,26 @@ struct StateChip: View {
         .background(Capsule().fill(t.text.opacity(p.dark ? 0.12 : 0.09)))
         .overlay(Capsule().strokeBorder(t.text.opacity(0.22), lineWidth: 0.5))
     }
+
+    public init(state: PacingState, title: String) {
+        self.state = state
+        self.title = title
+    }
 }
 
-struct OverviewRow: View {
-    var provider: WidgetProvider
-    var copy: Copy
-    var dim: Bool
+public struct OverviewRow: View {
+    public var provider: WidgetProvider
+    public var copy: Copy
+    public var dim: Bool
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         HStack(spacing: 10) {
             BrandTile(provider: provider.id, size: 26)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Text(provider.id.displayName).font(Fonts.text(12.5, .semibold)).foregroundStyle(p.ink)
+                    Text(provider.id.displayName).font(Fonts.text(12.5, .semibold)).foregroundStyle(p.ink).lineLimit(1).layoutPriority(1)
                     if let plan = provider.plan { PlanPill(provider: provider.id, text: plan) }
                 }
                 if let w = provider.week {
@@ -518,14 +599,20 @@ struct OverviewRow: View {
             }
         }
     }
+
+    public init(provider: WidgetProvider, copy: Copy, dim: Bool) {
+        self.provider = provider
+        self.copy = copy
+        self.dim = dim
+    }
 }
 
-struct SessionRow: View {
-    var session: WidgetSession
-    var copy: Copy
+public struct SessionRow: View {
+    public var session: WidgetSession
+    public var copy: Copy
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), t = p.session(session)
         HStack(spacing: 9) {
             Ring(fraction: session.left, tone: t, width: 3).frame(width: 24, height: 24)
@@ -547,15 +634,20 @@ struct SessionRow: View {
         .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(p.groupFill))
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(p.groupBorder, lineWidth: 0.5))
     }
+
+    public init(session: WidgetSession, copy: Copy) {
+        self.session = session
+        self.copy = copy
+    }
 }
 
 // MARK: - 5-hour session
 
-struct SessionWidget: View {
-    var ctx: Context
+public struct SessionWidget: View {
+    public var ctx: WidgetContext
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         if let s = ctx.focus.session {
             switch ctx.family {
             case .systemSmall: small(s)
@@ -618,16 +710,20 @@ struct SessionWidget: View {
                 .lineLimit(1).minimumScaleFactor(0.75)
         }
     }
+
+    public init(ctx: WidgetContext) {
+        self.ctx = ctx
+    }
 }
 
 /// The ring of what's left of the session, with the live countdown to its reset inside.
-struct CountdownRing: View {
-    var session: WidgetSession
-    var copy: Copy
-    var width: CGFloat
+public struct CountdownRing: View {
+    public var session: WidgetSession
+    public var copy: Copy
+    public var width: CGFloat
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme), t = p.session(session)
         GeometryReader { g in
             let d = min(g.size.width, g.size.height)
@@ -656,18 +752,24 @@ struct CountdownRing: View {
             .frame(width: g.size.width, height: g.size.height)
         }
     }
+
+    public init(session: WidgetSession, copy: Copy, width: CGFloat) {
+        self.session = session
+        self.copy = copy
+        self.width = width
+    }
 }
 
 // MARK: - Empty
 
-struct EmptyWidget: View {
-    var kind: HeadroomWidgetKind
-    var family: WidgetFamily
-    var waiting: Bool
-    var message: String? = nil
+public struct EmptyWidget: View {
+    public var kind: HeadroomWidgetKind
+    public var family: WidgetFamily
+    public var waiting: Bool
+    public var message: String? = nil
     @Environment(\.colorScheme) private var scheme
 
-    var body: some View {
+    public var body: some View {
         let p = Palette(scheme)
         VStack(spacing: family == .systemSmall ? 8 : 10) {
             HeadroomMarkView(size: family == .systemSmall ? 38 : 46)
@@ -684,4 +786,12 @@ struct EmptyWidget: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    public init(kind: HeadroomWidgetKind, family: WidgetFamily, waiting: Bool, message: String? = nil) {
+        self.kind = kind
+        self.family = family
+        self.waiting = waiting
+        self.message = message
+    }
 }
+#endif

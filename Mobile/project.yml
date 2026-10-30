@@ -1,0 +1,197 @@
+# Headroom for iPhone, iPad and Apple Watch. Generate the project with `make mobile-project`
+# (XcodeGen); the .xcodeproj is not committed. All logic and views live in the Swift package at the
+# repository root; the targets here are thin shells.
+name: Headroom
+options:
+  bundleIdPrefix: com.scalexy
+  deploymentTarget:
+    iOS: "26.0"
+    watchOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+packages:
+  Headroom:
+    path: ..
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: $(HEADROOM_MOBILE_VERSION)
+    CURRENT_PROJECT_VERSION: $(HEADROOM_MOBILE_BUILD)
+    DEVELOPMENT_TEAM: $(HEADROOM_TEAM_ID)
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+
+targets:
+  Headroom:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared/Intents
+    resources:
+      - App/Assets.xcassets
+    dependencies:
+      - package: Headroom
+        product: HeadroomMobileUI
+      - package: Headroom
+        product: HeadroomSync
+      - package: Headroom
+        product: HeadroomWidgetUI
+      - package: Headroom
+        product: HeadroomKit
+      - target: HeadroomMobileWidgets
+      - target: HeadroomWatch
+    entitlements:
+      path: App/Headroom.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.scalexy.headroom]
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.security.application-groups: [group.com.scalexy.headroom]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Headroom
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        HeadroomCloudKit: $(HEADROOM_CLOUDKIT)
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSSupportsLiveActivities: true
+        UIApplicationSupportsMultipleScenes: true
+        UILaunchScreen: {}
+        UIBackgroundModes: [remote-notification, fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.scalexy.headroom.refresh]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.scalexy.headroom
+            CFBundleURLSchemes: [headroom]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_APP
+
+  HeadroomMobileWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      - Shared/Widgets
+      - Shared/Intents
+    dependencies:
+      - package: Headroom
+        product: HeadroomWidgetUI
+      - package: Headroom
+        product: HeadroomKit
+    entitlements:
+      path: Widgets/HeadroomMobileWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.scalexy.headroom]
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Headroom
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.mobile-widgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_EXTENSION
+
+  HeadroomWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - Watch
+      - Shared/Intents
+    resources:
+      - Watch/Assets.xcassets
+    dependencies:
+      - package: Headroom
+        product: HeadroomWatchUI
+      - package: Headroom
+        product: HeadroomSync
+      - package: Headroom
+        product: HeadroomWidgetUI
+      - package: Headroom
+        product: HeadroomKit
+      - target: HeadroomWatchWidgets
+    entitlements:
+      path: Watch/HeadroomWatch.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.scalexy.headroom]
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.security.application-groups: [group.com.scalexy.headroom]
+    info:
+      path: Watch/Info.plist
+      properties:
+        CFBundleDisplayName: Headroom
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        HeadroomCloudKit: $(HEADROOM_CLOUDKIT)
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.scalexy.headroom
+        WKRunsIndependentlyOfCompanionApp: false
+        UIBackgroundModes: [remote-notification]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.watchkitapp
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_APP
+
+  HeadroomWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - WatchWidgets
+      - Shared/Widgets
+      - Shared/Intents
+    dependencies:
+      - package: Headroom
+        product: HeadroomWidgetUI
+      - package: Headroom
+        product: HeadroomKit
+    entitlements:
+      path: WatchWidgets/HeadroomWatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.scalexy.headroom]
+    info:
+      path: WatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Headroom
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.watchkitapp.widgets
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HEADROOM_EXTENSION
+
+schemes:
+  Headroom:
+    build:
+      targets:
+        Headroom: all
+        HeadroomMobileWidgets: all
+    run:
+      config: Debug
+  HeadroomWatch:
+    build:
+      targets:
+        HeadroomWatch: all
+        HeadroomWatchWidgets: all
+    run:
+      config: Debug

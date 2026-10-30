@@ -8,24 +8,24 @@ import SwiftUI
 /// as the five-cell meter, colored by zone (azure cruising, pearl on pace, amber, rose redline),
 /// with the zone bands drawn under it like a gauge's painted scale. A small notch marks the longer
 /// average so a burst reads as a burst.
-struct SpeedDial: View {
+public struct SpeedDial: View {
     /// Current burn ÷ lasting burn; `.infinity` once nothing is left; nil without a reading.
-    var ratio: Double?
-    var average: Double?
-    var value: String
+    public var ratio: Double?
+    public var average: Double?
+    public var value: String
     /// Set smaller after the value: "%/h".
-    var unit: String? = nil
-    var caption: String?
+    public var unit: String? = nil
+    public var caption: String?
     /// Draws the 0 · 1× · 2× · 3× scale.
-    var scale = true
-    var dim = false
+    public var scale = true
+    public var dim = false
     @Environment(\.colorScheme) private var scheme
 
     /// Degrees, clockwise from 3 o'clock: the dial runs from 7:30 round the top to 4:30.
-    static let start = 150.0, sweep = 240.0
-    static let segments = 30
+    public nonisolated static let start = 150.0, sweep = 240.0
+    public static let segments = 30
 
-    var body: some View {
+    public var body: some View {
         GeometryReader { g in
             let D = min(g.size.width, g.size.height / Self.aspect)
             let geo = Geometry(D: D, origin: CGPoint(x: (g.size.width - D) / 2, y: 0))
@@ -35,29 +35,34 @@ struct SpeedDial: View {
     }
 
     /// Height ÷ width: the dial's bottom gap holds the readout.
-    static let aspect: CGFloat = 0.94
+    public static let aspect: CGFloat = 0.94
 
-    struct Geometry {
-        var D: CGFloat
-        var origin: CGPoint
-        var c: CGPoint { CGPoint(x: origin.x + D / 2, y: origin.y + D / 2) }
-        var rOut: CGFloat { D / 2 - D * 0.015 }
-        var width: CGFloat { D * 0.088 }
-        var rIn: CGFloat { rOut - width }
+    public struct Geometry {
+        public var D: CGFloat
+        public var origin: CGPoint
+        public var c: CGPoint { CGPoint(x: origin.x + D / 2, y: origin.y + D / 2) }
+        public var rOut: CGFloat { D / 2 - D * 0.015 }
+        public var width: CGFloat { D * 0.088 }
+        public var rIn: CGFloat { rOut - width }
 
-        func angle(_ v: Double) -> Double {
+        public func angle(_ v: Double) -> Double {
             (SpeedDial.start + SpeedDial.sweep * min(max(v, 0), BurnGauge.maxRatio * 1.03) / BurnGauge.maxRatio) * .pi / 180
         }
 
-        func point(_ a: Double, _ r: CGFloat) -> CGPoint { CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a))) }
+        public func point(_ a: Double, _ r: CGFloat) -> CGPoint { CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a))) }
 
         /// An annular sector between two angles (radians).
-        func sector(_ a0: Double, _ a1: Double, inner: CGFloat, outer: CGFloat, into p: inout Path) {
+        public func sector(_ a0: Double, _ a1: Double, inner: CGFloat, outer: CGFloat, into p: inout Path) {
             let steps = max(2, Int(abs(a1 - a0) / 0.03))
             p.move(to: point(a0, outer))
             for i in 1...steps { p.addLine(to: point(a0 + (a1 - a0) * Double(i) / Double(steps), outer)) }
             for i in stride(from: steps, through: 0, by: -1) { p.addLine(to: point(a0 + (a1 - a0) * Double(i) / Double(steps), inner)) }
             p.closeSubpath()
+        }
+
+        public init(D: CGFloat, origin: CGPoint) {
+            self.D = D
+            self.origin = origin
         }
     }
 
@@ -204,17 +209,27 @@ struct SpeedDial: View {
     }
 
     /// "3.7" with "%/h", "OUT" or "—".
-    static func readout(perHour: Double?, ratio: Double?) -> (value: String, unit: String?) {
+    public static func readout(perHour: Double?, ratio: Double?) -> (value: String, unit: String?) {
         guard let ratio, let perHour else { return ("—", nil) }
         guard ratio.isFinite else { return ("OUT", nil) }
         return (rate(perHour), "%/h")
     }
 
     /// Percent of the allowance per hour, without the sign: "0", "0.6", "3.7", "42".
-    static func rate(_ perHour: Double) -> String {
+    public static func rate(_ perHour: Double) -> String {
         let pct = max(0, perHour) * 100
         if pct >= 9.95 { return "\(Int(pct.rounded()))" }
         if pct < 0.05 { return "0" }
         return pct.formatted(.number.precision(.fractionLength(1)))
+    }
+
+    public init(ratio: Double? = nil, average: Double? = nil, value: String, unit: String? = nil, caption: String? = nil, scale: Bool = true, dim: Bool = false) {
+        self.ratio = ratio
+        self.average = average
+        self.value = value
+        self.unit = unit
+        self.caption = caption
+        self.scale = scale
+        self.dim = dim
     }
 }
