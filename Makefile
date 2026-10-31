@@ -95,7 +95,7 @@ ifneq ($(wildcard $(PROFILE)),)
   endif
 endif
 
-.PHONY: all build test app install icon clean bench screenshots appstore release dmg dmg-background notarize \
+.PHONY: all build test app install icon clean bench screenshots appstore mobile-appstore release dmg dmg-background notarize \
         mobile-project mobile-build mobile-previews mobile-icon
 
 all: build
@@ -120,6 +120,12 @@ screenshots:
 
 appstore:
 	python3 -I Scripts/appstore_media.py
+
+# iPhone, iPhone Duo, iPad and Apple Watch screenshots, app previews and creative assets in
+# appstore/mobile/ (needs the iOS, iPhone Duo and watchOS simulator runtimes and XcodeGen).
+mobile-appstore:
+	python3 -I Scripts/mobile_appstore_capture.py
+	python3 -I Scripts/mobile_appstore_media.py
 
 release: app
 	mkdir -p dist && rm -f dist/Headroom-$(VERSION).zip*

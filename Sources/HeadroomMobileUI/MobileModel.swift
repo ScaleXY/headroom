@@ -83,7 +83,7 @@ public final class MobileModel {
         self.cloudKit = cloudKit && live != nil
         self.prefs = prefs
         let demo = prefs.demo || live == nil
-        reader = SyncReaderModel(source: demo ? FixtureSyncStore(DemoRecords.make()) : live!, isDemo: demo)
+        reader = SyncReaderModel(source: demo ? FixtureSyncStore(DemoRecords.make(DemoRecords.launchScenario)) : live!, isDemo: demo)
         if !self.cloudKit { iCloud = .unsupported }
     }
 
@@ -103,7 +103,7 @@ public final class MobileModel {
     public func setDemo(_ on: Bool) async {
         prefs.demo = on
         if on || live == nil {
-            await reader.use(FixtureSyncStore(DemoRecords.make()), isDemo: true)
+            await reader.use(FixtureSyncStore(DemoRecords.make(DemoRecords.launchScenario)), isDemo: true)
         } else if let live {
             await reader.use(live, isDemo: false)
         }

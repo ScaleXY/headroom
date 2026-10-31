@@ -11,10 +11,18 @@ public enum DemoRecords {
         case twoMacs
         /// Two Claude accounts (personal and work) and Codex.
         case twoClaudeAccounts
+        /// Two Claude accounts and Codex, plus a Codex work account paused at its 5-hour limit:
+        /// every state at once, for the App Store's Apple Watch screenshots.
+        case showcase
     }
 
     public static let laptopID = "demo-macbook-pro"
     public static let desktopID = "demo-mac-studio"
+
+    /// The scenario the App Store screenshots ask for with `-HeadroomDemoScenario <name>`; two Macs otherwise.
+    public static var launchScenario: Scenario {
+        UserDefaults.standard.string(forKey: "HeadroomDemoScenario").flatMap(Scenario.init(rawValue:)) ?? .twoMacs
+    }
 
     public static func make(_ scenario: Scenario = .twoMacs, now: Date = Date()) -> SyncRecords {
         var out = SyncRecords()
@@ -23,12 +31,13 @@ public enum DemoRecords {
         let pricing = PricingEngine.standard()
         let aggregates = Demo.activityAggregates(now: now, pricing: pricing)
 
-        let personal = "claude-demo-personal", work = "claude-demo-work", codexKey = "codex-demo"
+        let personal = "claude-demo-personal", work = "claude-demo-work", codexKey = "codex-demo", codexWork = "codex-demo-work"
+        var desktop = [Provider.claude.rawValue: scenario == .twoMacs ? personal : work]
+        if scenario == .showcase { desktop[Provider.codex.rawValue] = codexWork }
         out.devices = [
             device(laptopID, name: "MacBook Pro", model: "Mac15,7", now: now,
                    current: [Provider.claude.rawValue: personal, Provider.codex.rawValue: codexKey]),
-            device(desktopID, name: "Mac Studio", model: "Mac14,13", now: now.addingTimeInterval(-6 * 60),
-                   current: [Provider.claude.rawValue: scenario == .twoMacs ? personal : work]),
+            device(desktopID, name: "Mac Studio", model: "Mac14,13", now: now.addingTimeInterval(-6 * 60), current: desktop),
         ]
 
         add(&out, claude, key: personal, email: "you@example.com", device: laptopID, now: now)
@@ -41,7 +50,11 @@ public enum DemoRecords {
             older.samples = older.samples.mapValues { s in s.enumerated().filter { $0.offset % 3 == 0 }.map(\.element) }
             add(&out, older, key: personal, email: "you@example.com", device: desktopID, now: now.addingTimeInterval(-6 * 60), activity: false)
             out.activity += activity(aggregates.filter { $0.provider == .claude }, key: personal, device: desktopID, now: now, scale: 0.35)
-        case .twoClaudeAccounts:
+        case .twoClaudeAccounts, .showcase:
+            if scenario == .showcase {
+                let paused = Demo.state(.codex, used: 0.86, elapsedH: 118, session: 1.0, now: now)
+                add(&out, paused, key: codexWork, email: "you@work.example", device: desktopID, now: now.addingTimeInterval(-6 * 60), activity: false)
+            }
             var team = Demo.state(.claude, used: 0.41, elapsedH: 70, session: 0.18, now: now)
             if var r = team.reading { r.plan = PlanInfo(raw: "team", pill: "TEAM", monthlyPriceUSD: 30); team.reading = r }
             add(&out, team, key: work, email: "you@work.example", device: desktopID, now: now.addingTimeInterval(-6 * 60), activity: false)

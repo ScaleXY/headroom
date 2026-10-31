@@ -19,7 +19,7 @@ public final class WatchModel {
     @ObservationIgnored private var lastWritten: Data?
 
     public init(live: (any SyncReading)?) {
-        reader = SyncReaderModel(source: live ?? FixtureSyncStore(DemoRecords.make()), isDemo: live == nil)
+        reader = SyncReaderModel(source: live ?? FixtureSyncStore(DemoRecords.make(DemoRecords.launchScenario)), isDemo: live == nil)
         reader.onRebuild = { [weak self] _ in self?.publish() }
     }
 

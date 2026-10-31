@@ -1,0 +1,54 @@
+# The App Store screenshot and app preview project: Mobile/project.yml plus UI test bundles that
+# drive the apps on sample data. Generated and run by `make mobile-appstore`
+# (Scripts/mobile_appstore_capture.py); the main project and CI never build these targets.
+include:
+  - project.yml
+name: HeadroomScreenshots
+
+targets:
+  HeadroomScreenshotUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests/iOS
+    dependencies:
+      - target: Headroom
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.screenshots
+        TEST_TARGET_NAME: Headroom
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+  HeadroomWatchScreenshotUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources:
+      - UITests/Watch
+    dependencies:
+      - target: HeadroomWatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scalexy.headroom.watchkitapp.screenshots
+        TEST_TARGET_NAME: HeadroomWatch
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  HeadroomScreenshots:
+    build:
+      targets:
+        Headroom: all
+        HeadroomScreenshotUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - HeadroomScreenshotUITests
+  HeadroomWatchScreenshots:
+    build:
+      targets:
+        HeadroomWatch: all
+        HeadroomWatchScreenshotUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - HeadroomWatchScreenshotUITests

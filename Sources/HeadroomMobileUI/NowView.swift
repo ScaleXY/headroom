@@ -90,7 +90,8 @@ struct Banners: View {
     var body: some View {
         let r = model.reader
         VStack(spacing: 8) {
-            if r.isDemo {
+            // App Store screenshots (`-HeadroomScreenshots YES`) leave out the sample-data note.
+            if r.isDemo, !UserDefaults.standard.bool(forKey: "HeadroomScreenshots") {
                 Banner(symbol: "sparkles", tone: .plenty, text: "Sample data. Turn on sync in Headroom on your Mac to see your own.") {
                     Task { await model.setDemo(false) }
                 } action: { "Use iCloud" }
