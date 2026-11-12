@@ -53,7 +53,7 @@ public struct AccountReader: Sendable {
         }.sorted { $0.lastSeenAt > $1.lastSeenAt }
 
         return SyncSnapshot(accounts: accounts, devices: infos, unreadable: records.unreadable, tooNew: records.tooNew,
-                            lastHeard: devices.map(\.lastSeenAt).max())
+                            lastHeard: devices.map(\.lastSeenAt).max(), runs: RunMerge.digests(devices, now: now))
     }
 
     // MARK: One account

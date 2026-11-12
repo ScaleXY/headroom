@@ -87,13 +87,17 @@ public struct DevicePayload: Codable, Sendable, Hashable {
     public var state: DevicePowerState
     /// When this Mac turned sync on.
     public var syncSince: Date?
+    /// Agent runs live now or finished in the last day (`RunSummaryBuilder`). Optional, so
+    /// it needs no schema change: nil (and absent from the JSON) when the Mac tracks none, and
+    /// readers from before runs synced skip the key.
+    public var runs: [RunSummaryPayload]?
 
     public init(name: String, model: String?, appVersion: String, enabledProviders: [Provider], currentAccounts: [String: String],
                 sessionWarnAt: Double, planPriceOverrides: [String: Double], outages: [String: String], state: DevicePowerState,
-                syncSince: Date?) {
+                syncSince: Date?, runs: [RunSummaryPayload]? = nil) {
         self.name = name; self.model = model; self.appVersion = appVersion; self.enabledProviders = enabledProviders
         self.currentAccounts = currentAccounts; self.sessionWarnAt = sessionWarnAt; self.planPriceOverrides = planPriceOverrides
-        self.outages = outages; self.state = state; self.syncSince = syncSince
+        self.outages = outages; self.state = state; self.syncSince = syncSince; self.runs = runs
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +113,7 @@ public struct DevicePayload: Codable, Sendable, Hashable {
         outages = c.lenient(.outages, [:])
         state = c.lenient(.state, .awake)
         syncSince = c.lenient(.syncSince, nil)
+        runs = c.contains(.runs) ? c.lenientArray(.runs) : nil
     }
 
     /// The pacing policy this Mac draws with.

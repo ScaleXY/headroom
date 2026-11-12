@@ -11,6 +11,8 @@ headroom \- weekly Claude and Codex allowance left, against the time left until 
 .IR claude | tmux | sketchybar | plain ]
 .RB [ \-\-provider
 .IR claude | codex ]
+.RB [ \-\-run
+.IR id ]
 .br
 .B headroom wait
 .RB [ \-\-provider
@@ -18,6 +20,34 @@ headroom \- weekly Claude and Codex allowance left, against the time left until 
 .RB [ \-\-timeout
 .IR duration ]
 .RB [ \-\-json ]
+.br
+.B headroom wait \-\-run
+.I id
+.RB [ \-\-until
+.IR done | attention ]
+.RB [ \-\-timeout
+.IR duration ]
+.RB [ \-\-json ]
+.br
+.B headroom tasks
+.RB [ \-\-run
+.IR id ]
+.RB [ \-\-all ]
+.RB [ \-\-json ]
+.RB [ \-\-watch ]
+.br
+.B headroom task
+.IR plan | add | start | progress | wait | done | fail | skip | cancel | guide | hook
+.RI [ id ]
+.RI [ options ]
+.br
+.B headroom hooks
+.IR install | uninstall | status
+.RB [ \-\-settings
+.IR path ]
+.RB [ \-\-project ]
+.RB [ \-\-codex ]
+.RB [ \-\-enforce ]
 .br
 .B headroom mcp
 .SH DESCRIPTION
@@ -30,6 +60,12 @@ It reads only the snapshot the app writes to
 .IR "~/Library/Application Support/Headroom/snapshot.json" .
 It never reads credentials and never uses the network. When the app isn't running it
 prints the last snapshot and says how old it is.
+.PP
+It also tracks long agent runs: an agent declares a tree of tasks with
+.BR "headroom task" ,
+hooks and the app record what the harness and its subagents do, and
+.B headroom tasks
+shows each run's state, progress and forecast.
 .SH COMMANDS
 .TP
 .B headroom
@@ -60,7 +96,15 @@ One short line for a prompt, tmux, SketchyBar or Claude Code's status line. It r
 ignores Claude Code's JSON on standard input. Colors use ANSI (claude) or tmux style
 codes (tmux); sketchybar and plain have none.
 .B NO_COLOR
-turns colors off.
+turns colors off. When a task run is active for the run id
+.RB ( \-\-run ,
+Claude Code's
+.B session_id
+on standard input, or the variables under
+.BR ENVIRONMENT ),
+it appends a segment: percent done, running tasks, and
+.B ⏸input
+when the run needs you.
 .TP
 .B wait
 Blocks while the 5-hour session or the weekly limit is at 100%, or a major outage is
@@ -73,9 +117,117 @@ prints
 .B {"blocked_by", "until"}
 first.
 .TP
+.B wait \-\-run \fIid\fP
+Blocks until the run is finished (done, partial or failed). With
+.B \-\-until attention
+it also returns when the run needs input or the agent stopped with work left. Exits 2
+on timeout. Without
+.B \-\-run
+it waits for capacity as described above.
+.TP
+.B tasks
+Active runs as trees: a state glyph, the title, a bar of work done, in flight and not
+started, the percent done (and the token-based estimate when it is ahead), must-haves
+(critical tasks done), the forecast, and tokens. Each task shows its steps, waits, failures
+and tokens.
+.B \-\-all
+shows every run from the last 7 days,
+.B \-\-json
+prints the folded runs (the
+.I tasks.json
+schema), and
+.B \-\-watch
+redraws when anything changes. Runs come from
+.I tasks.json
+while Headroom.app runs; otherwise the CLI folds the event files itself and says so.
+.TP
+.B task plan
+Declares many tasks from a JSON tree on standard input or
+.B \-\-file
+and prints each task's tag,
+.BI [hr: run : path ] ,
+for the agent spawned for it. Child ids are relative to their parent:
+.RS
+.nf
+{"title": "Refactor auth", "tasks": [{"id": "api", "title": "API",
+  "effort": "l", "importance": "critical", "steps": 3,
+  "children": [{"id": "tests", "title": "API tests"}]}]}
+.fi
+.RE
+.TP
+.B task add \fIid\fP \-\-title \fItext\fP
+Declares or updates one task.
+.B \-\-effort
+is xs, s, m, l, xl (1, 2, 4, 8, 16) or a number, compared only among siblings;
+.B \-\-importance
+is critical, normal or optional;
+.B \-\-steps
+is the number of steps. Ids are paths:
+.I api/tests
+is a child of
+.IR api .
+.TP
+.B task start|done|fail|skip|cancel \fIid\fP
+Marks a task.
+.B done
+takes
+.BR \-\-evidence ,
+.B fail
+needs
+.BR \-\-reason .
+.TP
+.B task progress \fIid\fP
+.B \-\-step
+.IR k [/ n ],
+.B \-\-fraction
+.IR f ,
+.B \-\-note
+.IR text .
+.TP
+.B task wait \fIid\fP \-\-for input|dependency|limit
+Marks a task as blocked, with an optional
+.BR \-\-note .
+.TP
+.B task guide
+Short instructions an agent can follow.
+.TP
+.B task hook
+Reads a Claude Code or Codex hook payload on standard input and records it: permission and
+idle notifications as waiting for input, prompts as resumed, subagents starting and
+stopping, the agent stopping and the session ending. Always exits 0. With
+.B \-\-enforce
+on Stop, it sends the agent back once when tasks it declared are still running with no
+agent on them.
+.TP
+.B hooks install|uninstall|status
+Adds, removes or shows the hooks that run
+.B headroom task hook
+in
+.I ~/.claude/settings.json
+.RB ( \-\-project :
+.IR ./.claude/settings.json ;
+.BR \-\-settings
+.IR path ).
+.B \-\-codex
+uses Codex's
+.I ~/.codex/hooks.json
+instead; Codex runs new hooks once you trust them in its
+.B /hooks
+view. Install keeps every other setting and hook and writes a
+.I .headroom-backup
+beside the file first; uninstall removes only Headroom's entries.
+.TP
 .B mcp
-Optional. A stdio Model Context Protocol server with one read-only tool,
-.BR get_headroom .
+Optional. A stdio Model Context Protocol server with the tools
+.B get_headroom
+(the allowance),
+.B get_tasks
+(task runs),
+.B plan_tasks
+and
+.B update_task
+(the same operations as
+.BR "headroom task" ).
 Add it with:
 .B claude mcp add \-\-scope user headroom \-\- ~/.local/bin/headroom mcp
 .SH EXIT STATUS
@@ -89,6 +241,11 @@ capacity is back.
 .B wait
 timed out.
 .TP
+.B 1
+A file could not be written or read
+.RB ( task ,
+.BR hooks ).
+.TP
 .B 3
 No snapshot exists yet (open Headroom.app).
 .TP
@@ -100,12 +257,32 @@ Usage error.
 Disables colors.
 .TP
 .B HEADROOM_HOME
-Reads the snapshot from this directory instead.
+Reads the snapshot and task files from this directory instead.
+.TP
+.BR HEADROOM_RUN ", " CLAUDE_CODE_SESSION_ID ", " CODEX_THREAD_ID ", " T3CODE_THREAD_ID
+The run id for task commands, in this order, when neither
+.B \-\-run
+nor a
+.IB run :
+prefix on the task id gives one.
 .SH FILES
 .I ~/Library/Application Support/Headroom/snapshot.json
+.br
+.I ~/Library/Application Support/Headroom/tasks.json
+(runs folded by the app)
+.br
+.I ~/Library/Application Support/Headroom/tasks/journal/<run>.jsonl
+(declared events, appended by this command)
+.br
+.I ~/Library/Application Support/Headroom/tasks/observed/<run>.jsonl
+(events the app reads from harness transcripts)
 .SH EXAMPLES
 .nf
 headroom
 headroom statusline \-\-format tmux
 headroom wait \-\-provider claude && claude \-p "continue the refactor"
+headroom task plan \-\-file plan.json
+headroom task progress api/tests \-\-step 2/4
+headroom tasks \-\-watch
+headroom wait \-\-run "$CLAUDE_CODE_SESSION_ID" \-\-until attention
 .fi

@@ -46,6 +46,9 @@ public final class MobilePreferences {
         notifySessionBack = defaults.object(forKey: "notify.sessionBack") as? Bool ?? true
         notifyWeekRenews = defaults.bool(forKey: "notify.weekRenews")
         autoTrackSessions = defaults.bool(forKey: "liveActivity.auto")
+        notifyRunNeedsInput = defaults.object(forKey: "notify.runNeedsInput") as? Bool ?? true
+        notifyRunFinished = defaults.bool(forKey: "notify.runFinished")
+        trackRuns = defaults.object(forKey: "liveActivity.runs") as? Bool ?? true
     }
 
     public var appearance: MobileAppearance { didSet { defaults.set(appearance.rawValue, forKey: "appearance") } }
@@ -59,6 +62,18 @@ public final class MobilePreferences {
     public var notifyWeekRenews: Bool { didSet { defaults.set(notifyWeekRenews, forKey: "notify.weekRenews") } }
     /// Start the session Live Activity when the app opens during a session.
     public var autoTrackSessions: Bool { didSet { defaults.set(autoTrackSessions, forKey: "liveActivity.auto") } }
+    /// When a sync brings a run that newly waits for an answer. On by default.
+    public var notifyRunNeedsInput: Bool { didSet { defaults.set(notifyRunNeedsInput, forKey: "notify.runNeedsInput") } }
+    /// When a sync brings a run that finished. Off by default.
+    public var notifyRunFinished: Bool { didSet { defaults.set(notifyRunFinished, forKey: "notify.runFinished") } }
+    /// Show the most pressing live run as a Live Activity. On by default.
+    public var trackRuns: Bool { didSet { defaults.set(trackRuns, forKey: "liveActivity.runs") } }
+
+    /// What run notifications have already gone out (each episode once).
+    public var runAlerts: RunAlertLedger {
+        get { defaults.data(forKey: "notify.runLedger").flatMap { try? JSONDecoder().decode(RunAlertLedger.self, from: $0) } ?? RunAlertLedger() }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "notify.runLedger") }
+    }
 }
 
 /// Everything the iPhone and iPad screens read: the merged accounts, this device's choices, and

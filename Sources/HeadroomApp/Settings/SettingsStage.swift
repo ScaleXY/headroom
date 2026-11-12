@@ -24,6 +24,7 @@ enum SettingsStage {
             case .sync: phone(rect, theme: t, ctx: ctx)
             case .advanced: terminal(rect, theme: t, ctx: ctx)
             case .updates: update(rect, settings: settings, updater: updater, theme: t, ctx: ctx)
+            case .runs: runs(rect, settings: settings, theme: t, ctx: ctx)
             }
         }
         ctx.innerStroke(shape, t.isDark ? white(0.08) : black(0.06), width: 1)
@@ -80,6 +81,39 @@ enum SettingsStage {
         }
         Text("IN THE POPOVER", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 44, align: .center, in: ctx)
         Text("One click, and Headroom is back in seconds.", F.sf(12, 500), t.muted).draw(x: rect.midX, capCenter: rect.maxY - 25, align: .center, in: ctx)
+    }
+
+    /// A run card as the Runs tab draws it, and the run alerts that are on.
+    private static func runs(_ rect: CGRect, settings: AppSettings, theme t: Theme, ctx: CGContext) {
+        guard settings.taskTracking else {
+            let c = CGPoint(x: rect.midX, y: rect.midY - 20)
+            CanvasControlView.drawSymbol("list.bullet.indent", in: CGRect(x: c.x - 22, y: c.y - 22, width: 44, height: 44), color: t.muted, weight: .regular, ctx: ctx)
+            Text("Run tracking is off", F.sf(15, 650), t.ink).draw(x: rect.midX, capCenter: c.y + 44, align: .center, in: ctx)
+            Text("No transcripts are read for runs.", F.sf(12, 500), t.muted).draw(x: rect.midX, capCenter: c.y + 66, align: .center, in: ctx)
+            return
+        }
+        let card = RunsPresenter(now: Demo.now).card(Demo.inputRun(now: Demo.now))
+        let width = PopoverChrome.width - PopoverChrome.pad * 2
+        let height = RunCardRenderer.draw(card, origin: .zero, width: width, theme: t, ctx: nil)
+        let k = min((rect.width - 36) / width, 1)
+        var y = rect.minY + 44
+        ctx.withState {
+            ctx.translateBy(x: rect.midX - width * k / 2, y: y)
+            ctx.scaleBy(x: k, y: k)
+            RunCardRenderer.draw(card, origin: .zero, width: width, theme: t, ctx: ctx)
+        }
+        y += height * k + 16
+        let samples: [(TaskNotificationKind, String, String)] = [
+            (.needsInput, "Database upgrade needs you", "Switch the queries over is waiting for your answer."),
+            (.criticalFailed, "Ship the 2.3 release: a critical task failed", "Sign and notarize"),
+            (.stale, "Clean up the contacts import went quiet", "No agent activity for 15 minutes."),
+            (.finished, "Speed up image uploads finished", "4 tasks done."),
+        ]
+        let on = samples.filter { settings.taskNotifies($0.0) }
+        for (_, title, body) in on where y < rect.maxY - 120 {
+            y += OnboardingStage.notification(title: title, body: body, x: rect.minX + 16, y: y, w: rect.width - 32, theme: t, ctx: ctx) + 10
+        }
+        Text("\(on.count) OF \(samples.count) ALERTS ON", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 30, align: .center, in: ctx)
     }
 
     /// A plausible next version for the preview: this one with its last number bumped.

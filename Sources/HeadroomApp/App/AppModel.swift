@@ -65,6 +65,9 @@ final class AppModel {
     let publisher = CloudPublisher()
     /// Which account each provider was signed in with, and since when.
     private(set) var timeline = AccountTimeline()
+    /// Agent runs being tracked, most pressing first (empty while task tracking is off).
+    private(set) var taskRuns: [TaskRun] = []
+    private var tasks: TaskTracker?
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -140,7 +143,29 @@ final class AppModel {
         } else if !settings.syncEnabled, publisher.isRunning {
             publisher.stop()
         }
+        if firstScanDone { updateTaskTracking() }
         changed()
+    }
+
+    /// Starts or stops the transcript observer and `tasks.json` writer to match the setting.
+    private func updateTaskTracking() {
+        if settings.taskTracking, tasks == nil {
+            let t = TaskTracker(settings: settings, notifier: notifier) { [weak self] in
+                guard let self else { return [] }
+                return SnapshotBuilder(now: Date()).build(model: self).providers
+            }
+            t.onChange = { [weak self, weak t] in
+                guard let self, let t else { return }
+                self.taskRuns = t.runs
+                self.onChange?()
+                self.publisher.update()
+            }
+            tasks = t
+            t.start()
+        } else if !settings.taskTracking, let t = tasks {
+            t.stop()
+            tasks = nil
+        }
     }
 
     private func firstScan() async {
@@ -158,6 +183,7 @@ final class AppModel {
             Task { @MainActor in await self?.logsChanged(paths: paths, rescan: rescan) }
         }
         _ = watcher?.start()
+        updateTaskTracking()
     }
 
     /// Runs a full scan in a child process when possible (see `ScanChild`), in-process otherwise.
@@ -191,6 +217,7 @@ final class AppModel {
     }
 
     private func logsChanged(paths: [String], rescan: Bool) async {
+        if rescan { tasks?.rescan() } else { tasks?.transcriptsChanged(paths) }
         if rescan {
             diag.notice("watcher asked for a rescan (\(paths.count) paths)")
             await fullScan()
@@ -244,6 +271,7 @@ final class AppModel {
     }
 
     func flushOnQuit() async {
+        await tasks?.flush()
         await publisher.quit()
         await save()
     }
@@ -406,6 +434,7 @@ final class AppModel {
         writeSnapshot()
         notify()
         armMinuteTimer()
+        tasks?.limitsChanged()
     }
 
     private func notify() {

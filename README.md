@@ -105,6 +105,12 @@ The Activity tab shows your tokens hour by hour for the last day, week or month,
 
 Right-click any card to copy a share image or a text version. Shares never include project names or your history.
 
+## Follow long agent runs
+
+When Claude Code or Codex spawns subagents, delegates or workflows, the **Runs** tab shows each run as it goes: what's running, what needs your answer, what's waiting on a limit and what failed, with the rest folded away until you click the card. If the agent declared a plan, you get a percentage, a bar and an estimate of the time left. If it didn't, you see how many of the agents it spawned have finished, since nobody knows how many more are coming. While a run is live, its progress sits beside the meters in the menu bar, with a rose mark when one needs you (turn this off in **Settings → Menu Bar**). Pick which runs notify you in **Settings → Runs**.
+
+Run `headroom hooks install` to hear about permission prompts the moment they happen, and `headroom task guide` to show agents how to declare a plan. `headroom tasks` shows the same runs in your terminal.
+
 ## Keep your Mac awake
 
 Right-click the menu bar item and choose **Keep Awake** to keep a long run going. It uses macOS's `caffeinate` and offers every mode it has: prevent display, idle, disk or system sleep, or declare the user active. Run it for 15 minutes up to 8 hours, until your 5-hour session resets, or until you turn it off. It stops when you quit Headroom and picks up again at the next launch for whatever time is left.
@@ -119,6 +125,8 @@ Fan speeds can only be set as root, so Headroom ships a small helper for it. The
 
 Turn on **Settings → iPhone & Watch** and Headroom on iPhone, iPad and Apple Watch shows the same Pace card, 5-hour panel, Burn-o-meter and Activity, with Home Screen widgets, Lock Screen and watch-face complications, and a Live Activity that counts down your 5-hour session. Several Macs, or several Claude and Codex accounts? Each account is one card, however many Macs report it, and its activity adds up across them.
 
+Long agent runs come along too: Now shows each Mac's live runs (percent done or agent counts, and what needs you), the watch lists them, a Live Activity follows the most pressing one, and the phone can tell you when a run needs your input or finishes. Only state and progress sync unless you turn on **Include task names**, which adds run and task titles.
+
 ## Also in your terminal
 
 <img src="media/terminal.png" alt="The headroom command showing the weekly summary, a one-line status, and waiting for the session to reset">
@@ -132,7 +140,8 @@ Type `headroom` for the same summary, including where your 5-hour session is hea
 - Headroom only **reads** your usage. It never sends a prompt, never uses one of your reset credits, and never changes your sign-in.
 - Nothing runs as root unless you turn on Fan Control, and then only its small fan helper, which accepts requests from Headroom alone.
 - Your token counts come from files already on your Mac. Nothing you type is stored.
-- **Nothing leaves your Apple Account, even when you sync.** Turn on iPhone & Watch sync and your readings, history, token counts and account emails travel through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server and no sign-up, so we never see any of it. Prompts, project names, file paths and sign-in details never sync.
+- Run tracking reads those same transcripts to see which agents were spawned. It keeps only the labels agents wrote (task titles and agent descriptions), agent types, model names and the project folder's name, all on your Mac in `~/Library/Application Support/Headroom`. With iPhone & Watch sync on, only each run's state and progress go to your iCloud, plus titles if you turn on **Include task names**. Turn tracking off in **Settings → Runs**.
+- **Nothing leaves your Apple Account, even when you sync.** Turn on iPhone & Watch sync and your readings, history, token counts, account emails and the state and progress of your agent runs travel through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server and no sign-up, so we never see any of it. Prompts, project names, file paths and sign-in details never sync. Run and task titles sync only if you turn on **Include task names**; the notes agents write and their failure reasons never do.
 - Headroom connects only to Anthropic's usage page, your iCloud when sync is on and, if you leave it on, the Claude and OpenAI status pages. No analytics, ever. Notifications are local.
 - It's light: about 17 MB of memory and no CPU while it waits.
 

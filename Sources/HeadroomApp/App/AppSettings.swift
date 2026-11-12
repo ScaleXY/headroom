@@ -150,12 +150,42 @@ final class AppSettings {
         changed()
     }
 
+    // MARK: Task tracking
+
+    /// Read agent transcripts and keep `tasks.json`: the observer and the feed writer. On by default.
+    var taskTracking: Bool {
+        get { defaults.object(forKey: "taskTracking") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "taskTracking"); changed() }
+    }
+
+    func taskNotifies(_ kind: TaskNotificationKind) -> Bool {
+        defaults.object(forKey: "notify.task.\(kind.rawValue)") as? Bool ?? kind.defaultOn
+    }
+
+    func setTaskNotifies(_ kind: TaskNotificationKind, _ on: Bool) {
+        defaults.set(on, forKey: "notify.task.\(kind.rawValue)")
+        changed()
+    }
+
+    /// While a run is live, its progress (and a mark when one needs you) beside the meters. On by default.
+    var showRunsInMenuBar: Bool {
+        get { defaults.object(forKey: "showRunsInMenuBar") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "showRunsInMenuBar"); changed() }
+    }
+
     // MARK: iPhone & Watch
 
     /// Sync to the user's private iCloud for Headroom on iPhone, iPad and Apple Watch.
     var syncEnabled: Bool {
         get { defaults.bool(forKey: "sync.enabled") }
         set { defaults.set(newValue, forKey: "sync.enabled"); changed() }
+    }
+
+    /// Sync run titles and the titles of their most pressing rows, not only structure and state.
+    /// Off by default: project names, notes and failure reasons never sync either way.
+    var syncTaskNames: Bool {
+        get { defaults.bool(forKey: "sync.taskNames") }
+        set { defaults.set(newValue, forKey: "sync.taskNames"); changed() }
     }
 
     /// When this Mac first turned sync on (cleared by "Remove from iCloud").
@@ -272,6 +302,22 @@ enum AppAppearance: String, CaseIterable, Sendable {
         case .system: nil
         case .light: NSAppearance(named: .aqua)
         case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+/// Task-run notifications; kept apart from `NotificationKind`, whose cases the Settings window lists.
+enum TaskNotificationKind: String, CaseIterable, Sendable {
+    case needsInput, criticalFailed, stale, finished
+
+    var defaultOn: Bool { self == .needsInput || self == .finished }
+
+    var title: String {
+        switch self {
+        case .needsInput: "A run needs your input"
+        case .criticalFailed: "A critical task failed"
+        case .stale: "A run went quiet"
+        case .finished: "A run finished"
         }
     }
 }

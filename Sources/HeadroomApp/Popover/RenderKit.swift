@@ -15,6 +15,8 @@ struct HitRegion {
         case activityRange(Int)
         case update
         case dismissUpdate
+        /// Show or hide a run card's finished rows.
+        case toggleRun(String)
     }
     var rect: CGRect
     var tooltip: String?
@@ -43,13 +45,20 @@ struct TextBlock {
     let lineHeight: CGFloat
 
     init(_ s: String, _ font: NSFont, _ color: NSColor, width: CGFloat, lineHeight: CGFloat, kern: CGFloat = 0) {
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if kern != 0 { attributes[.kern] = kern }
+        self.init(NSAttributedString(string: s, attributes: attributes), width: width, lineHeight: lineHeight)
+    }
+
+    /// Mixed runs (a command in mono, say). Line height is applied over the whole string.
+    init(_ s: NSAttributedString, width: CGFloat, lineHeight: CGFloat) {
         let para = NSMutableParagraphStyle()
         para.minimumLineHeight = lineHeight
         para.maximumLineHeight = lineHeight
         para.lineBreakMode = .byWordWrapping
-        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: para]
-        if kern != 0 { attributes[.kern] = kern }
-        string = NSAttributedString(string: s, attributes: attributes)
+        let m = NSMutableAttributedString(attributedString: s)
+        m.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: m.length))
+        string = m
         self.width = width
         self.lineHeight = lineHeight
         let setter = CTFramesetterCreateWithAttributedString(string)

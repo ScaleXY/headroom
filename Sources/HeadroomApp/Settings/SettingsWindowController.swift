@@ -70,8 +70,12 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     static let sidebarWidth: CGFloat = 212
     static let stageWidth: CGFloat = 320
 
+    /// Raw values are the order sections were added (renders and `--settings-section` use them);
+    /// `sidebar` is the order they're listed in.
     enum Section: Int, CaseIterable, Hashable {
-        case general, menuBar, card, session, notifications, sync, advanced, updates
+        case general, menuBar, card, session, notifications, sync, advanced, updates, runs
+
+        static let sidebar: [Section] = [.general, .menuBar, .card, .session, .notifications, .runs, .sync, .advanced, .updates]
 
         var title: String {
             switch self {
@@ -83,6 +87,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .sync: "iPhone & Watch"
             case .advanced: "Advanced"
             case .updates: "Updates"
+            case .runs: "Runs"
             }
         }
 
@@ -96,6 +101,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .sync: "iphone"
             case .advanced: "terminal.fill"
             case .updates: "arrow.down"
+            case .runs: "list.bullet.indent"
             }
         }
 
@@ -110,6 +116,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .sync: (0x5AC8FA, 0x1E88E5)
             case .advanced: (0x6E7480, 0x33373F)
             case .updates: (0x5ED88A, 0x1DA653)
+            case .runs: (0x5FD6C8, 0x149E8E)
             }
         }
 
@@ -123,6 +130,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .sync: ("Your headroom,\nin your pocket.", "Headroom on iPhone, iPad and Apple Watch shows these readings, with widgets, complications and a Live Activity for the 5-hour session.")
             case .advanced: ("Fine-tuning.", "Plan prices for the cost comparison, the command-line tool, and where to find the CLIs.")
             case .updates: ("Always the latest.", "Headroom updates in place and reopens where it was. Your settings and history stay put.")
+            case .runs: ("Keep an eye on\nlong agent runs.", "When an agent spawns subagents, the Runs tab shows what's running, how far along it is, what needs you and what failed.")
             }
         }
     }
@@ -135,7 +143,9 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case login, statusChecks, costOnShares
         case menuMode(MenuBarMode)
         case focus(MeterFocus)
-        case percent, timer, fanReadout
+        case percent, timer, fanReadout, runsIndicator
+        case taskTracking
+        case taskNotify(TaskNotificationKind)
         case part(CardPart)
         case detail(SessionDetail)
         case warnAt(Double)
@@ -146,7 +156,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case choose(String)
         case revealPricing
         case checkUpdates, installUpdate, cancelUpdate
-        case syncToggle, syncRemove
+        case syncToggle, syncRemove, syncTaskNames
         case autoCheck, autoDownload
         case betaUpdates(Bool)
     }
@@ -226,6 +236,12 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .percent: s.showPercentInMenuBar.toggle()
         case .timer: s.alwaysShowSessionTimer.toggle()
         case .fanReadout: s.showFanInMenuBar.toggle()
+        case .runsIndicator: s.showRunsInMenuBar.toggle()
+        case .taskTracking: s.taskTracking.toggle()
+        case .taskNotify(let kind):
+            let on = !s.taskNotifies(kind)
+            s.setTaskNotifies(kind, on)
+            if on { Notifier.requestAuthorization { [weak self] _ in self?.refreshStatuses() } }
         case .part(let part): s.setShows(part, !s.shows(part))
         case .detail(let d): s.sessionDetail = d
         case .warnAt(let v): s.sessionWarnAt = v
@@ -253,15 +269,17 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .betaUpdates(let on): updater?.betaUpdates = on
         case .syncToggle: s.syncEnabled.toggle()
         case .syncRemove: confirmRemoveSync()
+        case .syncTaskNames: s.syncTaskNames.toggle()
         }
         needsDisplay = true
     }
 
     override func keyDown(with event: NSEvent) {
-        let all = Section.allCases
+        let all = Section.sidebar
+        let i = all.firstIndex(of: section) ?? 0
         switch event.keyCode {
-        case 125: select(all[min(section.rawValue + 1, all.count - 1)]) // ↓
-        case 126: select(all[max(section.rawValue - 1, 0)]) // ↑
+        case 125: select(all[min(i + 1, all.count - 1)]) // ↓
+        case 126: select(all[max(i - 1, 0)]) // ↑
         case 13 where event.modifierFlags.contains(.command): window?.performClose(nil) // ⌘W
         default: super.keyDown(with: event)
         }
@@ -476,6 +494,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .sync: drawSync(x: x0, y: y, w: w, ctx: ctx)
         case .advanced: drawAdvanced(x: x0, w: w, ctx: ctx)
         case .updates: drawUpdates(x: x0, y: y, w: w, ctx: ctx)
+        case .runs: drawRuns(x: x0, y: y, w: w, ctx: ctx)
         }
     }
 
@@ -490,7 +509,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         Text("Settings", F.sf(12, 500), t.muted).draw(x: 62, capCenter: 75, in: ctx)
 
         var y: CGFloat = 108
-        for s in Section.allCases {
+        for s in Section.sidebar {
             let r = CGRect(x: 10, y: y, width: side.width - 20, height: 36)
             navRow(s.title, symbol: s.symbol, tile: s.tile, selected: s == section, rect: r, action: Action.section(s), ctx: ctx)
             y += 38
@@ -594,6 +613,9 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         cy += 48
         toggleRow("Show the fan while it's controlled", "58° and 3.4k rpm while Fan Control runs.",
                   on: settings.showFanInMenuBar, action: Action.fanReadout, x: x, y: cy, w: w, enabled: FanControl.macHasFans, ctx: ctx)
+        cy += 48
+        toggleRow("Show live agent runs", "Its progress, and a rose mark when one needs you.",
+                  on: settings.showRunsInMenuBar, action: Action.runsIndicator, x: x, y: cy, w: w, enabled: settings.taskTracking, ctx: ctx)
         cy += 48 + 14
         if enabled.count > 1 {
             hint(symbol: "rectangle.split.3x1", "Both tools take about 150 pt. Next to the notch macOS hides items that don't fit; Most urgent shows only the tool that needs you.",
@@ -672,6 +694,30 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         status.draw(x: x + 14, top: cy + 17 - status.height / 2, in: ctx)
     }
 
+    private func drawRuns(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
+        var cy = y
+        let on = settings.taskTracking
+        toggleRow("Track agent runs", "For the Runs tab, the menu bar and the alerts below.", on: on, action: Action.taskTracking,
+                  x: x, y: cy, w: w, ctx: ctx)
+        cy += 48 + 14
+        sectionLabel("LET ME KNOW WHEN", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let details: [TaskNotificationKind: String] = [
+            .needsInput: "An agent is waiting for your answer.",
+            .criticalFailed: "A task marked critical didn't make it.",
+            .stale: "No agent activity for 15 minutes.",
+            .finished: "Done, or done with problems.",
+        ]
+        for kind in TaskNotificationKind.allCases {
+            toggleRow(kind.title, details[kind] ?? "", on: settings.taskNotifies(kind), action: Action.taskNotify(kind), x: x, y: cy, w: w,
+                      enabled: on, ctx: ctx)
+            cy += 48
+        }
+        cy += 10
+        hint(symbol: "lock.fill", "Headroom reads the transcripts it already reads for token counts. It keeps only the labels agents write, agent types, model names and the project folder's name, on this Mac. iPhone & Watch get titles only if you include them.",
+             x: x, y: cy, w: w, ctx: ctx)
+    }
+
     private func drawAdvanced(x: CGFloat, w: CGFloat, ctx: CGContext) {
         let t = theme
         let l = advancedLayout()
@@ -715,7 +761,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     }
 
     /// The privacy promise, as the README states it.
-    static let syncPromise = "Nothing leaves your Apple Account. Readings, history, token counts and account emails travel through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server, so we never see any of it. Prompts, project names, file paths and sign-in details never sync."
+    static let syncPromise = "Nothing leaves your Apple Account: readings, history, token counts, account emails and run progress go end-to-end encrypted through your own private iCloud. There's no Headroom server, so we never see any of it. Prompts, project names, file paths and sign-in details never sync; task names only if you include them."
 
     private func drawSync(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
         let t = theme
@@ -763,7 +809,9 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             Text(a.detail, F.sf(11.5, 500), t.muted).draw(x: r.maxX - 12, capCenter: r.midY, align: .right, in: ctx)
             cy += 40 + 8
         }
-        cy += 12
+        toggleRow("Include task names", "Run and task titles. Notes and projects stay here.",
+                  on: settings.syncTaskNames, action: Action.syncTaskNames, x: x, y: cy, w: w, enabled: settings.taskTracking, ctx: ctx)
+        cy += 48 + 8
         hint(symbol: "lock.shield", Self.syncPromise, x: x, y: cy, w: w, ctx: ctx)
         let promise = TextBlock(Self.syncPromise, F.sf(12, 450), t.muted, width: w - 50, lineHeight: 16)
         cy += promise.height + 22 + 16

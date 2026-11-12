@@ -216,8 +216,11 @@ public struct ActivitySnapshot: Codable, Sendable, Hashable {
 
 public enum SnapshotFile {
     /// `~/Library/Application Support/Headroom/`
-    public static var directory: URL {
-        if let override = ProcessInfo.processInfo.environment["HEADROOM_HOME"], !override.isEmpty {
+    public static var directory: URL { directory(environment: ProcessInfo.processInfo.environment) }
+
+    /// The directory for an explicit environment, so callers (and tests) can pass their own `HEADROOM_HOME`.
+    public static func directory(environment: [String: String]) -> URL {
+        if let override = environment["HEADROOM_HOME"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
         #if os(macOS)

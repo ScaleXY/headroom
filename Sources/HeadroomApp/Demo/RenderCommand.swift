@@ -114,6 +114,48 @@ enum RenderCommand {
                 }
             }
         }
+        if name == "all" || name == "runs" {
+            for theme in themes {
+                let suffix = theme.isDark ? "dark" : "light"
+                for s in Demo.runScenarios(now: now) {
+                    if let rep = PopoverPage.renderRuns(s, theme: theme, now: now) {
+                        write(rep, to: outDir.appendingPathComponent("runs-\(s.name)-\(suffix).png")); written += 1
+                    }
+                }
+                if let rep = PopoverPage.renderSettings(section: .runs, theme: theme) {
+                    write(rep, to: outDir.appendingPathComponent("settings-runs-\(suffix).png")); written += 1
+                }
+                if let rep = PopoverPage.renderSettings(section: .runs, theme: theme, configure: { $0.taskTracking = false }) {
+                    write(rep, to: outDir.appendingPathComponent("settings-runs-off-\(suffix).png")); written += 1
+                }
+                if let rep = PopoverPage.renderSettings(section: .menuBar, theme: theme) {
+                    write(rep, to: outDir.appendingPathComponent("settings-menubar-runs-\(suffix).png")); written += 1
+                }
+                // iPhone & Watch with "Include task names" on.
+                if let rep = PopoverPage.renderSettings(section: .sync, theme: theme, configure: { $0.syncEnabled = true; $0.syncTaskNames = true }) {
+                    write(rep, to: outDir.appendingPathComponent("settings-sync-names-\(suffix).png")); written += 1
+                }
+            }
+            // The menu bar with the run indicator (3×, transparent), and on wallpapers.
+            let presenter = Presenter(now: now)
+            let items = presenter.menuBarItems([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)], mode: .both, enabled: [.claude, .codex])
+            let rp = RunsPresenter(now: now)
+            let indicators: [(String, RunsMenuBarModel?)] = [
+                ("runs", rp.menuBar([Demo.declaredRun(now: now)])),
+                ("runs-observed", rp.menuBar([Demo.observedRun(now: now)])),
+                ("runs-input", rp.menuBar([Demo.inputRun(now: now), Demo.declaredRun(now: now)].sortedForDisplay())),
+            ]
+            for dark in [true, false] {
+                for (label, runs) in indicators {
+                    guard let runs else { continue }
+                    let size = NSSize(width: StatusItemRenderer.width(items, runs: runs), height: StatusItemRenderer.height)
+                    if let cg = StatusItemRenderer.renderBitmap(items, runs: runs, size: size, dark: dark, scale: 3) {
+                        write(NSBitmapImageRep(cgImage: cg), to: outDir.appendingPathComponent("statusitem-\(label)-\(dark ? "dark" : "light").png")); written += 1
+                    }
+                }
+            }
+            if let rep = PopoverPage.renderRunMenuBars(now: now) { write(rep, to: outDir.appendingPathComponent("menubar-runs.png")); written += 1 }
+        }
         if name == "all" || name == "widget-feed" {
             // The widgets' feed built from the mockup fixtures: `HeadroomWidgetPreview <dir> --feed <file>` draws it.
             let feed = WidgetFeedBuilder(now: now).build([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)],
@@ -215,6 +257,53 @@ enum PopoverPage {
             PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: measured), theme: theme, ctx: ctx)
             PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: 1, theme: theme, ctx: ctx, out: nil)
             _ = layout(ctx)
+        }
+    }
+
+    /// The Runs tab of the popover for one fixture.
+    static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date) -> NSBitmapImageRep? {
+        let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale).page(s.runs, expanded: s.expanded)
+        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
+        let top = pad + PopoverChrome.headerHeight
+        let h = top + RunCardRenderer.drawPage(page, origin: .zero, width: cw, theme: theme, ctx: nil) + 2 + PopoverChrome.footerHeight + pad
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
+            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: ["Pace", "Activity", "Runs"], selected: 2, theme: theme, ctx: ctx, out: nil)
+            let y = top + RunCardRenderer.drawPage(page, origin: CGPoint(x: pad, y: top), width: cw, theme: theme, ctx: ctx) + 2
+            PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: y, width: cw, theme: theme, ctx: ctx, out: nil)
+        }
+    }
+
+    /// The menu bar with the run indicator on dark, light and busy wallpapers.
+    static func renderRunMenuBars(now: Date) -> NSBitmapImageRep? {
+        let presenter = Presenter(now: now, locale: Locale(identifier: "en_US"))
+        let items = presenter.menuBarItems([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)], mode: .both, enabled: [.claude, .codex])
+        let rp = RunsPresenter(now: now)
+        let rows = [rp.menuBar([Demo.declaredRun(now: now)]), rp.menuBar([Demo.observedRun(now: now)]),
+                    rp.menuBar([Demo.inputRun(now: now), Demo.declaredRun(now: now)].sortedForDisplay())].compactMap(\.self)
+        let w: CGFloat = 340, stripH: CGFloat = 28
+        let backgrounds = ["dark", "light", "busy"]
+        let h = CGFloat(rows.count * backgrounds.count) * (stripH + 6) + 6
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            ctx.fill(CGPath(rect: CGRect(x: 0, y: 0, width: w, height: h), transform: nil), rgb(0x808080))
+            var y: CGFloat = 6
+            for bg in backgrounds {
+                for runs in rows {
+                    let r = CGRect(x: 6, y: y, width: w - 12, height: stripH)
+                    let dark = bg != "light"
+                    switch bg {
+                    case "dark": ctx.fillLinear(rounded(r, 6), [rgb(0x1A2150), rgb(0x3B2A5C), rgb(0x0F2F45)], from: r.origin, to: CGPoint(x: r.maxX, y: r.maxY))
+                    case "light": ctx.fillLinear(rounded(r, 6), [rgb(0xD6E4F7), rgb(0xF4E2EC), rgb(0xD8EEE7)], from: r.origin, to: CGPoint(x: r.maxX, y: r.maxY))
+                    default: ctx.fillLinear(rounded(r, 6), [rgb(0xE07A2F), rgb(0x2C7A4B), rgb(0xC9D84A), rgb(0x3A3FB0)], from: r.origin, to: CGPoint(x: r.maxX, y: r.maxY))
+                    }
+                    ctx.fill(rounded(r, 6), dark ? rgb(0x080810, 0.3) : white(0.45))
+                    let iw = StatusItemRenderer.width(items, runs: runs)
+                    let x = r.maxX - 12 - iw
+                    StatusItemRenderer.draw(items, in: CGRect(x: x, y: r.midY - 11, width: iw, height: 22), dark: dark, ctx: ctx)
+                    StatusItemRenderer.drawRuns(runs, x: x + StatusItemRenderer.metersWidth(items) + 10, mid: r.midY, dark: dark, ctx: ctx)
+                    y += stripH + 6
+                }
+            }
         }
     }
 

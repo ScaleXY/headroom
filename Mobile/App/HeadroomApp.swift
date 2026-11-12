@@ -47,6 +47,7 @@ final class AppServices {
     let model: MobileModel
     private let feedWriter = FeedWriter()
     private let liveActivities = LiveActivityController()
+    private let runActivities = RunActivityController()
     private let relay = WatchRelay()
     private var foreground = true
     private var askedForNotifications = false
@@ -70,20 +71,23 @@ final class AppServices {
         return services
     }
 
-    /// After every rebuild: widgets, the Live Activity, notifications and the Watch.
+    /// After every rebuild: widgets, the Live Activities, notifications and the Watch.
     private func rebuilt() {
         let feed = model.reader.feed
         feedWriter.write(feed, foreground: foreground)
         liveActivities.sync(feed, autoStart: foreground && model.prefs.autoTrackSessions)
         model.tracking = liveActivities.tracked
+        let prefs = model.prefs, runs = model.reader.runs, demo = model.reader.isDemo
+        // A run's activity can only be started from the foreground; a sync's wake keeps it current.
+        runActivities.sync(runs, enabled: prefs.trackRuns && !demo, canStart: foreground)
         relay.send(feed)
-        let prefs = model.prefs
         // Ask for notifications once there's something real to be notified about, not at first launch.
         let ask = !askedForNotifications && foreground && !model.reader.isDemo && !model.reader.accounts.isEmpty
         if ask { askedForNotifications = true }
         Task {
             if ask { await ResetNotifier.requestPermission() }
             await ResetNotifier.schedule(feed, sessionBack: prefs.notifySessionBack, weekRenews: prefs.notifyWeekRenews)
+            await RunNotifier.notify(runs, prefs: prefs, isDemo: demo)
         }
     }
 

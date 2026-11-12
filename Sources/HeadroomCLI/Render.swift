@@ -117,15 +117,17 @@ enum Summary {
 enum StatusLine {
     enum Format: String { case claude, tmux, sketchybar, plain }
 
-    static func render(_ s: Snapshot, format: Format, only: Provider?, colors: Bool, now: Date) -> String {
-        let useColor = colors && (format == .claude || format == .tmux)
-        func paint(_ text: String, _ hex: UInt32?) -> String {
-            guard useColor, let hex else { return text }
-            switch format {
-            case .tmux: return "#[fg=#\(String(hex, radix: 16, uppercase: true))]\(text)#[default]"
-            default: return Style(colors: true).paint(text, hex)
-            }
+    /// ANSI for Claude Code, style codes for tmux, nothing for the rest.
+    static func paint(_ text: String, _ hex: UInt32?, format: Format, colors: Bool) -> String {
+        guard colors, format == .claude || format == .tmux, let hex else { return text }
+        switch format {
+        case .tmux: return "#[fg=#\(String(hex, radix: 16, uppercase: true))]\(text)#[default]"
+        default: return Style(colors: true).paint(text, hex)
         }
+    }
+
+    static func render(_ s: Snapshot, format: Format, only: Provider?, colors: Bool, now: Date) -> String {
+        func paint(_ text: String, _ hex: UInt32?) -> String { Self.paint(text, hex, format: format, colors: colors) }
         var parts: [String] = []
         for p in s.providers.sorted(by: { $0.id < $1.id }) where only == nil || only == p.id {
             guard let w = p.weekly else {

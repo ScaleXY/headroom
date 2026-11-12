@@ -5,7 +5,7 @@ import SwiftUI
 /// The canonical privacy promise (the README's wording).
 public enum PrivacyPromise {
     public static let headline = "Nothing leaves your Apple Account, even when you sync."
-    public static let body = "Headroom on your Mac sends its readings, history, token counts and account emails through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server and no sign-up, so we never see any of it. Prompts, project names, file paths and sign-in details never leave your Mac."
+    public static let body = "Headroom on your Mac sends its readings, history, token counts, account emails and how its agent runs are going through your own private iCloud to devices signed in to the same Apple Account, end-to-end encrypted. There's no Headroom server and no sign-up, so we never see any of it. Prompts, project names, file paths and sign-in details never leave your Mac, and run and task names only when you include them in Headroom's settings on the Mac."
 }
 
 struct MobileSettingsView: View {
@@ -28,13 +28,22 @@ struct MobileSettingsView: View {
             } footer: {
                 Text("These are scheduled on this device from the reset times your Mac reported, so they arrive on time even while your Mac sleeps.")
             }
+            Section {
+                Toggle("When a run needs your input", isOn: $prefs.notifyRunNeedsInput)
+                Toggle("When a run finishes", isOn: $prefs.notifyRunFinished)
+            } header: {
+                Text("Agent runs")
+            } footer: {
+                Text("These arrive when your Mac syncs, usually within a minute or two. Each run alerts once per question, and once when it ends.")
+            }
             if model.setTracking != nil {
                 Section {
                     Toggle("Track sessions automatically", isOn: $prefs.autoTrackSessions)
+                    Toggle("Show live agent runs", isOn: $prefs.trackRuns)
                 } header: {
                     Text("Live Activity")
                 } footer: {
-                    Text("Shows the 5-hour session on the Lock Screen and in the Dynamic Island when you open Headroom during one. Countdowns stay exact; the rest updates as your Mac syncs.")
+                    Text("Shows the 5-hour session on the Lock Screen and in the Dynamic Island when you open Headroom during one. Countdowns stay exact; the rest updates as your Mac syncs. A live agent run gets its own, started when you open Headroom and ended when the run finishes or its Mac goes quiet.")
                 }
             }
             if !model.reader.accounts.isEmpty {

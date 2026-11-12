@@ -132,7 +132,8 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     init(model: AppModel, controller: PopoverController) {
         self.model = model
         self.controller = controller
-        self.tab = model.settings.lastTab
+        let last = model.settings.lastTab
+        self.tab = !model.settings.taskTracking && last == Self.runsTab ? 0 : last
         cards = CardsView(model: model)
         super.init(frame: NSRect(x: 0, y: 0, width: PopoverChrome.width, height: 400))
         cards.root = self
@@ -148,6 +149,11 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
 
     var theme: Theme { Theme.current(for: effectiveAppearance) }
 
+    static let runsTab = 2
+    /// The Runs tab is there only while task tracking is on.
+    private var showsRuns: Bool { model.settings.taskTracking }
+    private var tabs: [String] { showsRuns ? ["Pace", "Activity", "Runs"] : ["Pace", "Activity"] }
+
     private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
     private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }
     var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (tab == 1 && cards.historyWeek == nil ? 36 : 0) }
@@ -156,6 +162,7 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     var preferredHeight: CGFloat { topHeight + cards.contentHeight + bottomHeight }
 
     func rebuild(animated: Bool) {
+        if !showsRuns, tab == Self.runsTab { tab = 0 }
         cards.tab = tab
         cards.rebuild(animated: animated)
         controller?.resize(to: preferredHeight)
@@ -199,7 +206,7 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
             out.regions = out.regions.map { var r = $0; if case .tab = r.action { r.action = .tab(-1) }; return r }
             _ = week
         } else {
-            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: tab, theme: t, ctx: ctx, out: out)
+            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: tabs, selected: tab, theme: t, ctx: ctx, out: out)
         }
         if showsBanner, let state = controller?.updater?.state {
             let r = CGRect(x: pad, y: pad + PopoverChrome.headerHeight, width: cw, height: UpdateBannerRenderer.height)
@@ -267,6 +274,9 @@ final class CardsView: NSView, NSViewToolTipOwner {
     private var activityCards: [ActivityCardModel] = []
     private var weeks: [PastWeeksModel] = []
     private var sessionHistories: [SessionHistoryModel] = []
+    private var runsPage = RunsPageModel()
+    /// Run cards showing their finished rows (for as long as the app runs).
+    private var expandedRuns: Set<String> = []
     private var weekRecords: [Provider: [WeekRecord]] = [:]
     private var out = RenderOutput()
     private var chartLayouts: [Provider: ActivityCardRenderer.Layout] = [:]
@@ -303,6 +313,9 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 let sessions = model.history.account(p, reading.accountKey)?.recentSessions(now: now) ?? []
                 return SessionHistoryRenderer.model(p, sessions: sessions, warnAt: model.settings.sessionWarnAt, now: now)
             }
+        }
+        if tab == PopoverRootView.runsTab {
+            runsPage = RunsPresenter(now: now).page(model.taskRuns, expanded: expandedRuns)
         }
         if animated, states != lastStates, !lastStates.isEmpty, window != nil { beginFade() }
         contentHeight = measure()
@@ -377,6 +390,9 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 y += h
             }
             return y + 2
+        }
+        if tab == PopoverRootView.runsTab {
+            return RunCardRenderer.drawPage(runsPage, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
         }
         let mode = model.settings.activityMode, kind = model.settings.breakdown
         for (i, card) in activityCards.enumerated() {
@@ -483,6 +499,9 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 historyWeek = (prov, i)
                 root?.rebuild(animated: false)
                 return
+            case .toggleRun(let id):
+                toggleRun(id)
+                return
             default: break
             }
         }
@@ -516,6 +535,11 @@ final class CardsView: NSView, NSViewToolTipOwner {
     }
 
     override func mouseUp(with event: NSEvent) { dragAnchor = nil }
+
+    func toggleRun(_ id: String) {
+        if expandedRuns.remove(id) == nil { expandedRuns.insert(id) }
+        root?.rebuild(animated: false)
+    }
 
     private func showBreakdownMenu(at p: NSPoint) {
         let menu = NSMenu()

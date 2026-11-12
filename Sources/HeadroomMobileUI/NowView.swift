@@ -5,7 +5,8 @@ import HeadroomWidgetUI
 import SwiftUI
 
 /// One Pace card per account, the one that needs watching first at the top. Accounts no Mac is
-/// signed in to (or hidden ones) wait at the bottom, collapsed.
+/// signed in to (or hidden ones) wait at the bottom, collapsed. Agent runs, when a Mac syncs any,
+/// come first: a run waiting on an answer is the most pressing thing there is.
 struct NowView: View {
     var model: MobileModel
     var columns = 1
@@ -20,6 +21,7 @@ struct NowView: View {
                     EmptyStateView(model: model, state: state)
                 } else {
                     Banners(model: model)
+                    RunsSection(model: model, columns: columns)
                     let grid = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: columns)
                     LazyVGrid(columns: grid, spacing: 14) {
                         ForEach(model.orderedAccounts) { account in

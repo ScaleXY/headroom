@@ -45,7 +45,7 @@ let package = Package(
         // The iPhone and iPad app's screens and services (iOS; also builds on macOS for the PNG renderer).
         .target(name: "HeadroomMobileUI", dependencies: ["HeadroomWidgetUI", "HeadroomPresent", "HeadroomSync", "HeadroomKit"], swiftSettings: strict),
         // The Apple Watch app's screens and the phone relay's receiver.
-        .target(name: "HeadroomWatchUI", dependencies: ["HeadroomWidgetUI", "HeadroomSync", "HeadroomKit"], swiftSettings: strict),
+        .target(name: "HeadroomWatchUI", dependencies: ["HeadroomWidgetUI", "HeadroomPresent", "HeadroomSync", "HeadroomKit"], swiftSettings: strict),
         // The WidgetKit extension (`Headroom.app/Contents/PlugIns/HeadroomWidgets.appex`). It enters
         // through `NSExtensionMain`, as Xcode links extensions: that sets up the launch the system
         // hands over, then runs the `@main` bundle. Entering at `main` directly traps on launch.
@@ -53,7 +53,7 @@ let package = Package(
                          swiftSettings: strict + extensionSafe,
                          linkerSettings: [.unsafeFlags(["-Xlinker", "-application_extension", "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
         // Renders every widget in every state to PNGs for review (`HeadroomWidgetPreview <dir>`).
-        .executableTarget(name: "HeadroomWidgetPreview", dependencies: ["HeadroomWidgetUI", "HeadroomKit", "HeadroomSync"], swiftSettings: strict),
+        .executableTarget(name: "HeadroomWidgetPreview", dependencies: ["HeadroomWidgetUI", "HeadroomKit", "HeadroomSync", "HeadroomPresent", "HeadroomMobileUI", "HeadroomWatchUI"], swiftSettings: strict),
         .executableTarget(name: "headroom", dependencies: ["HeadroomCLI"], swiftSettings: strict),
         // The SMC: fans and chip temperatures. IOKit only.
         .target(name: "HeadroomSMC", swiftSettings: strict),
@@ -67,6 +67,7 @@ let package = Package(
         .testTarget(name: "HeadroomCoreTests", dependencies: ["HeadroomCore", "HeadroomKit"], swiftSettings: strict),
         .testTarget(name: "HeadroomSMCTests", dependencies: ["HeadroomSMC"], swiftSettings: strict),
         .testTarget(name: "HeadroomCLITests", dependencies: ["HeadroomCLI", "HeadroomKit"], swiftSettings: strict),
+        .testTarget(name: "HeadroomPresentTests", dependencies: ["HeadroomPresent", "HeadroomKit"], swiftSettings: strict),
         .testTarget(name: "HeadroomAppTests", dependencies: ["HeadroomApp", "HeadroomKit", "HeadroomSync"], swiftSettings: strict),
         .testTarget(name: "HeadroomSyncTests", dependencies: ["HeadroomSync", "HeadroomPresent", "HeadroomKit"],
                     resources: [.copy("Fixtures")], swiftSettings: strict),

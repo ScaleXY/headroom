@@ -121,9 +121,13 @@ public struct SyncSnapshot: Sendable {
     public var tooNew: Int
     /// The newest heartbeat from any Mac.
     public var lastHeard: Date?
+    /// Agent runs from every Mac that syncs them, most pressing first (`RunMerge`).
+    public var runs: [RunDigest]
 
-    public init(accounts: [MergedAccount] = [], devices: [DeviceInfo] = [], unreadable: Int = 0, tooNew: Int = 0, lastHeard: Date? = nil) {
+    public init(accounts: [MergedAccount] = [], devices: [DeviceInfo] = [], unreadable: Int = 0, tooNew: Int = 0, lastHeard: Date? = nil,
+                runs: [RunDigest] = []) {
         self.accounts = accounts; self.devices = devices; self.unreadable = unreadable; self.tooNew = tooNew; self.lastHeard = lastHeard
+        self.runs = runs
     }
 
     public func account(_ id: String) -> MergedAccount? { accounts.first { $0.id == id } }

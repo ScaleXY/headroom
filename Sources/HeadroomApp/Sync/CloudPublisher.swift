@@ -13,7 +13,9 @@ private let syncLog = Logger(subsystem: "com.scalexy.headroom", category: "sync"
 /// this Mac's ID, so Macs never conflict; the readers do the merging.
 ///
 /// Cadence: a reading goes out at once when a color changes (pacing state, 5-hour level, fault) and
-/// at most once a minute otherwise; activity at most every 5 minutes; a heartbeat every 10.
+/// at most once a minute otherwise; activity at most every 5 minutes; a heartbeat every 10. Agent
+/// runs ride in the device record: a run's state change at most once a minute, progress alone at
+/// most every 5 minutes (`RunPublishGate`).
 @MainActor
 final class CloudPublisher {
     enum Status: Equatable {
@@ -48,6 +50,7 @@ final class CloudPublisher {
     private var lastHeartbeat = Date.distantPast
     private var lastCollect = Date.distantPast
     private var power: DevicePowerState = .awake
+    private var runGate = RunPublishGate()
     private var pending: Task<Void, Never>?
     private var dedupeTask: Task<Void, Never>?
     private var heartbeat: Timer?
@@ -95,6 +98,7 @@ final class CloudPublisher {
         store = nil
         published.removeAll()
         looks.removeAll()
+        runGate = RunPublishGate()
         status = .off
     }
 
@@ -133,7 +137,7 @@ final class CloudPublisher {
     private func observe() {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.power = .sleeping; Task { await self?.writeDevice(force: true) } }
+            MainActor.assumeIsolated { self?.power = .sleeping; Task { _ = await self?.writeDevice(force: true) } }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.power = .awake; self?.update() }
@@ -162,6 +166,9 @@ final class CloudPublisher {
     /// Learns what this Mac already has in iCloud, so unchanged records aren't rewritten.
     private func seed(from store: SyncStore) async {
         guard let records = try? await store.records() else { return }
+        if let mine = records.devices.filter({ $0.deviceID == deviceID }).max(by: { $0.updatedAt < $1.updatedAt }) {
+            runGate.seed(mine.payload.runs, at: mine.updatedAt)
+        }
         for e in records.live where e.deviceID == deviceID { published[liveKey(e.provider, e.accountKey)] = try? PayloadCodec.encode(e.payload) }
         for e in records.archives where e.deviceID == deviceID { published[archiveKey(e.provider, e.accountKey)] = try? PayloadCodec.encode(e.payload) }
         for e in records.activity where e.deviceID == deviceID {
@@ -176,8 +183,9 @@ final class CloudPublisher {
         guard running, let store, let model else { return }
         let now = Date()
         var deferred = false
+        var runsRetry: TimeInterval?
         do {
-            await writeDevice(force: force)
+            runsRetry = await writeDevice(force: force)
 
             for item in livePayloads(model, now: now) {
                 let key = liveKey(item.provider, item.accountKey)
@@ -222,8 +230,9 @@ final class CloudPublisher {
             syncLog.error("publish failed: \(String(describing: error), privacy: .public)")
             status = .failed("Couldn't save to iCloud. Headroom will try again.")
         }
-        if deferred, pending == nil {
-            let wait = max(5, Self.liveInterval - now.timeIntervalSince(lastLiveWrite))
+        var wake: TimeInterval? = deferred ? max(5, Self.liveInterval - now.timeIntervalSince(lastLiveWrite)) : nil
+        if let runsRetry { wake = min(wake ?? .infinity, max(5, runsRetry)) }
+        if let wait = wake, pending == nil {
             pending = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(wait))
                 guard !Task.isCancelled else { return }
@@ -232,11 +241,18 @@ final class CloudPublisher {
         }
     }
 
-    private func writeDevice(force: Bool) async {
-        guard let store, let model else { return }
+    /// Writes the device record when it changed, else touches the heartbeat when due. Returns how
+    /// long until held-back run changes may go out, when some are waiting.
+    @discardableResult
+    private func writeDevice(force: Bool) async -> TimeInterval? {
+        guard let store, let model else { return nil }
         let now = Date()
-        let payload = devicePayload(model)
-        guard let data = try? PayloadCodec.encode(payload) else { return }
+        var payload = devicePayload(model)
+        let fresh = model.settings.taskTracking
+            ? RunSummaryBuilder.summaries(model.taskRuns, includeNames: model.settings.syncTaskNames, now: now) : nil
+        let gated = runGate.pass(fresh, now: now, force: force)
+        payload.runs = gated.runs
+        guard let data = try? PayloadCodec.encode(payload) else { return gated.retryAfter }
         do {
             if data != published["device"] {
                 try await store.upsertDevice(deviceID, payload: payload, lastSeenAt: now, now: now)
@@ -249,6 +265,7 @@ final class CloudPublisher {
         } catch {
             syncLog.error("device write failed: \(String(describing: error), privacy: .public)")
         }
+        return gated.retryAfter
     }
 
     // MARK: Payloads

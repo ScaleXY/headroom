@@ -1,9 +1,12 @@
 import HeadroomKit
+import HeadroomPresent
+import HeadroomSync
 import HeadroomWidgetUI
 import SwiftUI
 
 /// The Watch app: one page per account, most urgent first. Each page leads with the 5-hour
-/// session (a ring and its countdown), then the week, then the forecast and the graph.
+/// session (a ring and its countdown), then the week, then the forecast and the graph. When a
+/// Mac syncs agent runs they get a page of their own: first when one needs an answer, else last.
 public struct WatchRootView: View {
     var model: WatchModel
 
@@ -11,13 +14,17 @@ public struct WatchRootView: View {
 
     public var body: some View {
         NavigationStack {
-            if model.accounts.isEmpty {
+            let runs = model.reader.runs
+            let runsFirst = runs.contains(where: \.needsInput)
+            if model.accounts.isEmpty && runs.isEmpty {
                 WatchEmptyView(waiting: model.reader.loaded)
             } else {
                 TabView {
+                    if runsFirst { WatchRunsPage(runs: runs, now: model.now) }
                     ForEach(model.accounts, id: \.key) { p in
                         WatchAccountPage(provider: p, feed: model.feed, now: model.now)
                     }
+                    if !runs.isEmpty, !runsFirst { WatchRunsPage(runs: runs, now: model.now) }
                 }
                 #if os(watchOS)
                 .tabViewStyle(.verticalPage)
@@ -111,4 +118,74 @@ struct WatchEmptyView: View {
             Text("Turn on sync in Headroom on your Mac, under Settings → iPhone & Watch.").font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
     }
+}
+
+/// Agent runs from every Mac, compact: the title (or the Mac), the state, and the percent or
+/// the agent counts. Live runs first, then the last day's finished ones.
+public struct WatchRunsPage: View {
+    var runs: [RunDigest]
+    var now: Date
+
+    public init(runs: [RunDigest], now: Date) { self.runs = runs; self.now = now }
+
+    public var body: some View {
+        ScrollView { WatchRunsList(runs: runs, now: now) }
+    }
+}
+
+/// The page's content (the PNG renderer draws it without the scroll view).
+public struct WatchRunsList: View {
+    var runs: [RunDigest]
+    var now: Date
+
+    public init(runs: [RunDigest], now: Date) { self.runs = runs; self.now = now }
+
+    public var body: some View {
+        let presenter = RunsPresenter(now: now, calendar: .current, locale: .current)
+        let page = presenter.page(runs)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Agent runs").font(.headline)
+            ForEach(page.live + page.recent) { card in
+                if let run = runs.first(where: { $0.id == card.id }) {
+                    WatchRunRow(card: card, figure: presenter.shortFigure(run), progress: run.hasDeclaredTasks ? run.progress : nil)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+struct WatchRunRow: View {
+    var card: RunCardModel
+    var figure: String
+    var progress: TaskProgress?
+
+    var body: some View {
+        let p = Palette(.dark), hue = RunHue.of(card.tone)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(card.title).font(.footnote.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 2)
+                Text(figure).font(.footnote.weight(.semibold).monospacedDigit()).foregroundStyle(card.live ? .white : p.muted)
+            }
+            if let progress, card.live { RunProgressBar(done: progress.done, inFlight: progress.inFlight, height: 4) }
+            HStack(spacing: 5) {
+                RunMarkView(RunMark.of(card.glyph), color: p.run(hue), size: 9)
+                Text(card.stateText).font(.caption2.weight(.medium)).foregroundStyle(hue == .neutral ? p.muted : p.run(hue)).lineLimit(1)
+            }
+        }
+        .padding(.vertical, 7).padding(.horizontal, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(card.needsInput ? p.rose.opacity(0.16) : Color.white.opacity(card.live ? 0.10 : 0.05)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// The drawing enums share their case names with the presenter's (the iPhone maps them case by case).
+extension RunMark {
+    static func of(_ g: RunGlyph) -> RunMark { RunMark(rawValue: "\(g)") ?? .running }
+}
+
+extension RunHue {
+    static func of(_ t: RunTone) -> RunHue { RunHue(rawValue: "\(t)") ?? .quiet }
 }

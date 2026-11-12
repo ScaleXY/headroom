@@ -16,6 +16,7 @@ final class StatusItemController: NSObject {
     var openWelcome: (() -> Void)?
     private var lastKey: [MenuBarProviderModel]?
     private var lastFan: FanReadout?
+    private var lastRuns: RunsMenuBarModel?
     private var lastBadge = false
     private var lastAppearanceDark: Bool?
     private var lastScale: CGFloat = 0
@@ -49,26 +50,29 @@ final class StatusItemController: NSObject {
         let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let scale = button.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let fan = fans.readout
+        let settings = model.settings
+        let runs = settings.taskTracking && settings.showRunsInMenuBar ? RunsPresenter(now: now).menuBar(model.taskRuns) : nil
         // The same rule as the popover banner: putting it off there clears the dot too.
         let badge = UpdateBannerRenderer.shows(updater)
-        guard force || items != lastKey || fan != lastFan || badge != lastBadge || dark != lastAppearanceDark || scale != lastScale else { return }
+        guard force || items != lastKey || fan != lastFan || runs != lastRuns || badge != lastBadge || dark != lastAppearanceDark || scale != lastScale else { return }
         lastKey = items
         lastFan = fan
+        lastRuns = runs
         lastBadge = badge
         lastAppearanceDark = dark
         lastScale = scale
-        let size = NSSize(width: StatusItemRenderer.width(items, fan: fan), height: StatusItemRenderer.height)
+        let size = NSSize(width: StatusItemRenderer.width(items, fan: fan, runs: runs), height: StatusItemRenderer.height)
         // Touch the item only when something actually changed, and keep its width stable:
         // every relayout makes AppKit re-render the status button.
         if abs(item.length - (size.width + 8)) > 0.5 { item.length = size.width + 8 }
         // A finished CPU-rendered bitmap; AppKit only composites it.
-        if let cg = StatusItemRenderer.renderBitmap(items, fan: fan, updateBadge: badge, size: size, dark: dark, scale: scale) {
+        if let cg = StatusItemRenderer.renderBitmap(items, fan: fan, runs: runs, updateBadge: badge, size: size, dark: dark, scale: scale) {
             let image = NSImage(cgImage: cg, size: size)
             image.isTemplate = false
             button.image = image
         }
         let update = badge ? updater.state.version.map { "Headroom \($0) is available." } : nil
-        let spoken = (items.map(\.spoken) + [fan?.spoken, update].compactMap(\.self)).joined(separator: " ")
+        let spoken = (items.map(\.spoken) + [runs?.spoken, fan?.spoken, update].compactMap(\.self)).joined(separator: " ")
         let label = spoken.isEmpty ? "Headroom" : spoken
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
         let tip: String? = update ?? (items.isEmpty ? "Headroom" : nil)

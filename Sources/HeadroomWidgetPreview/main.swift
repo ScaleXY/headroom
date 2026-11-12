@@ -1,6 +1,9 @@
 import AppKit
 import HeadroomKit
+import HeadroomMobileUI
+import HeadroomPresent
 import HeadroomSync
+import HeadroomWatchUI
 import HeadroomWidgetUI
 import SwiftUI
 import WidgetKit
@@ -10,7 +13,9 @@ import WidgetKit
 // `--live` adds the current `widgets.json` (what the installed widgets show right now);
 // `--feed <file>` adds a feed written by `HeadroomApp --render widget-feed`, drawn at its own time;
 // `--mobile` draws the iPhone, iPad and Watch surfaces instead: complications in color and tinted,
-// the Lock Screen, the session Live Activity and the iPhone-only widgets, from the demo accounts.
+// the Lock Screen, the session Live Activity and the iPhone-only widgets, from the demo accounts;
+// and agent runs as two Macs sync them: the phone's Runs section (with and without task names, at
+// iPhone width and two-up at iPad width), the watch list and the run Live Activity.
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
@@ -150,8 +155,75 @@ if args.contains("--mobile") {
             mobileCount += 1
         }
     }
+    mobileCount += renderRuns()
     print("rendered \(mobileCount) image(s) to \(out.path)")
     exit(0)
+}
+
+/// Every run fixture as one Mac syncs it (with or without task names), plus a run on a second
+/// Mac that went to sleep mid-run, merged the way the phone merges them.
+@MainActor
+func runDigests(names: Bool) -> [RunDigest] {
+    let laptop = [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.observedRun(now: now), Demo.limitRun(now: now),
+                  Demo.finishedRun(now: now), Demo.failedRun(now: now)]
+    let asleep = [Demo.stoppedRun(now: now)].map { r -> TaskRun in var r = r; r.state = .running; r.title = "Index the photo archive"; r.updatedAt = now.addingTimeInterval(-131 * 60); return r }
+    func device(_ id: String, _ name: String, seen: Date, state: DevicePowerState, _ runs: [TaskRun]) -> DeviceEnvelope {
+        DeviceEnvelope(deviceID: id, updatedAt: seen, lastSeenAt: seen,
+                       payload: DevicePayload(name: name, model: nil, appVersion: "0.5.0", enabledProviders: [.claude, .codex], currentAccounts: [:],
+                                              sessionWarnAt: 0.75, planPriceOverrides: [:], outages: [:], state: state, syncSince: nil,
+                                              runs: RunSummaryBuilder.summaries(runs, includeNames: names, now: now)))
+    }
+    return RunMerge.digests([device("laptop", "MacBook Pro", seen: now, state: .awake, laptop),
+                             device("studio", "Mac Studio", seen: now.addingTimeInterval(-2 * 3600), state: .sleeping, asleep)], now: now)
+}
+
+@MainActor
+func renderRuns() -> Int {
+    var count = 0
+    let presenter = RunsPresenter(now: now)
+    for names in [true, false] {
+        let page = presenter.page(runDigests(names: names))
+        let label = names ? "names" : "nonames"
+        for dark in [true, false] {
+            // ImageRenderer on macOS ignores Dynamic Type, so the largest sizes are checked in the simulator.
+            let v = RunsSectionContent(page: page, showFinished: .constant(true))
+                .frame(width: 358).padding(16)
+                .background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
+                .environment(\.colorScheme, dark ? .dark : .light)
+            render(v, to: "mobile-runs-\(label)-\(dark ? "dark" : "light").png")
+            count += 1
+        }
+        // iPad: two columns on Now.
+        let pad = RunsSectionContent(page: page, columns: 2, showFinished: .constant(false))
+            .frame(width: 760).padding(20).background(Color(red: 0.08, green: 0.086, blue: 0.10)).environment(\.colorScheme, .dark)
+        render(pad, to: "mobile-runs-\(label)-ipad-dark.png")
+        // The watch list, at the 45 mm screen's width.
+        let watch = WatchRunsList(runs: runDigests(names: names), now: now).frame(width: 198).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 36).fill(.black)).padding(20).background(Backdrop(dark: true))
+            .environment(\.colorScheme, .dark)
+        render(watch, to: "mobile-watch-runs-\(label).png")
+        // The run Live Activity in each presentation, for the three most pressing runs.
+        let states = runDigests(names: names).filter { !$0.state.isTerminal }.prefix(3).map { RunActivityState.from($0, presenter: presenter) }
+        let activity = VStack(alignment: .leading, spacing: 20) {
+            ForEach(Array(states.enumerated()), id: \.offset) { _, state in
+                RunActivityLockScreen(state: state, now: now).frame(width: 360).background(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.5)))
+            }
+            if let state = states.first {
+                HStack(spacing: 40) {
+                    RunActivityCompactLeading(state: state)
+                    RunActivityCompactTrailing(state: state)
+                }
+                .padding(.horizontal, 18).frame(height: 36).background(Capsule().fill(.black))
+                RunActivityRing(state: state).frame(width: 22, height: 22).padding(7).background(Circle().fill(.black))
+                RunActivityExpandedBottom(state: state, now: now).frame(width: 340).padding(16).background(RoundedRectangle(cornerRadius: 30).fill(.black))
+                RunActivityWatch(state: state).padding(12).background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12)))
+            }
+        }
+        .padding(28).background(Backdrop(dark: true)).environment(\.colorScheme, .dark)
+        render(activity, to: "mobile-liveactivity-runs-\(label).png")
+        count += 3
+    }
+    return count
 }
 
 var feeds: [(String, WidgetFeed?)] = WidgetSamples.Scenario.allCases.map { ($0.rawValue, WidgetSamples.feed($0, now: now)) }

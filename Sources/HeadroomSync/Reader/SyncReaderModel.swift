@@ -1,6 +1,7 @@
 import CoreData
 import Foundation
 import HeadroomKit
+import HeadroomPresent
 import Observation
 
 /// What the iPhone, iPad and Watch apps show: the merged accounts and the widget feed built from
@@ -90,6 +91,8 @@ public final class SyncReaderModel {
     public var activeAccounts: [MergedAccount] { snapshot.accounts.filter(\.isActive) }
     public var inactiveAccounts: [MergedAccount] { snapshot.accounts.filter { !$0.isActive } }
     public var hasMac: Bool { !snapshot.devices.isEmpty }
+    /// Agent runs from every Mac, most pressing first. Empty unless a Mac syncs runs.
+    public var runs: [RunDigest] { snapshot.runs }
 
     /// Every Mac has gone quiet for half an hour (asleep, off, or sync turned off).
     public var macsQuiet: Bool {

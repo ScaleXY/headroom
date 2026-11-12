@@ -26,15 +26,16 @@ public struct SnapshotWriter: Sendable {
     }
 }
 
-/// Listens for `com.scalexy.headroom.refresh` (posted by `headroom --refresh`).
+/// Listens for a Darwin notification: `com.scalexy.headroom.refresh` (posted by `headroom --refresh`)
+/// by default, or another such as `TaskJournal.notification`.
 public final class RefreshObserver: @unchecked Sendable {
     private let handler: @Sendable () -> Void
     private var token: Int32 = 0
     private var registered = false
 
-    public init(queue: DispatchQueue = .main, handler: @escaping @Sendable () -> Void) {
+    public init(name: String = SnapshotFile.refreshNotification, queue: DispatchQueue = .main, handler: @escaping @Sendable () -> Void) {
         self.handler = handler
-        let status = notify_register_dispatch(SnapshotFile.refreshNotification, &token, queue) { [handler] _ in handler() }
+        let status = notify_register_dispatch(name, &token, queue) { [handler] _ in handler() }
         registered = status == UInt32(NOTIFY_STATUS_OK)
     }
 

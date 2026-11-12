@@ -36,8 +36,9 @@ public enum DemoRecords {
         if scenario == .showcase { desktop[Provider.codex.rawValue] = codexWork }
         out.devices = [
             device(laptopID, name: "MacBook Pro", model: "Mac15,7", now: now,
-                   current: [Provider.claude.rawValue: personal, Provider.codex.rawValue: codexKey]),
-            device(desktopID, name: "Mac Studio", model: "Mac14,13", now: now.addingTimeInterval(-6 * 60), current: desktop),
+                   current: [Provider.claude.rawValue: personal, Provider.codex.rawValue: codexKey], runs: runs(now: now, names: true)),
+            device(desktopID, name: "Mac Studio", model: "Mac14,13", now: now.addingTimeInterval(-6 * 60), current: desktop,
+                   runs: runs(now: now, names: false)),
         ]
 
         add(&out, claude, key: personal, email: "you@example.com", device: laptopID, now: now)
@@ -100,11 +101,20 @@ public enum DemoRecords {
         }
     }
 
-    static func device(_ id: String, name: String, model: String, now: Date, current: [String: String]) -> DeviceEnvelope {
+    static func device(_ id: String, name: String, model: String, now: Date, current: [String: String], runs: [RunSummaryPayload]? = nil) -> DeviceEnvelope {
         DeviceEnvelope(deviceID: id, updatedAt: now, lastSeenAt: now,
                        payload: DevicePayload(name: name, model: model, appVersion: "0.4.0", enabledProviders: [.claude, .codex],
                                               currentAccounts: current, sessionWarnAt: 0.75, planPriceOverrides: [:], outages: [:],
-                                              state: .awake, syncSince: now.addingTimeInterval(-30 * 86400)))
+                                              state: .awake, syncSince: now.addingTimeInterval(-30 * 86400), runs: runs))
+    }
+
+    /// The Mac's run fixtures as each Mac would sync them: the laptop with task names included
+    /// (a run waiting on an answer, a plan under way, one finished this morning), the desktop
+    /// without (agents a session spawned, a release that failed last night).
+    public static func runs(now: Date, names: Bool) -> [RunSummaryPayload]? {
+        let runs = names ? [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.finishedRun(now: now)]
+                         : [Demo.observedRun(now: now), Demo.failedRun(now: now)]
+        return RunSummaryBuilder.summaries(runs, includeNames: names, now: now)
     }
 
     static func add(_ out: inout SyncRecords, _ input: PaceInput, key: String, email: String, device: String, now: Date, activity: Bool = true) {

@@ -1,0 +1,316 @@
+import HeadroomKit
+import SwiftUI
+#if canImport(ActivityKit) && os(iOS)
+import ActivityKit
+#endif
+
+// The pieces an agent run is drawn with on iPhone, iPad and Watch (the Mac's `RunCardRenderer`
+// in SwiftUI), and the run Live Activity. Everything arrives as resolved words: the widget
+// extension doesn't link the presenter.
+
+/// A run's or row's state mark (`RunGlyph` on the presenter side).
+public enum RunMark: String, Codable, Sendable, Hashable, CaseIterable {
+    case planned, running, stale, needsInput, waiting, parked, stopped, done, partial, failed, skipped, more
+}
+
+/// What a mark or word means, for its color (`RunTone`): blue for work moving, ink for settled,
+/// amber for something to look at, rose for something that needs you or broke.
+public enum RunHue: String, Codable, Sendable, Hashable {
+    case progress, neutral, warn, alert, quiet
+}
+
+extension Palette {
+    public func run(_ hue: RunHue) -> Color {
+        switch hue {
+        case .progress: azure
+        case .neutral: ink
+        case .warn: amber
+        case .alert: rose
+        case .quiet: muted
+        }
+    }
+}
+
+/// The state mark in a `size` box, drawn as the Mac draws it.
+public struct RunMarkView: View {
+    public var mark: RunMark
+    public var color: Color
+    public var size: CGFloat
+
+    public init(_ mark: RunMark, color: Color, size: CGFloat = 10) { self.mark = mark; self.color = color; self.size = size }
+
+    public var body: some View {
+        Canvas { ctx, box in
+            let k = box.width / 10, c = CGPoint(x: box.width / 2, y: box.height / 2)
+            func circle(_ r: CGFloat, dx: CGFloat = 0, dy: CGFloat = 0) -> Path {
+                Path(ellipseIn: CGRect(x: c.x + dx - r, y: c.y + dy - r, width: r * 2, height: r * 2))
+            }
+            func line(_ pts: [(CGFloat, CGFloat)]) -> Path {
+                var p = Path()
+                for (i, q) in pts.enumerated() {
+                    let pt = CGPoint(x: c.x + q.0 * k, y: c.y + q.1 * k)
+                    if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+                }
+                return p
+            }
+            let round = StrokeStyle(lineWidth: 1.6 * k, lineCap: .round, lineJoin: .round)
+            switch mark {
+            case .planned:
+                ctx.stroke(circle(3.9 * k), with: .color(color.opacity(0.8)), lineWidth: 1.3 * k)
+            case .running:
+                ctx.fill(circle(5 * k), with: .color(color.opacity(0.2)))
+                ctx.fill(circle(3 * k), with: .color(color))
+            case .stale:
+                ctx.stroke(circle(3.9 * k), with: .color(color), lineWidth: 1.3 * k)
+                ctx.fill(circle(1.5 * k), with: .color(color))
+            case .needsInput:
+                ctx.fill(circle(5 * k), with: .color(color))
+                ctx.stroke(line([(0, -2.6), (0, 0.6)]), with: .color(.white), style: StrokeStyle(lineWidth: 1.5 * k, lineCap: .round))
+                ctx.fill(circle(0.85 * k, dy: 2.6 * k), with: .color(.white))
+            case .waiting:
+                for dx in [-2.2, 2.2] as [CGFloat] {
+                    ctx.fill(Path(roundedRect: CGRect(x: c.x + (dx - 1.1) * k, y: c.y - 4 * k, width: 2.2 * k, height: 8 * k), cornerRadius: 0.8 * k),
+                             with: .color(color))
+                }
+            case .parked, .partial:
+                ctx.stroke(circle(3.9 * k), with: .color(color), lineWidth: 1.3 * k)
+                var half = Path()
+                half.addArc(center: c, radius: 3.9 * k, startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+                half.closeSubpath()
+                ctx.fill(half, with: .color(color))
+            case .stopped:
+                ctx.fill(Path(roundedRect: CGRect(x: c.x - 3.5 * k, y: c.y - 3.5 * k, width: 7 * k, height: 7 * k), cornerRadius: 1.6 * k),
+                         with: .color(color))
+            case .done:
+                ctx.stroke(line([(-3.6, 0.2), (-1.1, 2.7), (3.7, -2.6)]), with: .color(color), style: round)
+            case .failed:
+                ctx.stroke(line([(-3, -3), (3, 3)]), with: .color(color), style: round)
+                ctx.stroke(line([(3, -3), (-3, 3)]), with: .color(color), style: round)
+            case .skipped:
+                ctx.stroke(circle(3.9 * k), with: .color(color.opacity(0.8)), lineWidth: 1.2 * k)
+                ctx.stroke(line([(-2.6, 2.6), (2.6, -2.6)]), with: .color(color.opacity(0.8)), style: StrokeStyle(lineWidth: 1.2 * k, lineCap: .round))
+            case .more:
+                for dx in [-3.0, 0, 3.0] as [CGFloat] { ctx.fill(circle(0.95 * k, dx: dx * k), with: .color(color)) }
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Done solid, in flight a lighter wash of the same blue, not started the empty track.
+public struct RunProgressBar: View {
+    public var done: Double
+    public var inFlight: Double
+    public var height: CGFloat
+
+    public init(done: Double, inFlight: Double, height: CGFloat = 7) { self.done = done; self.inFlight = inFlight; self.height = height }
+    @Environment(\.colorScheme) private var scheme
+
+    public var body: some View {
+        let p = Palette(scheme), tone = p.tone(.plenty)
+        let d = min(max(done, 0), 1), f = min(max(inFlight, 0), 1 - d)
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(p.meterTrack)
+                if p.dark { Capsule().strokeBorder(p.meterTrackBorder, lineWidth: 0.5) }
+                Rectangle().fill(tone.bottom.opacity(p.dark ? 0.32 : 0.22)).frame(width: g.size.width * (d + f))
+                if d > 0 { Capsule().fill(tone.fill).frame(width: max(g.size.width * d, height)) }
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The run's state as a tinted capsule with a dot.
+public struct RunStateCapsule: View {
+    public var text: String
+    public var hue: RunHue
+    public var compact: Bool
+
+    public init(_ text: String, hue: RunHue, compact: Bool = false) { self.text = text; self.hue = hue; self.compact = compact }
+    @Environment(\.colorScheme) private var scheme
+
+    public var body: some View {
+        let p = Palette(scheme), c = p.run(hue), strong = hue != .neutral
+        HStack(spacing: 5) {
+            Circle().fill(c).frame(width: 6, height: 6)
+            Text(text).font(compact ? .system(size: 11, weight: .semibold) : .caption.weight(.semibold)).foregroundStyle(c).lineLimit(1)
+        }
+        .padding(.leading, 7).padding(.trailing, 8).padding(.vertical, 3)
+        .background(Capsule().fill(c.opacity(strong ? 0.13 : 0.08)))
+        .overlay(Capsule().strokeBorder(c.opacity(strong ? 0.32 : 0.18), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Live Activity
+
+/// What the run Live Activity shows: the most pressing live run on any Mac. Small (well under
+/// ActivityKit's 4 KB), and the finish is a fixed time, so it stays right between updates.
+public struct RunActivityState: Codable, Hashable, Sendable {
+    /// The run's title, or "Run on <Mac>" when the Mac doesn't share names.
+    public var title: String
+    /// "Needs your input", "Running", "Last seen 2h ago".
+    public var stateText: String
+    public var mark: RunMark
+    public var hue: RunHue
+    public var provider: Provider?
+    /// "42%", or "7/9" agents for a run with nothing declared.
+    public var figure: String
+    /// The declared plan's done and in-flight shares; nil for observed runs.
+    public var done: Double?
+    public var inFlight: Double?
+    /// "7 of 9 agents finished", or the counts line.
+    public var detail: String?
+    /// When it should finish at the recent rate.
+    public var finishAt: Date?
+    /// Under the title: the Mac, or the harness when the title already names the Mac.
+    public var subtitle: String
+    public var updatedAt: Date
+    /// Not finished, and its Mac still heard from.
+    public var live: Bool
+
+    public init(title: String, stateText: String, mark: RunMark, hue: RunHue, provider: Provider?, figure: String, done: Double?, inFlight: Double?,
+                detail: String?, finishAt: Date?, subtitle: String, updatedAt: Date, live: Bool) {
+        self.title = title; self.stateText = stateText; self.mark = mark; self.hue = hue; self.provider = provider; self.figure = figure
+        self.done = done; self.inFlight = inFlight; self.detail = detail; self.finishAt = finishAt; self.subtitle = subtitle; self.updatedAt = updatedAt
+        self.live = live
+    }
+
+    /// The progress the ring and bar show: done for a plan, finished agents otherwise.
+    public var fraction: Double? { done }
+}
+
+#if canImport(ActivityKit) && os(iOS)
+/// The run Live Activity: one at a time, for the most pressing live run.
+public struct RunActivityAttributes: ActivityAttributes {
+    public typealias ContentState = RunActivityState
+    /// `RunDigest.id`: the Mac's device ID and the run's hashed ID.
+    public var runID: String
+
+    public init(runID: String) { self.runID = runID }
+}
+#endif
+
+/// The Lock Screen and banner presentation.
+public struct RunActivityLockScreen: View {
+    public var state: RunActivityState
+    public var now: Date
+
+    public init(state: RunActivityState, now: Date = Date()) { self.state = state; self.now = now }
+
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.calendar) private var calendar
+    @Environment(\.locale) private var locale
+
+    public var body: some View {
+        let p = Palette(scheme), copy = Copy(now: now, calendar: calendar, locale: locale)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                if let provider = state.provider { BrandTile(provider: provider, size: 22) } else { RunMarkView(state.mark, color: p.run(state.hue), size: 16) }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(state.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(p.ink).lineLimit(1).privacySensitive()
+                    Text(state.subtitle).font(.system(size: 11, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                Text(state.figure).font(.system(size: 24, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
+            }
+            if let done = state.done { RunProgressBar(done: done, inFlight: state.inFlight ?? 0, height: 8) }
+            // The state always reads in full; the counts give way to it, on their own line.
+            HStack(spacing: 8) {
+                RunStateCapsule(state.stateText, hue: state.hue, compact: true).layoutPriority(1)
+                Spacer(minLength: 4)
+                if let finish = state.finishAt, state.live, finish > now {
+                    Text("Done ~\(copy.when(finish))").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted)
+                        .lineLimit(1)
+                }
+            }
+            HStack(spacing: 8) {
+                if let detail = state.detail {
+                    Text(detail).font(.system(size: 11, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Text("Updated \(copy.ago(state.updatedAt))").font(.system(size: 10, weight: .medium)).foregroundStyle(p.muted2).fixedSize()
+            }
+        }
+        .padding(14)
+    }
+}
+
+/// The Dynamic Island's compact leading: the state mark.
+public struct RunActivityCompactLeading: View {
+    public var state: RunActivityState
+    public init(state: RunActivityState) { self.state = state }
+
+    public var body: some View { RunMarkView(state.mark, color: Palette(.dark).run(state.hue), size: 16) }
+}
+
+/// The Dynamic Island's compact trailing: the figure.
+public struct RunActivityCompactTrailing: View {
+    public var state: RunActivityState
+    public init(state: RunActivityState) { self.state = state }
+
+    public var body: some View {
+        Text(state.figure).font(.system(size: 14, weight: .semibold).monospacedDigit())
+            .foregroundStyle(state.hue == .alert || state.hue == .warn ? Palette(.dark).run(state.hue) : .white)
+            .lineLimit(1).frame(maxWidth: 64)
+    }
+}
+
+/// The minimal presentation and the Watch's ring: done so far, tinted by the state.
+public struct RunActivityRing: View {
+    public var state: RunActivityState
+    public var width: CGFloat
+    public init(state: RunActivityState, width: CGFloat = 2.5) { self.state = state; self.width = width }
+
+    public var body: some View {
+        let p = Palette(.dark)
+        let tone = Tone(top: p.run(state.hue), bottom: p.run(state.hue), glow: .clear, text: p.run(state.hue))
+        ZStack {
+            Ring(fraction: state.done ?? 0, tone: tone, width: width)
+            RunMarkView(state.mark, color: p.run(state.hue), size: 9)
+        }
+    }
+}
+
+/// The Dynamic Island's expanded bottom region.
+public struct RunActivityExpandedBottom: View {
+    public var state: RunActivityState
+    public var now: Date
+    public init(state: RunActivityState, now: Date = Date()) { self.state = state; self.now = now }
+
+    public var body: some View {
+        let p = Palette(.dark), copy = Copy(now: now)
+        VStack(alignment: .leading, spacing: 6) {
+            if let done = state.done { RunProgressBar(done: done, inFlight: state.inFlight ?? 0, height: 7) }
+            HStack(spacing: 8) {
+                Text(state.detail ?? state.subtitle).font(.system(size: 12, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
+                Spacer(minLength: 4)
+                if let finish = state.finishAt, state.live, finish > now {
+                    Text("Done ~\(copy.when(finish))").font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted)
+                }
+            }
+        }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// The Apple Watch Smart Stack presentation (`.small` supplemental family).
+public struct RunActivityWatch: View {
+    public var state: RunActivityState
+    public init(state: RunActivityState) { self.state = state }
+
+    public var body: some View {
+        let p = Palette(.dark)
+        HStack(spacing: 8) {
+            RunActivityRing(state: state, width: 4).frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(state.figure).font(.system(size: 17, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                Text(state.stateText).font(.system(size: 11, weight: .medium)).foregroundStyle(p.run(state.hue == .neutral ? .quiet : state.hue))
+                    .lineLimit(1)
+            }
+        }
+    }
+}

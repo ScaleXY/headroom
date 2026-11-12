@@ -25,9 +25,53 @@ enum StatusItemRenderer {
 
     // MARK: Layout
 
-    static func width(_ items: [MenuBarProviderModel], fan: FanReadout? = nil) -> CGFloat {
-        let meters = items.isEmpty ? 22 : items.map(groupWidth).reduce(0, +) + CGFloat(items.count - 1) * 12 + 4
-        return meters + (fan == nil ? 0 : 10 + fanWidth)
+    static func width(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, runs: RunsMenuBarModel? = nil) -> CGFloat {
+        metersWidth(items) + (runs.map { 10 + runsWidth($0) } ?? 0) + (fan == nil ? 0 : 10 + fanWidth)
+    }
+
+    static func metersWidth(_ items: [MenuBarProviderModel]) -> CGFloat {
+        items.isEmpty ? 22 : items.map(groupWidth).reduce(0, +) + CGFloat(items.count - 1) * 12 + 4
+    }
+
+    // MARK: Run indicator
+
+    /// A slot for the widest text of its kind ("100%", or "88/88" sized to the counts), so the
+    /// item keeps its width as the run moves.
+    static func runsWidth(_ r: RunsMenuBarModel) -> CGFloat {
+        let widest: String
+        if r.text.hasSuffix("%") { widest = "100%" }
+        else {
+            let parts = r.text.split(separator: "/")
+            widest = parts.map { String(repeating: "8", count: max($0.count, 2)) }.joined(separator: "/")
+        }
+        return 11 + 3 + max(countdownText(widest, color: .black).width, countdownText(r.text, color: .black).width)
+    }
+
+    /// The most pressing live run: a list mark, or a rose mark when a run needs you, and its figure.
+    static func drawRuns(_ r: RunsMenuBarModel, x: CGFloat, mid: CGFloat, dark: Bool, ctx: CGContext) {
+        let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
+        let box = CGRect(x: x, y: mid - 5.5, width: 11, height: 11)
+        if r.needsInput {
+            let rose = dark ? rgb(0xFF6982) : rgb(0xD21F45)
+            let disc = CGPath(ellipseIn: box, transform: nil)
+            ctx.glow(disc, color: rose.fade(dark ? 0.6 : 0.3), blur: 3, base: rose)
+            ctx.fill(disc, rose)
+            let bar = CGMutablePath()
+            bar.move(to: CGPoint(x: box.midX, y: box.minY + 2.6)); bar.addLine(to: CGPoint(x: box.midX, y: box.midY + 0.8))
+            ctx.stroke(bar, .white, width: 1.6, cap: .round)
+            ctx.fill(CGPath(ellipseIn: CGRect(x: box.midX - 0.9, y: box.maxY - 3.6, width: 1.8, height: 1.8), transform: nil), .white)
+        } else {
+            // A list mark, not a ring: the 5-hour session already wears a ring beside it.
+            let blue = dark ? rgb(0x9CCBFF) : palette(.plenty, dark: dark).bottom
+            for (i, dy) in ([-3.6, 0, 3.6] as [CGFloat]).enumerated() {
+                let cy = mid + dy
+                ctx.fill(CGPath(ellipseIn: CGRect(x: box.minX, y: cy - 1.15, width: 2.3, height: 2.3), transform: nil), blue)
+                let line = CGMutablePath()
+                line.move(to: CGPoint(x: box.minX + 4.2 + (i == 1 ? 1.6 : 0), y: cy)); line.addLine(to: CGPoint(x: box.maxX, y: cy))
+                ctx.stroke(line, blue, width: 1.6, cap: .round)
+            }
+        }
+        countdownText(r.text, color: ink.fade(0.92)).draw(x: x + 11 + 3, capCenter: mid, in: ctx)
     }
 
     // MARK: Fan readout
@@ -113,7 +157,7 @@ enum StatusItemRenderer {
     }
 
     /// CPU rendering into a premultiplied sRGB bitmap.
-    static func renderBitmap(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, updateBadge: Bool = false,
+    static func renderBitmap(_ items: [MenuBarProviderModel], fan: FanReadout? = nil, runs: RunsMenuBarModel? = nil, updateBadge: Bool = false,
                              size: NSSize, dark: Bool, scale: CGFloat) -> CGImage? {
         let w = Int((size.width * scale).rounded(.up)), h = Int((size.height * scale).rounded(.up))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -126,6 +170,7 @@ enum StatusItemRenderer {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = gc
         draw(items, in: CGRect(origin: .zero, size: size), dark: dark, updateBadge: updateBadge, ctx: ctx)
+        if let runs { drawRuns(runs, x: metersWidth(items) + 10, mid: size.height / 2, dark: dark, ctx: ctx) }
         if let fan {
             let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
             drawFan(fan, x: size.width - fanWidth - 2, mid: size.height / 2, ink: ink, ctx: ctx)

@@ -84,6 +84,16 @@ final class Notifier {
 
     private func post(_ kind: NotificationKind, id: String, title: String, body: String) {
         guard settings.notifies(kind) else { return }
+        deliver(id: id, title: title, body: body, thread: kind.rawValue, sound: kind == .sessionLimit || kind == .sessionWarning)
+    }
+
+    /// Task-run alerts (`TaskAlerts` decides the episodes and checks the settings).
+    func post(_ alert: TaskAlerts.Alert) {
+        guard Self.available else { return }
+        deliver(id: alert.id, title: alert.title, body: alert.body, thread: "task." + alert.kind.rawValue, sound: alert.kind == .needsInput)
+    }
+
+    private func deliver(id: String, title: String, body: String, thread: String, sound: Bool) {
         var sent = defaults.stringArray(forKey: "notifiedEvents") ?? []
         guard !sent.contains(id) else { return }
         sent.append(id)
@@ -91,8 +101,8 @@ final class Notifier {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.threadIdentifier = kind.rawValue
-        if kind == .sessionLimit || kind == .sessionWarning { content.sound = .default }
+        content.threadIdentifier = thread
+        if sound { content.sound = .default }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 }
