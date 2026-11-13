@@ -314,7 +314,9 @@ extension RunsPresenter {
         for n in r.nodes { byID[n.id] = n }
         let leaves = pageLeaves(r)
         func isDone(_ n: TaskNode) -> Bool { n.state == .done || (finished && n.state == .skipped && n.replacedBy == nil) }
-        let listed = leaves.filter { !isDone($0) }
+        // Live: what's still open, and apart from it what failed. Finished: whatever didn't finish.
+        let listed = finished ? leaves.filter { !isDone($0) } : leaves.filter { !$0.state.isTerminal }
+        let failed = finished ? [] : leaves.filter { $0.state.isTerminal && !isDone($0) && $0.state != .skipped && $0.state != .cancelled }
         let done = leaves.filter(isDone)
         // "Port the checkout endpoints › Rewrite the routes": the last two ancestors.
         func path(_ n: TaskNode) -> String? {
@@ -346,6 +348,12 @@ extension RunsPresenter {
             let top = groups.remove(at: i)
             groups.append(RunGroupModel(id: top.id, title: "Other", rows: top.rows))
         }
+        if !failed.isEmpty {
+            // The first few; the count says how many in all.
+            let shownFailed = failed.prefix(3)
+            groups.append(RunGroupModel(id: "~failed", title: failed.count > shownFailed.count ? "Didn't finish · \(failed.count)" : "Didn't finish",
+                                        rows: shownFailed.map(row)))
+        }
         if showDone, !done.isEmpty {
             groups.append(RunGroupModel(id: "~done", title: "Done", rows: done.map(row)))
         }
@@ -373,6 +381,13 @@ extension RunsPresenter {
         var pause: ClosedRange<Double>?
         if tl != nil, let p = outlook?.pauseAt, let q = outlook?.resumeAt, p < q { pause = at(p)...at(q) }
         let forecastEnd = finish.map(at) ?? nowF
+        /// Where `share` of the working time left ends, skipping the pause.
+        func workingEnd(_ share: Double) -> Double {
+            let pauseLen = pause.map { max(0, min($0.upperBound, forecastEnd) - max($0.lowerBound, nowF)) } ?? 0
+            let need = max(0, forecastEnd - nowF - pauseLen) * share
+            guard let p = pause, nowF + need > p.lowerBound, p.upperBound > nowF else { return nowF + need }
+            return min(p.upperBound + (need - max(0, p.lowerBound - nowF)), forecastEnd)
+        }
 
         /// Forecast from now to `to`, broken by the pause.
         func ahead(_ kind: RunLanesModel.BarKind, from: Double, to: Double) -> [RunLanesModel.Bar] {
@@ -402,14 +417,16 @@ extension RunsPresenter {
                     : (n.stale || n.state == .waiting) ? .held : .running
                 if let b = began { bars.append(.init(kind: kind, start: b, end: max(nowF, b + 0.01))) }
                 if kind == .asking {
-                    meta.append("asks" + (n.lastActivityAt.map { " · " + TimeFormat.compact(now.timeIntervalSince($0)) } ?? ""))
+                    // How long it has waited: since the question, else since it last moved.
+                    let since = r.question.flatMap { $0.task == n.id || $0.task == nil ? $0.askedAt : nil } ?? n.lastActivityAt
+                    meta.append("asks" + (since.map { " · " + TimeFormat.compact(now.timeIntervalSince($0)) } ?? ""))
                 } else if kind == .held, n.stale {
                     meta.append("quiet")
                 }
                 // What's left of it: as far as it has to go, by its own progress, within the run's forecast.
                 if kind == .running, forecastEnd > nowF {
                     let left = 1 - min(max(n.progress.estimate, 0), 0.95)
-                    bars += ahead(.forecast, from: nowF, to: nowF + (forecastEnd - nowF) * left)
+                    bars += ahead(.forecast, from: nowF, to: workingEnd(left))
                 }
             case .parked:
                 if let b = began { bars.append(.init(kind: .held, start: b, end: max(n.lastActivityAt.map(at) ?? b, b + 0.01))) }
@@ -447,11 +464,14 @@ extension RunsPresenter {
         }
         if let f = finish, forecastEnd > nowF { ticks.append(.init(label: clock(f), at: forecastEnd, kind: .finish)) }
         var hours: [RunLanesModel.Tick] = []
-        if var h = calendar.dateInterval(of: .hour, for: start)?.end {
-            let step: TimeInterval = span > 6 * 3600 ? 3 * 3600 : span > 3 * 3600 ? 2 * 3600 : 3600
+        // At most about five: whole hours, or whole days (named) for a run that spans days.
+        let stepHours = [1, 2, 3, 6, 12, 24, 48, 168].first { span / Double($0 * 3600) <= 5 } ?? 168
+        let unit: Calendar.Component = stepHours >= 24 ? .day : .hour
+        if var h = calendar.dateInterval(of: unit, for: start)?.end {
             while h < end {
-                hours.append(.init(label: clock(h), at: at(h)))
-                h = h.addingTimeInterval(step)
+                let label = stepHours >= 24 ? TimeFormat.weekdayShort(h, calendar: calendar, locale: locale) : clock(h)
+                hours.append(.init(label: label, at: at(h)))
+                h = calendar.date(byAdding: .hour, value: stepHours, to: h) ?? h.addingTimeInterval(Double(stepHours) * 3600)
             }
         }
         if hours.isEmpty { hours.append(.init(label: clock(start), at: 0)) }

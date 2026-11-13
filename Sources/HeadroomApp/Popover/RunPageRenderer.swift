@@ -275,7 +275,7 @@ enum RunPageRenderer {
             fy += factH
         }
         let labelRoom = w - (facts.isEmpty ? 0 : valueW + 8 + labelsW + 14)
-        RunCardRenderer.fit(h.label, F.sf(11.5, 500, tabular: true), t.muted, width: max(labelRoom, 60))
+        RunCardRenderer.fit(countsOnly(h.label), F.sf(11.5, 500, tabular: true), t.muted, width: max(labelRoom, 60))
             .draw(x: x, capCenter: y + numH + labelGap + labelH / 2, in: ctx)
         return height
     }
@@ -508,7 +508,7 @@ enum RunPageRenderer {
             right -= v.width + 14 + 10
         }
         let lx = x + num.width + 2 + unit.width + 9
-        RunCardRenderer.fit(hero.label, F.sf(11.5, 500, tabular: true), t.muted, width: right - lx).draw(x: lx, capCenter: mid + 1, in: ctx)
+        RunCardRenderer.fit(countsOnly(hero.label), F.sf(11.5, 500, tabular: true), t.muted, width: right - lx).draw(x: lx, capCenter: mid + 1, in: ctx)
         return h
     }
 
@@ -682,5 +682,10 @@ enum RunPageRenderer {
         case .finish: 2
         case .plain: 3
         }
+    }
+
+    /// "5 of 10 tasks": the hero's label without "· 3 running", which the status line already says.
+    static func countsOnly(_ label: String) -> String {
+        label.components(separatedBy: " · ").filter { !$0.hasSuffix(" running") }.joined(separator: " · ")
     }
 }
