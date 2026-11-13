@@ -91,13 +91,16 @@ public struct DevicePayload: Codable, Sendable, Hashable {
     /// it needs no schema change: nil (and absent from the JSON) when the Mac tracks none, and
     /// readers from before runs synced skip the key.
     public var runs: [RunSummaryPayload]?
+    /// When this Mac's user last touched it (keyboard, mouse or trackpad), sent only while a run
+    /// waits on input, so a phone can hold its alert while you're at the Mac. Optional, like `runs`.
+    public var activeAt: Date?
 
     public init(name: String, model: String?, appVersion: String, enabledProviders: [Provider], currentAccounts: [String: String],
                 sessionWarnAt: Double, planPriceOverrides: [String: Double], outages: [String: String], state: DevicePowerState,
-                syncSince: Date?, runs: [RunSummaryPayload]? = nil) {
+                syncSince: Date?, runs: [RunSummaryPayload]? = nil, activeAt: Date? = nil) {
         self.name = name; self.model = model; self.appVersion = appVersion; self.enabledProviders = enabledProviders
         self.currentAccounts = currentAccounts; self.sessionWarnAt = sessionWarnAt; self.planPriceOverrides = planPriceOverrides
-        self.outages = outages; self.state = state; self.syncSince = syncSince; self.runs = runs
+        self.outages = outages; self.state = state; self.syncSince = syncSince; self.runs = runs; self.activeAt = activeAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -114,6 +117,7 @@ public struct DevicePayload: Codable, Sendable, Hashable {
         state = c.lenient(.state, .awake)
         syncSince = c.lenient(.syncSince, nil)
         runs = c.contains(.runs) ? c.lenientArray(.runs) : nil
+        activeAt = c.lenient(.activeAt, nil)
     }
 
     /// The pacing policy this Mac draws with.

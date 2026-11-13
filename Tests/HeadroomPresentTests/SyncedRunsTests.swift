@@ -32,9 +32,17 @@ private let presenter: RunsPresenter = {
         for names in [true, false] {
             let phone = presenter.card(digest(r, names: names))
             #expect(phone.stateText == mac.stateText)
-            #expect(phone.headline == mac.headline)
-            #expect(phone.estimate == mac.estimate)
-            #expect(phone.figures == mac.figures)
+            // The Mac's rules: a plan's headline is its best guess (the estimate), rounded down and
+            // never 100% before it's done, with no "by tokens" line beside it; agents otherwise.
+            if r.hasDeclaredTasks {
+                let pct = Int((r.progress.estimate * 100 + 1e-9).rounded(.down))
+                #expect(phone.headline == "\(r.state == .done ? pct : min(pct, 99))%")
+            } else {
+                #expect(phone.headline == mac.headline)
+            }
+            #expect(phone.estimate == nil)
+            // Time left is worded as a range now; everything else in the line is the Mac's.
+            #expect(phone.figures.filter { !$0.hasSuffix(" left") } == mac.figures.filter { !$0.hasSuffix(" left") })
             #expect(phone.warning == mac.warning)
             #expect(phone.bar == mac.bar)
             #expect(phone.glyph == mac.glyph && phone.tone == mac.tone)
@@ -100,18 +108,138 @@ private let presenter: RunsPresenter = {
     @Test func aRunOnAQuietMacReadsLastSeen() {
         let d = digest(Demo.inputRun(now: now), names: true, lastSeen: now.addingTimeInterval(-2 * 3600))
         let c = presenter.card(d)
-        #expect(c.stateText == "Last seen 2h ago")
+        #expect(c.stateText == RunWords.macLastSeen("2h"))
+        #expect(c.stateText == "Mac last seen 2h ago")
         #expect(!c.needsInput)
         #expect(c.glyph == .stopped && c.tone == .quiet)
         #expect(!d.isLive)
+        #expect(c.question == nil && c.elapsed == nil)
     }
 
     @Test func alertsUseTheSameTitle() {
         let named = digest(Demo.inputRun(now: now), names: true)
-        #expect(presenter.needsInputAlert(named) == RunAlertCopy(title: "Database upgrade needs your input",
-                                                                  body: "An agent on MacBook Pro is waiting for your answer."))
+        #expect(presenter.needsInputAlert(named) == RunAlertCopy(title: "Database upgrade needs your input", body: "Answer it on MacBook Pro"))
         let unnamed = digest(Demo.failedRun(now: now), names: false)
         #expect(presenter.finishedAlert(unnamed).title == "Run on MacBook Pro failed")
         #expect(presenter.finishedAlert(unnamed).body == "50% done · must-haves 0 of 1 · 101K tokens")
+        #expect(presenter.stoppedAlert(digest(Demo.stoppedRun(now: now), names: true)).title == "Tidy the settings module stopped with work left")
+    }
+
+    // MARK: Second pass
+
+    @Test func aSyncedQuestionLeadsTheCardAndTheAlert() {
+        var d = digest(Demo.inputRun(now: now), names: true)
+        // Without the wording: where to answer.
+        #expect(presenter.card(d).question == RunQuestionModel(asker: "", text: "Answer it on MacBook Pro"))
+        d.question = RunDigest.Question(text: "May I drop the audit table?", options: ["Drop it", "Keep it"], asker: "Switch the queries over")
+        let q = presenter.card(d).question
+        #expect(q == RunQuestionModel(asker: "Switch the queries over is asking", text: "May I drop the audit table?", options: ["Drop it", "Keep it"]))
+        #expect(presenter.needsInputAlert(d).body == "May I drop the audit table?")
+        // Only while it needs you, and never from a quiet Mac.
+        d.lastSeen = now.addingTimeInterval(-3600)
+        #expect(presenter.card(d).question == nil)
+    }
+
+    @Test func theTaskMapCountsAndElapsedComeFromTheSync() {
+        var d = digest(Demo.declaredRun(now: now), names: false)
+        d.segments = [RunDigest.Segment(weight: 0.5, fill: 1, state: .done, importance: .critical),
+                      RunDigest.Segment(weight: 0.3, fill: 0.4, state: .running),
+                      RunDigest.Segment(weight: 0.2, fill: 0, state: .waiting, waitReason: .input)]
+        d.workingSeconds = 72 * 60
+        let c = presenter.card(d)
+        #expect(c.segments.map(\.tone) == [.neutral, .progress, .alert])
+        #expect(c.segments.map(\.critical) == [true, false, false])
+        #expect(c.counts == "5 of 10 tasks · 3 running")
+        #expect(c.elapsed == "1h 12m working")
+        // A plan read off the harness counts steps.
+        d.mirrored = true
+        #expect(presenter.card(d).counts == "5 of 10 steps · 3 running")
+        // Finished: how long it took.
+        let done = presenter.card(digest(Demo.finishedRun(now: now), names: false))
+        #expect(done.elapsed == "took 56m")
+        #expect(done.counts == "4 of 4 tasks")
+    }
+
+    @Test func theEstimateIsARangeOfClockTimesNotSecondsFromTheLastEvent() {
+        var d = digest(Demo.declaredRun(now: now), names: false)
+        d.etaSeconds = 26 * 60
+        // The finish the Mac synced, as time from now: no longer anchored to the last event.
+        d.finishAt = now.addingTimeInterval(26 * 60)
+        #expect(presenter.card(d).figures.contains("about 26m left"))
+        d.finishLow = now.addingTimeInterval(20 * 60); d.finishHigh = now.addingTimeInterval(35 * 60)
+        #expect(presenter.card(d).figures.contains("20–35m left"))
+        d.finishLow = now.addingTimeInterval(40 * 60); d.finishHigh = now.addingTimeInterval(90 * 60)
+        #expect(presenter.card(d).figures.contains("40m–2h left"))
+        // A finish that's passed says nothing.
+        d.finishLow = nil; d.finishHigh = nil; d.finishAt = now.addingTimeInterval(-60)
+        #expect(!presenter.card(d).figures.contains { $0.hasSuffix("left") })
+    }
+
+    @Test func theLimitTimelineRunsFromNowToTheFinish() throws {
+        var d = digest(Demo.declaredRun(now: now), names: false)
+        d.limit = TaskLimitOutlook(provider: .claude, pauseAt: now.addingTimeInterval(30 * 60), resumeAt: now.addingTimeInterval(80 * 60),
+                                   finishAt: now.addingTimeInterval(105 * 60), tokensNeeded: 1_100_000, roomTokens: 600_000, share: 0.62)
+        let t = try #require(presenter.card(d).timeline)
+        #expect(t.spans.map(\.kind) == [.working, .paused, .working])
+        #expect(t.ticks.map(\.label) == ["now", "window empty", "resets", "done"])
+        #expect(t.ticks.map(\.time) == ["8 AM", "8:30 AM", "9:20 AM", "~9:45 AM"])
+        #expect(abs(t.spans[0].end - 30.0 / 105) < 1e-9)
+        #expect(t.note == "Using 62% of what Claude is spending now · needs about 1.1M more tokens, the window has room for 600K")
+        // No pause in sight: no timeline.
+        d.limit?.pauseAt = nil
+        #expect(presenter.card(d).timeline == nil)
+    }
+
+    @Test func aFinishedRunGetsAReceipt() throws {
+        var d = digest(Demo.finishedRun(now: now), names: false)
+        #expect(presenter.card(d).receipt == nil)
+        d.receipt = RunDigest.Receipt(seconds: 102 * 60, tokensByModel: ["gpt-6-sol": 296_000],
+                                      time: TaskTimeSplit(working: 70 * 60, waitingInput: 22 * 60, waitingLimit: 10 * 60), optionalFailed: 1,
+                                      scopeChanges: 2, retries: 1)
+        d.cost = 4.1
+        d.counts = RunCounts(failed: 1, done: 4)
+        let r = try #require(presenter.card(d).receipt)
+        #expect(r.duration == "1h 42m")
+        #expect(r.tokens == "296K")
+        #expect(r.cost == "about $4.10")
+        #expect(r.tasks == "4 of 5" && r.tasksNote == "tasks · 1 optional failed")
+        #expect(r.footnote == "Plan changed 2 times after it started · 1 retry")
+        #expect(r.time.total == 102 * 60)
+    }
+
+    @Test func tappingACardListsEveryRowItsMacSynced() {
+        let d = digest(Demo.largeRun(now: now), names: true)
+        let closed = presenter.card(d)
+        #expect(closed.expandable && !closed.expanded)
+        #expect(closed.rows.filter { $0.kind == .task }.count == RunsPresenter.rowCap)
+        #expect(closed.rows.contains { if case .more = $0.kind { true } else { false } })
+        let open = presenter.page([d], expanded: [d.id]).live[0]
+        #expect(open.expanded)
+        #expect(open.rows.filter { $0.kind == .task }.count == d.rows?.count)
+        // A short plan has nothing more to show.
+        #expect(!presenter.card(digest(Demo.inputRun(now: now), names: true)).expandable)
+    }
+
+    @Test func theHeadlineIsTheEstimateAndNever100BeforeItsDone() {
+        var d = digest(Demo.declaredRun(now: now), names: false)
+        d.progress = TaskProgress(done: 0.4, inFlight: 0.2, estimate: 0.578)
+        #expect(presenter.card(d).headline == "57%")
+        #expect(presenter.shortFigure(d) == "57%")
+        d.progress = TaskProgress(done: 0.98, inFlight: 0.02, estimate: 1)
+        #expect(presenter.card(d).headline == "99%")
+        d.state = .done
+        #expect(presenter.card(d).headline == "100%")
+        // A plan read off the harness reads the same way.
+        var mirrored = digest(Demo.observedRun(now: now), names: false)
+        mirrored.mirrored = true
+        mirrored.progress = TaskProgress(done: 0.5, inFlight: 0, estimate: 0.5)
+        #expect(presenter.card(mirrored).headline == "50%" && presenter.card(mirrored).declared)
+    }
+
+    @Test func anAbandonedRunSaysSo() {
+        var d = digest(Demo.stoppedRun(now: now), names: true)
+        d.abandoned = true
+        #expect(presenter.card(d).stateText == RunWords.abandoned)
+        #expect(!d.stoppedWithWorkLeft)
     }
 }

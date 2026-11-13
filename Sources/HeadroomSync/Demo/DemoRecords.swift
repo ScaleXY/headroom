@@ -114,7 +114,7 @@ public enum DemoRecords {
     public static func runs(now: Date, names: Bool) -> [RunSummaryPayload]? {
         let runs = names ? [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.finishedRun(now: now)]
                          : [Demo.observedRun(now: now), Demo.failedRun(now: now)]
-        return RunSummaryBuilder.summaries(runs, includeNames: names, now: now)
+        return RunSummaryBuilder.summaries(runs.map { detailed($0, now: now) }, includeNames: names, includeQuestion: names, now: now)
     }
 
     static func add(_ out: inout SyncRecords, _ input: PaceInput, key: String, email: String, device: String, now: Date, activity: Bool = true) {

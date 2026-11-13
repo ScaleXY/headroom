@@ -49,10 +49,16 @@ final class AppServices {
     private let liveActivities = LiveActivityController()
     private let runActivities = RunActivityController()
     private let relay = WatchRelay()
-    private var foreground = true
+    /// Set from the launch: a silent push or a background refresh launches the app in the
+    /// background, where it must not start or swap a Live Activity (or the current one would end).
+    /// A foreground launch is `.inactive` until the scene becomes active.
+    private var foreground: Bool
     private var askedForNotifications = false
 
-    private init(model: MobileModel) { self.model = model }
+    private init(model: MobileModel) {
+        self.model = model
+        foreground = UIApplication.shared.applicationState != .background
+    }
 
     static func start() -> AppServices {
         if let shared { return shared }

@@ -30,11 +30,12 @@ struct MobileSettingsView: View {
             }
             Section {
                 Toggle("When a run needs your input", isOn: $prefs.notifyRunNeedsInput)
+                Toggle("When a run stops with work left", isOn: $prefs.notifyRunStopped)
                 Toggle("When a run finishes", isOn: $prefs.notifyRunFinished)
             } header: {
                 Text("Agent runs")
             } footer: {
-                Text("These arrive when your Mac syncs, usually within a minute or two. Each run alerts once per question, and once when it ends.")
+                Text("These arrive when your Mac syncs, usually within a minute or two. Each run alerts once per question and once when it stops or ends. While you're using the Mac, a question waits two minutes here, so you only hear about it once.")
             }
             if model.setTracking != nil {
                 Section {
