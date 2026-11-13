@@ -14,6 +14,14 @@ public enum TaskLimits {
         return out
     }
 
+    /// One line telling an agent how much room `provider`'s 5-hour window has left, e.g.
+    /// "5-hour window 38% left, resets 15:00"; nil when unknown. The CLI appends it to its echo.
+    /// Contract stub: the limits workstream implements it.
+    public static func roomLine(_ provider: Provider, providers snapshots: [ProviderSnapshot], now: Date,
+                                calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        nil
+    }
+
     /// `claude`, `claude-code`, `anthropic` and `codex`, `openai`; nil for anything else.
     public static func provider(named name: String?) -> Provider? {
         guard let n = name?.lowercased(), !n.isEmpty else { return nil }

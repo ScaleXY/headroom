@@ -135,7 +135,107 @@ public enum TaskAttemptKind: String, LenientStringEnum, CaseIterable {
 
 public enum TaskAttemptOutcome: String, LenientStringEnum, CaseIterable {
     case ok, error
+    /// Cut short: the session ended, the user interrupted, or it went silent for too long. Never
+    /// counts as done.
+    case interrupted
     public static let fallback = TaskAttemptOutcome.ok
+}
+
+/// A question a run is waiting on a person to answer: the harness's question tool, a permission
+/// prompt, a plan waiting for approval, or an agent's `task wait --for input --note`.
+public struct TaskQuestion: Codable, Sendable, Hashable {
+    /// The question as asked, trimmed to `TaskQuestion.maxLength`.
+    public var text: String
+    /// The answers offered, when the harness offered some.
+    public var options: [String]
+    /// The task waiting on it; nil when the orchestrator itself asked.
+    public var task: String?
+    public var askedAt: Date
+
+    public static let maxLength = 400
+
+    public init(text: String, options: [String] = [], task: String? = nil, askedAt: Date) {
+        self.text = text; self.options = options; self.task = task; self.askedAt = askedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text, options, task
+        case askedAt = "asked_at"
+    }
+}
+
+/// Where a run's wall-clock time went, in seconds, from its first event to its last (or now while live).
+public struct TaskTimeSplit: Codable, Sendable, Hashable {
+    /// Something was happening: agent or session activity with no long gap.
+    public var working: Double
+    /// Waiting on a person (a question, a permission prompt, an input wait).
+    public var waitingInput: Double
+    /// Waiting on a usage limit.
+    public var waitingLimit: Double
+    /// Nothing happening and nothing being waited on.
+    public var idle: Double
+
+    public init(working: Double = 0, waitingInput: Double = 0, waitingLimit: Double = 0, idle: Double = 0) {
+        self.working = working; self.waitingInput = waitingInput; self.waitingLimit = waitingLimit; self.idle = idle
+    }
+
+    public static let zero = TaskTimeSplit()
+    public var total: Double { working + waitingInput + waitingLimit + idle }
+
+    enum CodingKeys: String, CodingKey {
+        case working, idle
+        case waitingInput = "waiting_input"
+        case waitingLimit = "waiting_limit"
+    }
+}
+
+/// How a live run sits against the usage limit it spends. Filled by `TaskLimits.adjust`.
+public struct TaskLimitOutlook: Codable, Sendable, Hashable {
+    public var provider: Provider
+    /// When the 5-hour window is forecast to run out while the run still has work, if before it finishes.
+    public var pauseAt: Date?
+    /// When the window resets, if the run is forecast to pause.
+    public var resumeAt: Date?
+    /// Forecast finish, counting the pause.
+    public var finishAt: Date?
+    /// Tokens the run is forecast to still need.
+    public var tokensNeeded: Int64?
+    /// Tokens the window has room for at the current pace.
+    public var roomTokens: Int64?
+    /// The run's share (0…1) of what this provider is spending right now.
+    public var share: Double?
+
+    public init(provider: Provider, pauseAt: Date? = nil, resumeAt: Date? = nil, finishAt: Date? = nil, tokensNeeded: Int64? = nil,
+                roomTokens: Int64? = nil, share: Double? = nil) {
+        self.provider = provider; self.pauseAt = pauseAt; self.resumeAt = resumeAt; self.finishAt = finishAt
+        self.tokensNeeded = tokensNeeded; self.roomTokens = roomTokens; self.share = share
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider, share
+        case pauseAt = "pause_at"
+        case resumeAt = "resume_at"
+        case finishAt = "finish_at"
+        case tokensNeeded = "tokens_needed"
+        case roomTokens = "room_tokens"
+    }
+}
+
+/// One entry of the plan list a harness keeps for a session (Claude Code's todo and task tools,
+/// Codex's plan tool), as the observer mirrors it. See `TaskEvent.Op.planMirror`.
+public struct TaskPlanItem: Codable, Sendable, Hashable {
+    public enum Status: String, LenientStringEnum, CaseIterable {
+        case pending, inProgress = "in_progress", completed, cancelled
+        public static let fallback = Status.pending
+    }
+
+    /// Stable across updates of the same list: the harness's own id when it has one, else the
+    /// observer's (position plus title).
+    public var id: String
+    public var title: String
+    public var status: Status
+
+    public init(id: String, title: String, status: Status) { self.id = id; self.title = title; self.status = status }
 }
 
 /// Three shares of a node, each 0…1: finished work, work under way, and the best guess of how

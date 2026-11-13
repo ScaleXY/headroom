@@ -8,11 +8,11 @@ import Foundation
 ///
 /// | `op` | fields |
 /// | :- | :- |
-/// | `run.meta` | `title`, `project`, `harness` (each optional) |
+/// | `run.meta` | `title`, `project`, `harness`, `host`, `cwd` (each optional; `host` and `cwd` stay on this Mac, never synced) |
 /// | `task.add` | `task`, `title`, `effort` (number), `importance`, `steps` (total); re-adding updates the fields given |
 /// | `task.start` | `task` |
 /// | `task.progress` | `task`, `step` (done), `steps` (total), `fraction` (0…1), `note` |
-/// | `task.wait` | `task` or `attempt` (key), or neither for the run itself; `for` (`input`, `limit`, `dependency`), `note` |
+/// | `task.wait` | `task` or `attempt` (key), or neither for the run itself; `for` (`input`, `limit`, `dependency`), `note`, `options` (answers offered) |
 /// | `task.done` | `task`, `evidence` |
 /// | `task.fail` | `task`, `reason` |
 /// | `task.skip`, `task.cancel` | `task`, `reason` |
@@ -21,6 +21,9 @@ import Foundation
 /// | `attempt.end` | `attempt`, `outcome` (`ok`, `error`); ignored for an attempt never seen |
 /// | `run.stop` | `blocked` (true when an enforcing Stop hook sent the agent back, which leaves the run running) |
 /// | `run.resume`, `run.end` | none |
+/// | `plan.mirror` | `items` (`[{id, title, status}]`, the whole list each time), `tool` (which plan tool: `todo`, `tasks`, `codex-plan`, `desktop-plan`) |
+/// | `run.hide` | `hidden` (default true; false shows it again) |
+/// | `run.abandon` | `reason` |
 ///
 /// ```
 /// {"op":"task.add","run":"7f3a","src":"agent","task":"api/tests","title":"API tests","effort":8,"importance":"critical","ts":"2026-11-12T10:00:00.000Z","v":1}
@@ -40,12 +43,14 @@ public struct TaskEvent: Sendable, Hashable {
     public init(at: Date, run: String, source: TaskSource, op: Op) { self.at = at; self.run = run; self.source = source; self.op = op }
 
     public enum Op: Sendable, Hashable {
-        case meta(title: String?, project: String?, harness: String?)
+        /// `host` is the app the session runs in (a bundle id such as `com.googlecode.iterm2`, or
+        /// `$TERM_PROGRAM`); `cwd` its working folder. Both stay on this Mac.
+        case meta(title: String?, project: String?, harness: String?, host: String? = nil, cwd: String? = nil)
         case add(TaskSpec)
         case start(task: String)
         case progress(task: String, step: Int?, total: Int?, fraction: Double?, note: String?)
         /// Neither `task` nor `attempt`: the run itself waits (the orchestrator is asking a person).
-        case wait(task: String?, attempt: String?, reason: TaskWaitReason, note: String?)
+        case wait(task: String?, attempt: String?, reason: TaskWaitReason, note: String?, options: [String]? = nil)
         case done(task: String, evidence: String?)
         case fail(task: String, reason: String?)
         case skip(task: String, reason: String?)
@@ -56,6 +61,13 @@ public struct TaskEvent: Sendable, Hashable {
         case stop(blocked: Bool)
         case resume
         case end
+        /// The harness's own plan list for the session, mirrored by the observer (source `harness`).
+        /// Gives a run a plan when the agent declared none; ignored once anything is declared.
+        case planMirror(items: [TaskPlanItem], tool: String?)
+        /// A person hid the run (or showed it again) from the app.
+        case hide(Bool)
+        /// A person gave up on the run from the app: open tasks are cancelled and it ends.
+        case abandon(reason: String?)
 
         public var name: String {
             switch self {
@@ -74,6 +86,9 @@ public struct TaskEvent: Sendable, Hashable {
             case .stop: "run.stop"
             case .resume: "run.resume"
             case .end: "run.end"
+            case .planMirror: "plan.mirror"
+            case .hide: "run.hide"
+            case .abandon: "run.abandon"
             }
         }
 
@@ -82,7 +97,7 @@ public struct TaskEvent: Sendable, Hashable {
             switch self {
             case .add(let s): s.id
             case .start(let t), .progress(let t, _, _, _, _), .done(let t, _), .fail(let t, _), .skip(let t, _), .cancel(let t, _): t
-            case .wait(let t, _, _, _): t
+            case .wait(let t, _, _, _, _): t
             default: nil
             }
         }
@@ -128,8 +143,8 @@ public struct TaskEvent: Sendable, Hashable {
 
 extension TaskEvent: Codable {
     enum Key: String, CodingKey {
-        case v, ts, run, src, op, task, title, project, harness, effort, importance, steps, step, fraction, note
-        case waitFor = "for", evidence, reason, attempt, kind, model, provider, tag, parent, at, tokens, outcome, blocked
+        case v, ts, run, src, op, task, title, project, harness, host, cwd, effort, importance, steps, step, fraction, note, options
+        case waitFor = "for", evidence, reason, attempt, kind, model, provider, tag, parent, at, tokens, outcome, blocked, items, tool, hidden
         case agentType = "agent_type"
     }
 
@@ -145,7 +160,7 @@ extension TaskEvent: Codable {
         func attempt() throws -> String { try c.decode(String.self, forKey: .attempt) }
         let name = try c.decode(String.self, forKey: .op)
         switch name {
-        case "run.meta": op = .meta(title: try s(.title), project: try s(.project), harness: try s(.harness))
+        case "run.meta": op = .meta(title: try s(.title), project: try s(.project), harness: try s(.harness), host: try s(.host), cwd: try s(.cwd))
         case "task.add":
             op = .add(TaskSpec(id: try task(), title: try s(.title), effort: try c.decodeIfPresent(Double.self, forKey: .effort),
                                importance: try c.decodeIfPresent(TaskImportance.self, forKey: .importance), steps: try c.decodeIfPresent(Int.self, forKey: .steps)))
@@ -154,7 +169,8 @@ extension TaskEvent: Codable {
             op = .progress(task: try task(), step: try c.decodeIfPresent(Int.self, forKey: .step), total: try c.decodeIfPresent(Int.self, forKey: .steps),
                            fraction: try c.decodeIfPresent(Double.self, forKey: .fraction), note: try s(.note))
         case "task.wait":
-            op = .wait(task: try s(.task), attempt: try s(.attempt), reason: try c.decodeIfPresent(TaskWaitReason.self, forKey: .waitFor) ?? .dependency, note: try s(.note))
+            op = .wait(task: try s(.task), attempt: try s(.attempt), reason: try c.decodeIfPresent(TaskWaitReason.self, forKey: .waitFor) ?? .dependency, note: try s(.note),
+                       options: try c.decodeIfPresent([String].self, forKey: .options))
         case "task.done": op = .done(task: try task(), evidence: try s(.evidence))
         case "task.fail": op = .fail(task: try task(), reason: try s(.reason))
         case "task.skip": op = .skip(task: try task(), reason: try s(.reason))
@@ -169,6 +185,9 @@ extension TaskEvent: Codable {
         case "run.stop": op = .stop(blocked: try c.decodeIfPresent(Bool.self, forKey: .blocked) ?? false)
         case "run.resume": op = .resume
         case "run.end": op = .end
+        case "plan.mirror": op = .planMirror(items: try c.decodeIfPresent([TaskPlanItem].self, forKey: .items) ?? [], tool: try s(.tool))
+        case "run.hide": op = .hide(try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? true)
+        case "run.abandon": op = .abandon(reason: try s(.reason))
         default: throw UnknownOp(op: name)
         }
     }
@@ -181,10 +200,12 @@ extension TaskEvent: Codable {
         try c.encode(source, forKey: .src)
         try c.encode(op.name, forKey: .op)
         switch op {
-        case .meta(let title, let project, let harness):
+        case .meta(let title, let project, let harness, let host, let cwd):
             try c.encodeIfPresent(title, forKey: .title)
             try c.encodeIfPresent(project, forKey: .project)
             try c.encodeIfPresent(harness, forKey: .harness)
+            try c.encodeIfPresent(host, forKey: .host)
+            try c.encodeIfPresent(cwd, forKey: .cwd)
         case .add(let spec):
             try c.encode(spec.id, forKey: .task)
             try c.encodeIfPresent(spec.title, forKey: .title)
@@ -199,11 +220,12 @@ extension TaskEvent: Codable {
             try c.encodeIfPresent(total, forKey: .steps)
             try c.encodeIfPresent(fraction, forKey: .fraction)
             try c.encodeIfPresent(note, forKey: .note)
-        case .wait(let t, let a, let reason, let note):
+        case .wait(let t, let a, let reason, let note, let options):
             try c.encodeIfPresent(t, forKey: .task)
             try c.encodeIfPresent(a, forKey: .attempt)
             try c.encode(reason, forKey: .waitFor)
             try c.encodeIfPresent(note, forKey: .note)
+            if let options, !options.isEmpty { try c.encode(options, forKey: .options) }
         case .done(let t, let evidence):
             try c.encode(t, forKey: .task)
             try c.encodeIfPresent(evidence, forKey: .evidence)
@@ -230,6 +252,13 @@ extension TaskEvent: Codable {
             if blocked { try c.encode(true, forKey: .blocked) }
         case .resume, .end:
             break
+        case .planMirror(let items, let tool):
+            try c.encode(items, forKey: .items)
+            try c.encodeIfPresent(tool, forKey: .tool)
+        case .hide(let hidden):
+            try c.encode(hidden, forKey: .hidden)
+        case .abandon(let reason):
+            try c.encodeIfPresent(reason, forKey: .reason)
         }
     }
 }

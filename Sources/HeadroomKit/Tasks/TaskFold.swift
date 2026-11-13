@@ -128,7 +128,8 @@ struct RunBuilder {
         startedAt = min(startedAt, e.at)
         if e.source == .agent || e.source == .user, e.op.task != nil { workResumed(at: e.at) }
         switch e.op {
-        case .meta(let t, let p, let h):
+        case .meta(let t, let p, let h, _, _):
+            // Contract: `host` and `cwd` go on the run (engine workstream).
             if let t, !t.isEmpty { title = t }
             if let p, !p.isEmpty { project = p }
             if let h, !h.isEmpty { harness = h }
@@ -162,7 +163,7 @@ struct RunBuilder {
                 r.startedAt = r.startedAt ?? e.at
             }
             firstStart = firstStart ?? e.at
-        case .wait(let t, let key, let reason, let note):
+        case .wait(let t, let key, let reason, let note, _):
             // An unknown agent asking for input still means the run needs a person.
             guard let target = t ?? key.flatMap({ attempts[$0]?.task }).flatMap({ $0.isEmpty ? nil : $0 }) else {
                 runWait = (reason, e.at)
@@ -212,6 +213,9 @@ struct RunBuilder {
             runWait = nil
             // Nothing outlives the session: close what is still open.
             for (k, a) in attempts where a.attempt.isActive { attempts[k]!.attempt.endedAt = e.at }
+        case .planMirror, .hide, .abandon:
+            // Contract only: the engine workstream implements these.
+            break
         }
     }
 

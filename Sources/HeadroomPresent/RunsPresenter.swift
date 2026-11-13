@@ -15,6 +15,97 @@ public enum RunGlyph: Sendable, Hashable {
     case more
 }
 
+/// One block of a run's task map: a counted leaf, as wide as its share of the run. Drawn in a row,
+/// they replace the single bar, so a reader sees closed tasks, part-way tasks and untouched ones.
+public struct RunSegment: Sendable, Hashable {
+    /// The leaf's share of the run (the widths sum to 1 across a card's segments).
+    public var weight: Double
+    /// How far along the leaf is, 0…1 (1 when closed done).
+    public var fill: Double
+    public var tone: RunTone
+    /// A must-have: drawn with a tick beneath it.
+    public var critical: Bool
+    public var title: String?
+
+    public init(weight: Double, fill: Double, tone: RunTone, critical: Bool = false, title: String? = nil) {
+        self.weight = weight; self.fill = fill; self.tone = tone; self.critical = critical; self.title = title
+    }
+}
+
+/// What a run is waiting on a person to answer, shown at the top of its card.
+public struct RunQuestionModel: Sendable, Hashable {
+    /// "Switch the queries over is asking", or "The agent is asking".
+    public var asker: String
+    public var text: String
+    public var options: [String]
+
+    public init(asker: String, text: String, options: [String] = []) { self.asker = asker; self.text = text; self.options = options }
+}
+
+/// A live run against its provider's 5-hour window: working, paused at the limit, working again.
+public struct RunTimelineModel: Sendable, Hashable {
+    public enum Kind: Sendable, Hashable { case working, paused }
+    /// Spans along the track, as fractions 0…1 of its width.
+    public struct Span: Sendable, Hashable {
+        public var kind: Kind
+        public var start: Double
+        public var end: Double
+        public init(kind: Kind, start: Double, end: Double) { self.kind = kind; self.start = start; self.end = end }
+    }
+    /// Labelled ticks: "now 1:40", "window empty 2:10", "resets 3:00", "done ~3:25".
+    public struct Tick: Sendable, Hashable {
+        public var label: String
+        public var time: String
+        public var at: Double
+        public var strong: Bool
+        public init(label: String, time: String, at: Double, strong: Bool = false) { self.label = label; self.time = time; self.at = at; self.strong = strong }
+    }
+    public var spans: [Span]
+    public var ticks: [Tick]
+    /// "Using 62% of what Claude is spending now · needs about 1.1M more tokens, the window has room for 0.6M".
+    public var note: String?
+
+    public init(spans: [Span], ticks: [Tick], note: String? = nil) { self.spans = spans; self.ticks = ticks; self.note = note }
+}
+
+/// A finished run's receipt: how long, how much, how it went, and where the time went.
+public struct RunReceiptModel: Sendable, Hashable {
+    /// "1h 42m"
+    public var duration: String
+    /// "296K"
+    public var tokens: String
+    /// "about $4.10", when the models are priced.
+    public var cost: String?
+    /// "4 of 5", and "tasks · 1 optional failed".
+    public var tasks: String
+    public var tasksNote: String
+    /// Working, waiting on you, waiting on a limit, idle: seconds each, for a split bar.
+    public var time: TaskTimeSplit
+    /// "Plan grew by 2 tasks after it started · 1 retry".
+    public var footnote: String?
+
+    public init(duration: String, tokens: String, cost: String? = nil, tasks: String, tasksNote: String, time: TaskTimeSplit, footnote: String? = nil) {
+        self.duration = duration; self.tokens = tokens; self.cost = cost; self.tasks = tasks; self.tasksNote = tasksNote; self.time = time; self.footnote = footnote
+    }
+}
+
+/// What a person can do with a run from its card. The Mac acts on these; the phone shows none.
+public struct RunActionSet: Sendable, Hashable {
+    /// Bring the app hosting the session forward (the run knows its host or folder).
+    public var openSession: Bool
+    /// Copy a command that resumes the session in a terminal.
+    public var copyResume: Bool
+    public var hide: Bool
+    /// Give up on a run that isn't finished.
+    public var abandon: Bool
+
+    public init(openSession: Bool = false, copyResume: Bool = false, hide: Bool = false, abandon: Bool = false) {
+        self.openSession = openSession; self.copyResume = copyResume; self.hide = hide; self.abandon = abandon
+    }
+    public static let none = RunActionSet()
+    public var any: Bool { openSession || copyResume || hide || abandon }
+}
+
 /// One line under a run card: a task, or a summary standing in for several.
 public struct RunRowModel: Sendable, Hashable, Identifiable {
     public enum Kind: Sendable, Hashable {
@@ -46,15 +137,29 @@ public struct RunRowModel: Sendable, Hashable, Identifiable {
     public var detailTone: RunTone
     /// Doesn't count toward the run (skipped, cancelled, a failed optional, a helper agent).
     public var quiet: Bool
+    /// The row opened: labelled lines ("Evidence", "Failed because", "Took") shown beneath it.
+    /// Nil while closed; empty when there's nothing more to say.
+    public var details: [RunDetailLine]?
+    /// Has more to show when opened (a full note, evidence, failure, time, agents).
+    public var opens: Bool
 
     public init(id: String, kind: Kind = .task, glyph: RunGlyph, tone: RunTone, depth: Int = 0, title: String, marker: String? = nil,
-                steps: String? = nil, tokens: String? = nil, detail: String? = nil, detailTone: RunTone = .quiet, quiet: Bool = false) {
+                steps: String? = nil, tokens: String? = nil, detail: String? = nil, detailTone: RunTone = .quiet, quiet: Bool = false,
+                details: [RunDetailLine]? = nil, opens: Bool = false) {
         self.id = id; self.kind = kind; self.glyph = glyph; self.tone = tone; self.depth = depth; self.title = title; self.marker = marker
         self.steps = steps; self.tokens = tokens; self.detail = detail; self.detailTone = detailTone; self.quiet = quiet
+        self.details = details; self.opens = opens
     }
 
     /// The finished summary row: clicking it shows or hides the finished rows.
     public var toggles: Bool { if case .finished = kind { true } else { false } }
+}
+
+/// A labelled line in an opened row.
+public struct RunDetailLine: Sendable, Hashable {
+    public var label: String
+    public var value: String
+    public init(label: String, value: String) { self.label = label; self.value = value }
 }
 
 public struct RunCardModel: Sendable, Hashable, Identifiable {
@@ -85,14 +190,31 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     /// Has finished rows to show or hide.
     public var expandable: Bool
     public var expanded: Bool
+    /// The task map that replaces `bar` when there are counted leaves to draw.
+    public var segments: [RunSegment]
+    /// "5 of 11 tasks · 3 running", beside the percent.
+    public var counts: String?
+    /// "1h 12m working" (live) or how long it took (finished).
+    public var elapsed: String?
+    /// What it's asking, while it needs you.
+    public var question: RunQuestionModel?
+    /// Against the provider's window, while live and there's a forecast.
+    public var timeline: RunTimelineModel?
+    /// Finished runs only.
+    public var receipt: RunReceiptModel?
+    public var actions: RunActionSet
 
     public init(id: String, title: String, subtitle: String, stateText: String, glyph: RunGlyph, tone: RunTone, live: Bool, declared: Bool,
                 needsInput: Bool = false, provider: Provider? = nil, bar: TaskProgress? = nil, headline: String, estimate: String? = nil,
-                figures: [String] = [], warning: String? = nil, rows: [RunRowModel] = [], expandable: Bool = false, expanded: Bool = false) {
+                figures: [String] = [], warning: String? = nil, rows: [RunRowModel] = [], expandable: Bool = false, expanded: Bool = false,
+                segments: [RunSegment] = [], counts: String? = nil, elapsed: String? = nil, question: RunQuestionModel? = nil,
+                timeline: RunTimelineModel? = nil, receipt: RunReceiptModel? = nil, actions: RunActionSet = .none) {
         self.id = id; self.title = title; self.subtitle = subtitle; self.stateText = stateText; self.glyph = glyph; self.tone = tone
         self.live = live; self.declared = declared; self.needsInput = needsInput; self.provider = provider; self.bar = bar
         self.headline = headline; self.estimate = estimate; self.figures = figures; self.warning = warning; self.rows = rows
         self.expandable = expandable; self.expanded = expanded
+        self.segments = segments; self.counts = counts; self.elapsed = elapsed; self.question = question
+        self.timeline = timeline; self.receipt = receipt; self.actions = actions
     }
 }
 
@@ -121,9 +243,16 @@ public struct RunsMenuBarModel: Sendable, Hashable {
     public var text: String
     public var needsInput: Bool
     public var spoken: String
+    /// Live runs in all, so "46% · 3" can say the figure is one of several.
+    public var liveCount: Int
+    /// Runs waiting on you ("2 need you").
+    public var needsInputCount: Int
+    /// The run shown has gone quiet: show that instead of a stale percent.
+    public var quiet: Bool
 
-    public init(fraction: Double, text: String, needsInput: Bool, spoken: String) {
+    public init(fraction: Double, text: String, needsInput: Bool, spoken: String, liveCount: Int = 1, needsInputCount: Int = 0, quiet: Bool = false) {
         self.fraction = fraction; self.text = text; self.needsInput = needsInput; self.spoken = spoken
+        self.liveCount = liveCount; self.needsInputCount = needsInputCount; self.quiet = quiet
     }
 }
 

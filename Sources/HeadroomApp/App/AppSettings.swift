@@ -188,6 +188,13 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "sync.taskNames"); changed() }
     }
 
+    /// Also sync the wording of a question a run is waiting on, so the phone can say what's being
+    /// asked. Off by default; only meaningful with task names on.
+    var syncQuestionText: Bool {
+        get { defaults.bool(forKey: "sync.questionText") }
+        set { defaults.set(newValue, forKey: "sync.questionText"); changed() }
+    }
+
     /// When this Mac first turned sync on (cleared by "Remove from iCloud").
     var syncSince: Date? {
         get { defaults.object(forKey: "sync.since") as? Date }

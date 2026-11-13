@@ -154,7 +154,7 @@ extension Array where Element == TaskEvent {
         let ev = h.events("s1")
         #expect(h.runs() == ["s1"])
         #expect(ev.ops("run.meta").count == 1)
-        if case .meta(_, let project, let harness) = ev.ops("run.meta")[0].op { #expect(project == "demo" && harness == "claude-code") }
+        if case .meta(_, let project, let harness, _, _) = ev.ops("run.meta")[0].op { #expect(project == "demo" && harness == "claude-code") }
         #expect(ev.attempt("session:s1")?.kind == .session)
         let a = try #require(ev.attempt("agent:a1"))
         #expect(a.parentKey == "session:s1" && a.title == "Survey the API" && a.model == "claude-sonnet-5-5" && a.provider == "claude")
@@ -415,7 +415,7 @@ extension Array where Element == TaskEvent {
         #expect(ev.attempt("session:s11") != nil && ev.ops("run.meta").count == 1 && ev.ops("run.stop").count == 1)
         let cx = h.events("cx2")
         #expect(cx.attempt("session:cx2")?.provider == "codex" && cx.ops("run.stop").count == 1)
-        if case .meta(_, _, let harness) = cx.ops("run.meta").first?.op { #expect(harness == "codex") }
+        if case .meta(_, _, let harness, _, _) = cx.ops("run.meta").first?.op { #expect(harness == "codex") }
     }
 
     @Test func cursorsSurviveARestartWithoutRewriting() async throws {
