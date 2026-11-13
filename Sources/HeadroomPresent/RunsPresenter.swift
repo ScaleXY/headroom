@@ -518,6 +518,12 @@ public struct RunsPresenter: Sendable {
         } else if let foot = receipt(r).footnote {
             secondary.append(foot)
         }
+        // Failures worked around another way: said plainly, not as failures.
+        let replaced = r.nodes.filter { $0.leaf && $0.replacedBy != nil }
+        if let first = replaced.first {
+            let next = Self.title(of: first.replacedBy!, in: r)
+            secondary.insert(replaced.count == 1 ? "\(first.title) gave way to \(next)" : "\(replaced.count) approaches gave way to others", at: 0)
+        }
         let s = secondary.joined(separator: " · ")
         return RunVerdictModel(figure: figure, primary: primary, secondary: s.isEmpty ? nil : s.prefix(1).uppercased() + s.dropFirst())
     }
@@ -740,7 +746,10 @@ public struct RunsPresenter: Sendable {
         let leaves = r.nodes.filter { $0.leaf && ($0.declared || !r.hasDeclaredTasks || (r.mirrored && $0.counted)) }
         let earlier = r.hasDeclaredTasks ? 0 : (r.finishedEarlier ?? 0)
         var done = earlier, failed = 0, optionalFailed = 0, cancelled = 0, skipped = 0, open = 0
+        var replaced = 0
         for n in leaves {
+            // Worked around: neither done nor failed, and out of the total.
+            if n.replacedBy != nil { replaced += 1; continue }
             switch n.state {
             case .done: done += 1
             case .failed, .partial: if n.importance == .optional { optionalFailed += 1 } else { failed += 1 }
@@ -749,9 +758,10 @@ public struct RunsPresenter: Sendable {
             case .planned, .running, .waiting, .parked: open += 1
             }
         }
-        let total = leaves.count + earlier
+        let total = leaves.count + earlier - replaced
         let noun = !r.hasDeclaredTasks ? (total == 1 ? "agent" : "agents") : r.mirrored ? (total == 1 ? "step" : "steps") : (total == 1 ? "task" : "tasks")
         var parts = [noun]
+        if replaced > 0 { parts.append("\(replaced) replaced") }
         if failed > 0 { parts.append("\(failed) failed") }
         if optionalFailed > 0 { parts.append("\(optionalFailed) optional failed") }
         if cancelled > 0 { parts.append("\(cancelled) cancelled") }
@@ -856,10 +866,10 @@ public struct RunsPresenter: Sendable {
         var steps: String?
         if let s = n.steps, n.leaf { steps = "\(s.done)/\(s.total)" }
         else if !rolled.isEmpty { steps = "\(rolled.filter(\.state.isTerminal).count)/\(rolled.count)" }
-        var (detail, detailTone) = note(n, limitWarning: run.warning)
+        var (detail, detailTone) = note(n, limitWarning: run.warning, run: run)
         // A deeper task that needs looking at speaks for the row it's rolled into.
         if let worst = rolled.min(by: { $0.attention < $1.attention }), worst.attention < n.attention, worst.attention < .running {
-            let (d, t) = note(worst, limitWarning: run.warning)
+            let (d, t) = note(worst, limitWarning: run.warning, run: run)
             detail = worst.title + (d.map { ": " + $0 } ?? "")
             detailTone = t
         }
@@ -871,7 +881,7 @@ public struct RunsPresenter: Sendable {
         if unconfirmed { extra.append("unconfirmed") }
         if !extra.isEmpty { detail = ([detail].compactMap { $0 } + extra).joined(separator: " · ") }
         let quiet = !n.counted || n.state == .skipped || n.state == .cancelled
-        let lines = details(n, unconfirmed: unconfirmed)
+        let lines = details(n, unconfirmed: unconfirmed, run: run)
         return RunRowModel(id: n.id, glyph: glyph, tone: quiet && tone != .alert ? .quiet : tone, depth: depth, title: n.title,
                            marker: n.importance == .normal ? nil : n.importance.rawValue, steps: steps,
                            tokens: n.tokens > 0 ? NumberFormat.tokens(n.tokens) : nil, detail: detail, detailTone: detailTone, quiet: quiet,
@@ -881,13 +891,14 @@ public struct RunsPresenter: Sendable {
     /// What an opened row shows, in full: the question or wait, evidence, why it failed or was
     /// dropped, its note, how long it took and with how many agents, its tokens. Empty when
     /// there's nothing beyond the row itself (tokens alone are already on the row).
-    func details(_ n: TaskNode, unconfirmed: Bool) -> [RunDetailLine] {
+    func details(_ n: TaskNode, unconfirmed: Bool, run: TaskRun? = nil) -> [RunDetailLine] {
         var out: [RunDetailLine] = []
         func add(_ label: String, _ value: String?) {
             if let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { out.append(RunDetailLine(label: label, value: v)) }
         }
         if n.state == .waiting { add(n.waitReason == .input ? "Asking" : "Waiting", n.waitNote) }
         add("Evidence", n.evidence)
+        if let next = n.replacedBy { add("Replaced by", Self.title(of: next, in: run)) }
         switch n.state {
         case .failed, .partial: add("Failed because", n.failure)
         case .cancelled, .skipped: add("Reason", n.failure)
@@ -909,7 +920,9 @@ public struct RunsPresenter: Sendable {
 
     /// The note that matters for the node's state, and its tone.
     /// `limitWarning` is the run's warning, which names the limit.
-    func note(_ n: TaskNode, limitWarning: String? = nil) -> (String?, RunTone) {
+    func note(_ n: TaskNode, limitWarning: String? = nil, run: TaskRun? = nil) -> (String?, RunTone) {
+        // An approach that failed and was worked around: what took over, quietly.
+        if let next = n.replacedBy { return (RunWords.replaced(by: Self.title(of: next, in: run)), .quiet) }
         switch n.state {
         case .waiting:
             switch n.waitReason ?? .dependency {
@@ -931,8 +944,12 @@ public struct RunsPresenter: Sendable {
         }
     }
 
+    /// A task's title from its id, within the run; the id itself when it isn't there.
+    static func title(of id: String, in run: TaskRun?) -> String { run?.nodes.first { $0.id == id }?.title ?? id }
+
     static func look(_ n: TaskNode) -> (RunGlyph, RunTone) {
-        switch n.state {
+        if n.replacedBy != nil { return (.skipped, .quiet) }
+        return switch n.state {
         case .planned: (.planned, .quiet)
         case .running where n.stale: (.stale, .warn)
         case .running: (.running, .progress)

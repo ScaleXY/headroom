@@ -352,7 +352,8 @@ import Testing
         var m = TL()
         m.session(0, 0)
         m.at(1, .planMirror(items: items([("1", .completed), ("2", .cancelled)]), tool: nil), .harness)
-        #expect(m.fold(2).node("~plan/2").state == .cancelled && m.fold(2).state == .partial)
+        // A step dropped from the plan isn't a failure.
+        #expect(m.fold(2).node("~plan/2").state == .cancelled && m.fold(2).state == .done)
         m.at(2, .planMirror(items: items([("1", .completed)]), tool: nil), .harness)
         #expect(m.fold(3).state == .done && m.fold(3).nodes.count == 1)
         // Odd ids are made safe and kept apart.

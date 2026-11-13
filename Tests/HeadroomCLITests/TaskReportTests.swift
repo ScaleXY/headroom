@@ -43,6 +43,17 @@ import HeadroomKit
         #expect(h.fold()?.node("docs").effort == 1)
     }
 
+    @Test func aFailureWorkedAroundNamesWhatTakesOver() throws {
+        let h = seeded()
+        let (code, out) = h.run(["task", "fail", "docs", "--reason", "generator crashes", "--instead", "docs-manual"])
+        #expect(code == 0 && out.contains("↷ docs failed, replaced by docs-manual") && out.contains("headroom task add docs-manual"))
+        #expect(h.run(["task", "add", "docs-manual", "--title", "Write the docs by hand"]).0 == 0)
+        let node = try #require(h.fold()?.nodes.first { $0.id == "docs" })
+        #expect(node.replacedBy == "docs-manual" && !node.counted)
+        // The same task can't take over from itself.
+        #expect(h.run(["task", "fail", "api/schema", "--reason", "x", "--instead", "api/schema"]).0 == 64)
+    }
+
     @Test func aParentWithOpenChildrenClosesOnlyWithForce() throws {
         let h = seeded()
         h.run(["task", "start", "api/schema"])

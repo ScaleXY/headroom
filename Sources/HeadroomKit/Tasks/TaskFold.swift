@@ -37,6 +37,17 @@ import Foundation
 /// progress, tokens against the calibrated tokens per effort unit, and working time against what
 /// the run's finished tasks took per unit of effort, capped at `maxGuess`.
 public enum TaskFold {
+    /// How soon after a failure that says it's going another way the next task added is taken as
+    /// its replacement.
+    public static let pivotWindow: TimeInterval = 120
+
+    /// A failure reason that says the agent is working around it ("…, doing X instead").
+    public static func pivots(_ reason: String?) -> Bool {
+        guard let r = reason?.lowercased() else { return false }
+        return ["instead", "workaround", "work around", "worked around", "fallback", "fall back", "falling back", "alternative",
+                "switching to", "switched to", "rather than", "replaced by", "replacing it", "pivot"].contains { r.contains($0) }
+    }
+
     public static let defaultStaleAfter: TimeInterval = 15 * 60
     /// With no activity for this long an agent counts as cut short, and the run as stopped.
     public static let defaultAbandonAfter: TimeInterval = 2 * 3600
@@ -202,6 +213,8 @@ struct RunBuilder {
         var waitClearAfter: Date
         var evidence: String?
         var failure: String?
+        /// The task that took over from this one after it failed.
+        var replacedBy: String?
         var mark = Mark.planned
         var markAt: Date
         var attemptKeys: [String] = []
@@ -255,6 +268,9 @@ struct RunBuilder {
     var scopeChanges = 0
     var lastActivity: Date
     var lastSessionActivity: Date?
+    /// A failure whose reason says the agent is going another way: the next task it adds, soon
+    /// after, is taken as the one replacing it.
+    var lastPivot: (task: String, at: Date)?
     var hidden = false
     var abandoned = false
     /// An agent or a person declared a task, and when that first happened.
@@ -316,6 +332,13 @@ struct RunBuilder {
             let effort = spec.effort.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             if firstStart != nil, !existed || (effort != nil && effort != tasks[spec.id]?.effort) { scopeChanges += 1 }
             let r = tasks[spec.id]!
+            if !existed, byAgent, let p = lastPivot, e.at.timeIntervalSince(p.at) <= TaskFold.pivotWindow, spec.id != p.task,
+               !spec.id.hasPrefix(p.task + "/"), let failed = tasks[p.task], failed.replacedBy == nil {
+                failed.replacedBy = spec.id
+                lastPivot = nil
+            }
+            // Taking over from a must-have makes it one.
+            if spec.importance == nil, tasks.values.contains(where: { $0.replacedBy == spec.id && $0.importance == .critical }) { r.importance = .critical }
             if let t = TaskText.title(spec.title) { r.title = t }
             if let effort { r.effort = effort; r.effortSet = true }
             if let imp = spec.importance { r.importance = imp }
@@ -327,6 +350,8 @@ struct RunBuilder {
         case .start(let t):
             guard ensure(t, at: e.at, declared: true) else { return }
             if case .terminal = tasks[t]!.mark { tasks[t]!.retries += 1 }
+            // Back on it: nothing replaces it any more.
+            tasks[t]!.replacedBy = nil
             setMark(t, .started, at: e.at)
             tasks[t]!.startedAt = tasks[t]!.startedAt ?? e.at
             touch(t, at: e.at)
@@ -370,10 +395,17 @@ struct RunBuilder {
             tasks[target]!.waitClearAfter = clearAfter
             touch(target, at: e.at, work: working)
         case .done(let t, let evidence):
-            close(t, as: .done, at: e.at) { r in if let v = TaskText.note(evidence) { r.evidence = v } }
+            // Done after all: an earlier failure and its replacement no longer describe it.
+            close(t, as: .done, at: e.at) { r in if let v = TaskText.note(evidence) { r.evidence = v }; r.failure = nil; r.replacedBy = nil }
             firstStart = firstStart ?? e.at
-        case .fail(let t, let reason):
+        case .fail(let t, let reason, let instead):
             close(t, as: .failed, at: e.at) { r in if let v = TaskText.note(reason) { r.failure = v } }
+            if let instead, TaskPath.isValid(instead), instead != t, let r = tasks[t] {
+                r.replacedBy = instead
+                if r.importance == .critical, let next = tasks[instead], next.importance == .normal { next.importance = .critical }
+            } else if byAgent, TaskFold.pivots(reason) {
+                lastPivot = (t, e.at)
+            }
             firstStart = firstStart ?? e.at
         case .skip(let t, let reason):
             close(t, as: .skipped, at: e.at) { r in if let v = TaskText.note(reason) { r.note = v } }
@@ -884,12 +916,17 @@ struct RunBuilder {
             if parts.isEmpty {
                 let (state, reason, confirmed, ended) = leafState(r, atts, gone: gone)
                 node.state = state; node.waitReason = reason; node.confirmed = confirmed; node.endedAt = ended
-                node.counted = !(state == .skipped || (r.importance == .optional && lost.contains(state))) && !isHelper(id, inEarlier: inEarlier)
+                let replaced = state == .failed && replacement(of: r) != nil
+                if replaced { node.replacedBy = r.replacedBy }
+                // Skipped and cancelled work was set aside on purpose (the plan changed): it leaves the
+                // percent, as a failure an agent worked around does.
+                node.counted = !(state == .skipped || (state == .cancelled && r.importance != .critical) || replaced
+                                 || (r.importance == .optional && lost.contains(state))) && !isHelper(id, inEarlier: inEarlier)
                 if node.counted, state == .done {
                     calc.doneLeaves = 1
                     if node.workingSeconds > 0, r.effort > 0 { spePerUnit.append(node.workingSeconds / r.effort) }
                 }
-                if r.importance == .critical, state != .skipped { calc.critical = TaskMustHaves(done: state == .done ? 1 : 0, total: 1) }
+                if r.importance == .critical, state != .skipped, !replaced { calc.critical = TaskMustHaves(done: state == .done ? 1 : 0, total: 1) }
                 // A task the orchestrator does itself is as alive as the orchestrator.
                 if state == .running, active.isEmpty, let s = lastSessionActivity { calc.liveAt = max(calc.liveAt, s) }
             } else {
@@ -1068,13 +1105,24 @@ struct RunBuilder {
     /// failed when a critical child failed or was cancelled, partial when a normal one did (or a
     /// child ended partial), skipped when all were skipped, else done. Optional children never
     /// block. Otherwise planned if nothing started, parked if some finished or were cut short.
-    func parentState(_ kids: [TaskNode]) -> (TaskState, TaskWaitReason?) {
+    /// The task that took over from a failed one, while it hasn't failed (or been cancelled) itself.
+    func replacement(of r: Rec) -> Rec? {
+        guard let id = r.replacedBy, let next = tasks[id] else { return nil }
+        if case .terminal(let s) = next.mark, s == .failed || s == .cancelled { return nil }
+        return next
+    }
+
+    func parentState(_ all: [TaskNode]) -> (TaskState, TaskWaitReason?) {
+        // A failure something else took over from reads as set aside, like a skip.
+        let kids = all.map { n -> TaskNode in var n = n; if n.replacedBy != nil { n.state = .skipped }; return n }
         if kids.contains(where: { $0.state == .running }) { return (.running, nil) }
         if let reason = kids.filter({ $0.state == .waiting }).compactMap({ $0.waitReason ?? .dependency }).min() { return (.waiting, reason) }
         if kids.allSatisfy(\.state.isTerminal) {
-            let lost: Set<TaskState> = [.failed, .cancelled]
-            if kids.contains(where: { $0.importance == .critical && lost.contains($0.state) }) { return (.failed, nil) }
-            if kids.contains(where: { $0.importance != .optional && (lost.contains($0.state) || $0.state == .partial) }) { return (.partial, nil) }
+            // A must-have that failed fails it; one dropped when the plan changed leaves it short.
+            // Other cancelled work was set aside on purpose, like a skip: no failure.
+            if kids.contains(where: { $0.importance == .critical && $0.state == .failed }) { return (.failed, nil) }
+            if kids.contains(where: { $0.importance == .critical && $0.state == .cancelled }) { return (.partial, nil) }
+            if kids.contains(where: { $0.importance != .optional && ($0.state == .failed || $0.state == .partial) }) { return (.partial, nil) }
             if kids.allSatisfy({ $0.state == .skipped }) { return (.skipped, nil) }
             return (.done, nil)
         }
@@ -1127,7 +1175,8 @@ struct RunBuilder {
         if let w = runWait, !state.isTerminal, !gone, !(silent && w.reason == .dependency), state != .waiting || w.reason < (reason ?? .dependency) {
             state = .waiting; reason = w.reason
         }
-        if abandoned { state = mapped ?? .partial; reason = nil }
+        // Given up on: never "done", whatever its tasks say.
+        if abandoned { state = mapped == nil || mapped == .done ? .partial : mapped!; reason = nil }
 
         var progress = root.progress
         if state == .done {

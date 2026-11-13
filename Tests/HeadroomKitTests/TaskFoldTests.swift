@@ -203,9 +203,10 @@ extension TaskRun {
         #expect(run([("a", .normal, .done), ("b", .normal, .running)]).node("p").state == .running)
         #expect(run([("a", .normal, .done), ("b", .normal, .done)]).node("p").state == .done)
         #expect(run([("a", .critical, .failed), ("b", .normal, .done)]).node("p").state == .failed)
-        #expect(run([("a", .critical, .cancelled), ("b", .normal, .done)]).node("p").state == .failed)
+        // Cancelled = dropped when the plan changed: a must-have leaves it short, other work is no failure.
+        #expect(run([("a", .critical, .cancelled), ("b", .normal, .done)]).node("p").state == .partial)
         #expect(run([("a", .normal, .failed), ("b", .normal, .done)]).node("p").state == .partial)
-        #expect(run([("a", .normal, .cancelled), ("b", .normal, .done)]).node("p").state == .partial)
+        #expect(run([("a", .normal, .cancelled), ("b", .normal, .done)]).node("p").state == .done)
         #expect(run([("a", .optional, .failed), ("b", .normal, .done)]).node("p").state == .done)
         #expect(run([("a", .optional, .cancelled), ("b", .optional, .skipped), ("c", .normal, .done)]).node("p").state == .done)
         #expect(run([("a", .normal, .skipped), ("b", .normal, .skipped)]).node("p").state == .skipped)
@@ -314,14 +315,14 @@ extension TaskRun {
         #expect(r.node("done").progress == .complete)
         #expect(r.node("planned").progress == .zero && r.node("planned").counted)
         #expect(r.node("failed").progress == .zero && r.node("failed").counted)
-        #expect(r.node("cancelled").progress == .zero && r.node("cancelled").counted)
+        #expect(r.node("cancelled").progress == .zero && !r.node("cancelled").counted)
         #expect(r.node("steps").progress == TaskProgress(done: 0.25, inFlight: 0.75, estimate: 0.25) && r.node("steps").note == "one down")
         #expect(r.node("steps").steps == TaskSteps(done: 1, total: 4))
         #expect(r.node("frac").progress == TaskProgress(done: 0.3, inFlight: 0.7, estimate: 0.3))
         #expect(r.node("bare").progress == TaskProgress(done: 0, inFlight: 1, estimate: 0))
         #expect(r.node("wait").progress.done == 0.5 && r.node("wait").state == .waiting)
-        // 8 equal leaves: 1 + 0.25 + 0.3 + 0.5 done.
-        #expect(near(r.progress.done, 2.05 / 8))
+        // 7 equal leaves that count (the cancelled one is set aside): 1 + 0.25 + 0.3 + 0.5 done.
+        #expect(near(r.progress.done, 2.05 / 7))
     }
 
     @Test func stepsOverrideFractionAndTotalsCanArriveWithTheStep() {
@@ -354,9 +355,9 @@ extension TaskRun {
         tl.at(1, .fail(task: "c", reason: nil))
         tl.at(1, .cancel(task: "e", reason: nil))
         let r = tl.fold(2)
-        #expect(!r.node("b").counted && !r.node("c").counted && r.node("e").counted)
-        // a done, d planned, e cancelled (normal: keeps its weight).
-        #expect(near(r.progress.done, 1.0 / 3))
+        #expect(!r.node("b").counted && !r.node("c").counted && !r.node("e").counted)
+        // a done, d planned; e cancelled when the plan changed, set aside like b.
+        #expect(near(r.progress.done, 1.0 / 2))
     }
 
     @Test func effortWeighsSiblingsAndParentsKeepTheirOwnWeight() {

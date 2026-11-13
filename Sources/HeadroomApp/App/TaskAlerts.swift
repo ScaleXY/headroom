@@ -107,7 +107,7 @@ struct TaskAlerts {
     static func mark(_ r: TaskRun) -> Mark {
         Mark(input: r.needsInput || (!r.state.isTerminal && r.nodes.contains { $0.state == .waiting && $0.waitReason == .input }),
              stopped: r.state == .stopped, stale: r.stale, finished: r.state.isTerminal,
-             failedCritical: Set(r.nodes.filter { $0.importance == .critical && $0.state == .failed }.map(\.id)))
+             failedCritical: Set(r.nodes.filter { $0.importance == .critical && $0.state == .failed && $0.replacedBy == nil }.map(\.id)))
     }
 
     /// Working time that makes a plan read off the harness worth a "finished" or "stopped" alert.

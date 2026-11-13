@@ -209,6 +209,16 @@ and
 take one. A task with open tasks under it is refused unless
 .BR \-\-force ,
 which closes them the same way.
+.B fail
+also takes
+.BI \-\-instead " new"
+when another task takes over from the failed one (another way to the same end): the run is
+then not marked as failing while
+.I new
+holds. A failure whose reason says the agent is going another way, followed within two
+minutes by a newly added task, is read the same way. Cancelled tasks were dropped when the
+plan changed and don't count as failures either, except a cancelled critical task, which
+leaves the run finished with failures.
 .TP
 .B task progress \fIid\fP
 .B \-\-step

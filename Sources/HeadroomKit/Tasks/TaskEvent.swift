@@ -14,7 +14,7 @@ import Foundation
 /// | `task.progress` | `task`, `step` (done), `steps` (total), `fraction` (0…1), `note` |
 /// | `task.wait` | `task` or `attempt` (key), or neither for the run itself; `for` (`input`, `limit`, `dependency`), `note`, `options` (answers offered) |
 /// | `task.done` | `task`, `evidence` |
-/// | `task.fail` | `task`, `reason` |
+/// | `task.fail` | `task`, `reason`, `instead` (the task that replaces it, when the agent worked around the failure) |
 /// | `task.skip`, `task.cancel` | `task`, `reason` |
 /// | `attempt.upsert` | `attempt` (key), `kind` (`agent`, `delegate`, `workflow`, `session`), `agent_type`, `model`, `provider`, `tag` (task path, `RUN:PATH` or `[hr:RUN:PATH]`), `parent` (spawning attempt's key), `title` |
 /// | `attempt.activity` | `attempt`, `at` (defaults to `ts`), `tokens` (running total) |
@@ -52,7 +52,8 @@ public struct TaskEvent: Sendable, Hashable {
         /// Neither `task` nor `attempt`: the run itself waits (the orchestrator is asking a person).
         case wait(task: String?, attempt: String?, reason: TaskWaitReason, note: String?, options: [String]? = nil)
         case done(task: String, evidence: String?)
-        case fail(task: String, reason: String?)
+        /// `instead`: the task taking over from this one (another approach to the same end).
+        case fail(task: String, reason: String?, instead: String? = nil)
         case skip(task: String, reason: String?)
         case cancel(task: String, reason: String?)
         case attempt(AttemptSpec)
@@ -96,7 +97,7 @@ public struct TaskEvent: Sendable, Hashable {
         public var task: String? {
             switch self {
             case .add(let s): s.id
-            case .start(let t), .progress(let t, _, _, _, _), .done(let t, _), .fail(let t, _), .skip(let t, _), .cancel(let t, _): t
+            case .start(let t), .progress(let t, _, _, _, _), .done(let t, _), .fail(let t, _, _), .skip(let t, _), .cancel(let t, _): t
             case .wait(let t, _, _, _, _): t
             default: nil
             }
@@ -144,7 +145,7 @@ public struct TaskEvent: Sendable, Hashable {
 extension TaskEvent: Codable {
     enum Key: String, CodingKey {
         case v, ts, run, src, op, task, title, project, harness, host, cwd, effort, importance, steps, step, fraction, note, options
-        case waitFor = "for", evidence, reason, attempt, kind, model, provider, tag, parent, at, tokens, outcome, blocked, items, tool, hidden
+        case waitFor = "for", evidence, reason, attempt, kind, model, provider, tag, parent, at, tokens, outcome, blocked, items, tool, hidden, instead
         case agentType = "agent_type"
     }
 
@@ -172,7 +173,7 @@ extension TaskEvent: Codable {
             op = .wait(task: try s(.task), attempt: try s(.attempt), reason: try c.decodeIfPresent(TaskWaitReason.self, forKey: .waitFor) ?? .dependency, note: try s(.note),
                        options: try c.decodeIfPresent([String].self, forKey: .options))
         case "task.done": op = .done(task: try task(), evidence: try s(.evidence))
-        case "task.fail": op = .fail(task: try task(), reason: try s(.reason))
+        case "task.fail": op = .fail(task: try task(), reason: try s(.reason), instead: try s(.instead))
         case "task.skip": op = .skip(task: try task(), reason: try s(.reason))
         case "task.cancel": op = .cancel(task: try task(), reason: try s(.reason))
         case "attempt.upsert":
@@ -229,7 +230,11 @@ extension TaskEvent: Codable {
         case .done(let t, let evidence):
             try c.encode(t, forKey: .task)
             try c.encodeIfPresent(evidence, forKey: .evidence)
-        case .fail(let t, let reason), .skip(let t, let reason), .cancel(let t, let reason):
+        case .fail(let t, let reason, let instead):
+            try c.encode(t, forKey: .task)
+            try c.encodeIfPresent(reason, forKey: .reason)
+            try c.encodeIfPresent(instead, forKey: .instead)
+        case .skip(let t, let reason), .cancel(let t, let reason):
             try c.encode(t, forKey: .task)
             try c.encodeIfPresent(reason, forKey: .reason)
         case .attempt(let a):

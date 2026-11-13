@@ -341,3 +341,19 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(p.card(run(nodes: [leaf("a", .running)]) { $0.hasDeclaredTasks = false }).rowsTitle == "Agents")
     }
 }
+
+/// A failure the agent worked around reads as such everywhere on the card.
+@Suite struct RunReplacedCardTests {
+    @Test func theCardSaysWhatTookOverNotThatItFailed() throws {
+        var root = leaf("root", .failed, failure: "locked user build. Doing non-root tuning instead.")
+        root.replacedBy = "tune"; root.counted = false
+        let nodes = [leaf("app", .done), leaf("tune", .done), root]
+        let c = p.card(run(state: .done, nodes: nodes, estimate: 1, done: 1))
+        #expect(c.stateText == RunWords.done)
+        #expect(c.verdict?.primary == "All 2 tasks done.")
+        #expect(c.verdict?.secondary?.hasPrefix("Root gave way to Tune") == true)
+        #expect(c.receipt?.tasks == "2 of 2" && c.receipt?.tasksNote.contains("1 replaced") == true)
+        let row = try #require(c.rows.first { $0.id == "root" } ?? p.card(run(state: .done, nodes: nodes), expanded: true).rows.first { $0.id == "root" })
+        #expect(row.glyph == .skipped && row.tone == .quiet && row.detail == RunWords.replaced(by: "Tune"))
+    }
+}

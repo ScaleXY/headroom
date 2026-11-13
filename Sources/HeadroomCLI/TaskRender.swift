@@ -50,7 +50,8 @@ enum TaskRender {
     }
 
     static func line(_ n: TaskNode, style: Style, now: Date, width: Int, declared: Bool = true) -> String {
-        let (g, hex) = glyph(n.state, reason: n.waitReason)
+        // A failed approach another task took over from: set aside, not a failure.
+        let (g, hex) = n.replacedBy != nil ? ("↷", Style.muted) : glyph(n.state, reason: n.waitReason)
         let indent = String(repeating: "  ", count: n.depth + 1)
         let quiet = !n.counted || n.state == .skipped || n.state == .cancelled
         let title = TaskText.display(n.title, limit: TaskText.titleLimit)
@@ -64,6 +65,9 @@ enum TaskRender {
         case .waiting:
             detail.append(style.paint(n.waitReason == .input ? "needs input" : "waiting on \(n.waitReason?.rawValue ?? "dependency")", Style.amber))
             if let w = n.waitNote { detail.append(TaskText.display(w)) }
+        case .failed where n.replacedBy != nil:
+            detail.append("replaced by \(n.replacedBy!)")
+            if let f = n.failure { detail.append(TaskText.display(f)) }
         case .failed:
             if let f = n.failure { detail.append(style.paint(TaskText.display(f), Style.rose)) }
         case .parked:

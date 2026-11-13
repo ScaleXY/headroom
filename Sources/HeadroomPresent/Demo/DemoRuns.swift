@@ -40,6 +40,8 @@ extension Demo {
             RunScenario(name: "finished", runs: [finished], opened: [RunsPresenter.rowKey(run: finished.id, row: "bench")],
                         note: "Done, with a failed optional task: the receipt"),
             RunScenario(name: "failed", runs: [failedRun(now: now)], note: "A critical task failed"),
+            RunScenario(name: "replaced", runs: [replacedRun(now: now)], opened: [RunsPresenter.rowKey(run: "demo-replaced", row: "root")],
+                        note: "Done: a failed approach was worked around another way"),
             RunScenario(name: "abandoned", runs: [abandonedRun(now: now)], note: "Given up on from the card"),
             RunScenario(name: "large", runs: [largeRun(now: now)], note: "A session that ran for days: 1,004 agents"),
             RunScenario(name: "mixed", runs: mixedRuns(now: now), note: "Live runs, then the last day's finished ones"),
@@ -271,6 +273,28 @@ extension Demo {
                        progress: TaskProgress(done: 0.5, inFlight: 0, estimate: 0.5), mustHaves: TaskMustHaves(done: 0, total: 1),
                        tokens: 101_000, hasDeclaredTasks: true, nodes: nodes, time: TaskTimeSplit(working: mins(16), idle: mins(2)),
                        tokensByModel: ["claude-sonnet-5-5": 101_000])
+    }
+
+    /// Finished: one approach failed and the agent took another way to the same end. Done, not
+    /// "finished with failures".
+    public static func replacedRun(now: Date) -> TaskRun {
+        var root = task("root", "Root access + root perf tuning", .failed,
+                        failure: "Locked user build: OEM-signed OTA keys, AVB locked. Doing non-root shell-level tuning instead.",
+                        tokens: 8_080, started: ago(now, 250), ended: ago(now, 248), working: mins(2))
+        root.replacedBy = "tune"; root.counted = false
+        let nodes = [
+            task("app", "Build the launcher app", .done, importance: .critical, evidence: "APK built and signed", tokens: 41_300,
+                 started: ago(now, 300), ended: ago(now, 270), agents: 1, working: mins(25)),
+            task("deploy", "Install and test on the box", .done, importance: .critical, evidence: "Silent update 1.11.2 → 1.12.1 verified",
+                 tokens: 44_000, started: ago(now, 268), ended: ago(now, 252), working: mins(15)),
+            root,
+            task("tune", "Non-root perf tuning", .done, evidence: "14 apps disabled, animations 0.5×", tokens: 14_500,
+                 started: ago(now, 248), ended: ago(now, 244), working: mins(4)),
+        ]
+        return TaskRun(id: "demo-replaced", title: "Dor Box: auto-updater + max performance", project: "box-tools", harness: "claude-code",
+                       startedAt: ago(now, 300), updatedAt: ago(now, 244), state: .done, progress: .complete,
+                       mustHaves: TaskMustHaves(done: 2, total: 2), tokens: 598_000, scopeChanges: 4, hasDeclaredTasks: true, nodes: nodes,
+                       time: TaskTimeSplit(working: mins(50), waitingInput: mins(2), idle: mins(4)), tokensByModel: ["claude-opus-5-5": 598_000])
     }
 
     /// Given up on from the card after it stopped half way.

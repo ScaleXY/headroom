@@ -221,7 +221,7 @@ extension RunsPresenter {
                 let rolled = descendants(v.node, r.nodes, l.children)
                 if !rolled.isEmpty { steps = TaskSteps(done: rolled.filter(\.state.isTerminal).count, total: rolled.count) }
             }
-            return RunDigest.Row(title: n.title, state: n.state, waitReason: n.waitReason, stale: n.stale, depth: v.depth, steps: steps,
+            return RunDigest.Row(title: n.title, state: n.replacedBy != nil ? .skipped : n.state, waitReason: n.waitReason, stale: n.stale, depth: v.depth, steps: steps,
                                  importance: n.importance, quiet: !n.counted || n.state == .skipped || n.state == .cancelled)
         }
         return (rows, max(0, l.visible.count - cap), l.finished)

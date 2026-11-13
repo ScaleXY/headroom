@@ -23,7 +23,7 @@ enum TaskOps {
         "progress": ["step", "fraction", "note"],
         "wait": ["for", "note", "option"],
         "done": ["evidence", "force"],
-        "fail": ["reason", "force"],
+        "fail": ["reason", "force", "instead"],
         "skip": ["reason", "force"],
         "cancel": ["reason", "force"],
     ]
@@ -34,7 +34,7 @@ enum TaskOps {
         "progress": "progress ID [--step K/N] [--fraction F] [--note TEXT]",
         "wait": "wait ID --for input|dependency|limit [--note TEXT] [--option ANSWER …]",
         "done": "done ID [ID …] [--evidence TEXT] [--force]",
-        "fail": "fail ID [ID …] --reason TEXT [--force]",
+        "fail": "fail ID [ID …] --reason TEXT [--instead NEW] [--force]",
         "skip": "skip ID [ID …] [--reason TEXT] [--force]",
         "cancel": "cancel ID [ID …] [--reason TEXT] [--force]",
     ]
@@ -45,7 +45,7 @@ enum TaskOps {
         "progress": "Reports how far a task has got: --step K/N (K of N steps done; K alone once N is known), --fraction F (0 to 1), --note TEXT (up to 400 characters).",
         "wait": "Marks a task as blocked on a person (input), another task (dependency) or a usage limit (limit). --option offers an answer the user can pick; repeat it for each.",
         "done": "Closes tasks as finished. --evidence says what shows it: tests passing, a commit, a URL.",
-        "fail": "Closes tasks you tried and couldn't finish. --reason is required.",
+        "fail": "Closes tasks you tried and couldn't finish. --reason is required. --instead NEW names the task taking over (another way to the same end), so the run isn't marked failed while NEW goes on.",
         "skip": "Closes tasks you decided aren't needed.",
         "cancel": "Closes tasks dropped because the plan changed.",
     ]
@@ -84,7 +84,14 @@ enum TaskOps {
         case "done": return e(.done(task: path, evidence: TaskText.note(o["evidence"])))
         case "fail":
             guard let reason = TaskText.note(o["reason"]) else { throw Failure("fail needs --reason TEXT: say what went wrong") }
-            return e(.fail(task: path, reason: reason))
+            var instead: String?
+            if let next = o["instead"] {
+                guard TaskPath.isValid(next), next != path else {
+                    throw Failure("bad --instead '\(TaskText.display(next, limit: 60))': name the task taking over, e.g. --instead api/fallback")
+                }
+                instead = next
+            }
+            return e(.fail(task: path, reason: reason, instead: instead))
         case "skip": return e(.skip(task: path, reason: TaskText.note(o["reason"])))
         case "cancel": return e(.cancel(task: path, reason: TaskText.note(o["reason"])))
         default: throw Failure("unknown task action '\(action)'")
@@ -269,7 +276,10 @@ enum TaskOps {
             return "\(paths[0]) noted"
         case "wait": return "\(paths[0]) waiting on \(q.options["for"] ?? "dependency")"
         case "done": return "✓ \(names) done"
-        case "fail": return "✗ \(names) failed"
+        case "fail":
+            guard let next = q.options["instead"] else { return "✗ \(names) failed" }
+            let exists = after.nodes.contains { $0.id == next }
+            return "↷ \(names) failed, replaced by \(next)" + (exists ? "" : " (add it: headroom task add \(next) --title …)")
         case "skip": return "⊘ \(names) skipped"
         default: return "⊘ \(names) cancelled"
         }
@@ -660,8 +670,9 @@ enum TaskCommand {
              headroom task wait docs --for input --note "need the staging token"
              headroom task add api/rate-limit --title "Rate limiting" --effort s   (work you find)
         4. Outcomes: done = finished; fail --reason = tried and couldn't; skip = not needed after
-           all; cancel = dropped because the plan changed. Before you stop, give every task an
-           outcome, including ones you never started.
+           all; cancel = dropped because the plan changed. Worked around a failure another way?
+           fail ID --reason … --instead NEW (and add NEW): the run isn't failed while NEW holds.
+           Before you stop, give every task an outcome, including ones you never started.
         5. Lost your place (after a context compaction)? headroom task status shows the run.
         """
     }

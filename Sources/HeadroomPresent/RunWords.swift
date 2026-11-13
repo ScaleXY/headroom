@@ -18,6 +18,8 @@ public enum RunWords {
     public static let skipped = "Skipped"
     public static let abandoned = "Abandoned"
     public static let planned = "Not started"
+    /// A failed approach another task took over from ("Replaced by Non-root perf tuning").
+    public static func replaced(by title: String) -> String { "Replaced by \(title)" }
 
     /// An agent or task with no activity for a while ("Quiet for 18m").
     public static func quiet(_ duration: String) -> String { "Quiet for \(duration)" }

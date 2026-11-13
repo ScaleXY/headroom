@@ -42,6 +42,10 @@ public struct TaskNode: Codable, Sendable, Hashable, Identifiable {
     public var share: Double
     /// Seconds of work on this task (its own and its children's activity, gaps excluded).
     public var workingSeconds: Double
+    /// A failed task another one took over from (`task.fail --instead`, or a failure whose reason
+    /// says so followed at once by a new task): that task's id. It doesn't count against the run
+    /// unless its replacement fails too.
+    public var replacedBy: String?
 
     public init(id: String, title: String, parent: String? = nil, depth: Int = 0, state: TaskState, waitReason: TaskWaitReason? = nil, stale: Bool = false,
                 progress: TaskProgress = .zero, effort: Double = TaskEffort.defaultWeight, importance: TaskImportance = .normal, declared: Bool = true,
@@ -53,6 +57,7 @@ public struct TaskNode: Codable, Sendable, Hashable, Identifiable {
         self.confirmed = confirmed; self.leaf = leaf; self.counted = counted; self.steps = steps; self.fraction = fraction; self.note = note
         self.waitNote = waitNote; self.evidence = evidence; self.failure = failure; self.attempts = attempts; self.tokens = tokens
         self.startedAt = startedAt; self.endedAt = endedAt; self.lastActivityAt = lastActivityAt; self.share = share; self.workingSeconds = workingSeconds
+        self.replacedBy = nil
     }
 
     public var attention: TaskAttention { TaskAttention(state: state, waitReason: waitReason, stale: stale) }
@@ -67,6 +72,7 @@ public struct TaskNode: Codable, Sendable, Hashable, Identifiable {
         case lastActivityAt = "last_activity_at"
         case share
         case workingSeconds = "working_seconds"
+        case replacedBy = "replaced_by"
     }
 
     /// Older feeds lack `share` and `working_seconds`: they read as 0.
@@ -87,6 +93,7 @@ public struct TaskNode: Codable, Sendable, Hashable, Identifiable {
                   lastActivityAt: try c.decodeIfPresent(Date.self, forKey: .lastActivityAt),
                   share: try c.decodeIfPresent(Double.self, forKey: .share) ?? 0,
                   workingSeconds: try c.decodeIfPresent(Double.self, forKey: .workingSeconds) ?? 0)
+        replacedBy = try c.decodeIfPresent(String.self, forKey: .replacedBy)
     }
 }
 

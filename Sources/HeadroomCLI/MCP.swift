@@ -102,6 +102,7 @@ struct MCPServer {
              "options": ["type": "array", "items": ["type": "string"], "description": "wait: answers the user can pick"],
              "evidence": ["type": "string", "description": "done: what shows it is done"],
              "reason": ["type": "string", "description": "fail (required), skip, cancel: why"],
+             "instead": ["type": "string", "description": "fail: the task taking over (another way to the same end); the run isn't failed while it holds"],
              "force": ["type": "boolean", "description": "done, fail, skip, cancel: also close open tasks under it the same way"],
          ]) { a, _ in a }]],
     ] }
@@ -158,7 +159,7 @@ struct MCPServer {
             guard !ids.isEmpty else { return ("update_task needs id (or ids)", true) }
             let allowed = TaskOps.options[action] ?? []
             // The same per-action options as the command line: nothing silently dropped.
-            let given = ["title", "effort", "importance", "steps", "step", "fraction", "note", "for", "evidence", "reason", "force", "options"]
+            let given = ["title", "effort", "importance", "steps", "step", "fraction", "note", "for", "evidence", "reason", "force", "options", "instead"]
                 .filter { args[$0] != nil && !(args[$0] is NSNull) }
             if let stray = given.first(where: { !allowed.contains($0 == "options" ? "option" : $0) }) {
                 let takes = allowed.map { $0 == "option" ? "options" : $0 }
