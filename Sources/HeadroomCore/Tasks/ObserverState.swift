@@ -20,6 +20,51 @@ struct ObserverState: Codable, Sendable {
     /// Runs already given their `run.meta`.
     var metaRuns: Set<String> = []
     var prunedAt: Double = 0
+    /// Question and plan tool calls waiting for their results, by tool-use (or Codex call) id.
+    /// Optional, like every field added after version 1, so older saved state still decodes.
+    var calls: [String: CallRec]?
+
+    var pendingCalls: [String: CallRec] {
+        get { calls ?? [:] }
+        set { calls = newValue.isEmpty ? nil : newValue }
+    }
+}
+
+/// A harness tool call whose result the observer waits for.
+struct CallRec: Codable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        /// A question to a person (`AskUserQuestion`, `ExitPlanMode`, Codex `request_user_input`).
+        case question
+        /// Codex `request_user_input_async`: answered by the person's next message, not its output.
+        case asyncQuestion
+        /// Claude Code `TaskCreate`: the new item's id comes back in the result.
+        case planCreate
+    }
+    var kind: Kind
+    /// `session:<id>` or an attempt key.
+    var owner: String
+    var session: String
+    var at: Double
+    /// `TaskCreate`: the item's title, held until its id is known.
+    var title: String?
+}
+
+/// A question the harness put to a person, until its answer has been written out.
+struct PendingQuestion: Codable, Sendable, Hashable {
+    /// The tool call's id.
+    var id: String
+    var text: String
+    var options: [String]
+    var at: Double
+    /// When the result came back.
+    var answeredAt: Double?
+}
+
+/// One entry of a session's mirrored plan list.
+struct PlanEntry: Codable, Sendable, Hashable {
+    var id: String
+    var title: String
+    var status: TaskPlanItem.Status
 }
 
 /// Read position and per-file parse state of one transcript.
@@ -51,6 +96,14 @@ struct Emitted: Codable, Sendable, Hashable {
     var endedAt: Double?
     var outcome: TaskAttemptOutcome?
     var waitAt: Double?
+    /// The question whose `task.wait` was written and not yet cleared.
+    var question: String?
+    /// The usage-limit line last written as a `task.wait`.
+    var limitAt: Double?
+    /// The plan list last written (`plan.mirror`), as a key.
+    var plan: String?
+    /// The `run.meta` fields last written, as a key.
+    var meta: String?
 }
 
 struct SessionRec: Codable, Sendable {
@@ -76,6 +129,21 @@ struct SessionRec: Codable, Sendable {
     var spawned = false
     var out = Emitted()
     var outStopped: Bool?
+    /// The working folder (Claude lines' `cwd`, Codex `session_meta`). Written to `run.meta` only.
+    var cwd: String?
+    /// The app it runs in, when the transcript says (the Claude desktop app's bundle id).
+    var host: String?
+    /// Codex: the last turn was aborted by the person (`turn_aborted` with reason `interrupted`).
+    var interrupted: Bool?
+    /// The harness's question waiting on a person.
+    var question: PendingQuestion?
+    /// The latest usage-limit line and its note.
+    var limitAt: Double?
+    var limitNote: String?
+    /// The harness's own plan list for the session, as last seen.
+    var plan: [PlanEntry]?
+    var planTool: String?
+    var planAt: Double?
 }
 
 struct AttemptRec: Codable, Sendable {
@@ -107,6 +175,11 @@ struct AttemptRec: Codable, Sendable {
     /// Workflows: `<session>/workflows/<runId>.json`, written when it ends.
     var workflowFile: String?
     var out = Emitted()
+    /// A question it put to a person (a subagent's own question tool call).
+    var question: PendingQuestion?
+    /// Its latest usage-limit line and note.
+    var limitAt: Double?
+    var limitNote: String?
 }
 
 /// A spawning tool call, held until the attempt it made is known.
@@ -124,4 +197,6 @@ struct SpawnRec: Codable, Sendable {
     /// An end reported before the attempt was known.
     var endedAt: Double?
     var outcome: TaskAttemptOutcome?
+    /// When its result came back. An `Agent` call without one is still running in the foreground.
+    var resultAt: Double?
 }

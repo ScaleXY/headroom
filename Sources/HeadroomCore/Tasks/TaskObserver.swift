@@ -10,22 +10,34 @@ import HeadroomKit
 /// beside `agent-<id>.meta.json`, workflow agents in `subagents/workflows/<runId>/`. Codex:
 /// `rollout-*.jsonl`. Only the paths handed over are read, from a saved byte offset.
 ///
-/// A session becomes a run only once it spawns something (Agent, a T3 Code delegate, a Workflow)
-/// or the agent has declared tasks in it (a journal file exists). An attempt tagged
-/// `[hr:RUN:PATH]` lands in RUN. A delegate's child session, found by its first message
-/// matching the brief, works for the delegate: its activity, tokens and end are the delegate's,
-/// its agents hang under it, and it is no run of its own.
+/// A session becomes a run only once it spawns something (Agent, a T3 Code delegate, a Workflow),
+/// keeps a plan list of two or more items in the harness's own plan tool, or the agent has
+/// declared tasks in it (a journal file exists). An attempt tagged `[hr:RUN:PATH]` lands in RUN.
+/// A delegate's child session, found by its first message matching the brief (and its harness
+/// matching the delegate's provider), works for the delegate: its activity, tokens, questions and
+/// end are the delegate's, its agents hang under it, and it is no run of its own.
 ///
 /// Ends: an agent ends on its tool result when it ran in the foreground, on the harness's
 /// `<task-notification>` when in the background, on its transcript's final `end_turn`, or when
-/// its meta file says `finished`. A workflow agent ends when it calls `StructuredOutput`, a
+/// its meta file says `finished`; a foreground agent still running when the person interrupts
+/// the turn ends `interrupted`. A workflow agent ends when it calls `StructuredOutput`, a
 /// workflow on its notification or its `workflows/<runId>.json`. A delegate ends on T3 Code's
 /// "Delegated task … [status]:" message to the parent, a `task_status` result, or its child's turn
-/// ending (Codex `task_complete`, `turn_aborted` as an error; Claude Code `end_turn`). An
-/// orchestrator's `end_turn` is `run.stop`; its next reply is `run.resume`.
+/// ending (Codex `task_complete`, `turn_aborted` as interrupted or an error; Claude Code
+/// `end_turn`). An orchestrator's `end_turn` or the person interrupting it is `run.stop`; its
+/// next reply is `run.resume`.
 ///
-/// Nothing anyone typed, no tool input or output and no path is written: only labels agents
-/// wrote (descriptions, delegate titles), agent types, models and the project directory's name.
+/// Questions: the harness's question tool (`AskUserQuestion`, `ExitPlanMode`, Codex
+/// `request_user_input`) with no result yet is a `task.wait` for `input`, with the question and
+/// its answers: the run's own for the main session, the attempt's for a subagent or a delegate's
+/// child. Its result is `run.resume` (or the attempt's activity). A usage-limit message is a
+/// `task.wait` for `limit`. The main session's plan list (`TodoWrite`, `TaskCreate`/`TaskUpdate`,
+/// Codex `update_plan`, the desktop app's plan tool) is mirrored whole as `plan.mirror`.
+///
+/// Nothing anyone typed and no tool output is written: only labels agents wrote (descriptions,
+/// delegate titles, questions, their answers' labels, plan titles), the harness's limit message,
+/// agent types, models, the project directory's name, and on `run.meta` (which stays on this
+/// Mac) the working folder and the app the session runs in.
 public actor TaskObserver {
     public struct Report: Sendable {
         public var filesRead = 0
@@ -66,6 +78,11 @@ public actor TaskObserver {
     private var pending: Set<String> = []
     private var touchedAttempts: Set<String> = []
     private var touchedSessions: Set<String> = []
+    /// The modification time of the file being read: a time past it can only come from inside a
+    /// tool's output.
+    private var readingMtime: Double = 0
+    /// The Claude desktop app, by the `entrypoint` its sessions' lines carry.
+    static let desktopHost = "com.anthropic.claudefordesktop"
 
     public init(roots: LogRoots = .standard(), home: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.roots = roots
@@ -260,13 +277,27 @@ public actor TaskObserver {
         var end = length
         while end > Int(file.offset) && base[end - 1] != 0x0A { end -= 1 }
         var pos = Int(file.offset)
+        readingMtime = st.mtime
+        // The last tool-result line with nothing after it: only its time can still matter.
+        var quiet: (start: Int, count: Int)?
         while pos < end {
             var lineEnd = end
             if let nl = memchr(base + pos, 0x0A, end - pos) { lineEnd = UnsafePointer<UInt8>(nl.assumingMemoryBound(to: UInt8.self)) - base }
             if lineEnd > pos {
-                if role == .codex { codexLine(base + pos, lineEnd - pos, file: &file) } else { claudeLine(base + pos, lineEnd - pos, file: &file) }
+                if role == .codex { codexLine(base + pos, lineEnd - pos, file: &file) } else {
+                    switch claudeLine(base + pos, lineEnd - pos, file: &file) {
+                    case .activity: quiet = (pos, lineEnd - pos)
+                    case .read: quiet = nil
+                    case .skipped: break
+                    }
+                }
             }
             pos = lineEnd + 1
+        }
+        if let q = quiet, let at = ClaudeTranscript.lineTime(base + q.start, q.count) {
+            var line = ClaudeTranscript.activityOnly
+            line.at = at
+            claudeApply(line, file: &file)
         }
         report.filesRead += 1
         report.bytes += Int64(end) - file.offset
@@ -278,17 +309,32 @@ public actor TaskObserver {
 
     // MARK: Claude Code lines
 
-    private func claudeLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile) {
-        guard let sid = file.session else { return }
+    enum LineUse { case skipped, read, activity }
+
+    private func claudeLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile) -> LineUse {
+        guard file.session != nil else { return .skipped }
         let spawns = state.spawns
+        let calls = state.pendingCalls
         let wanted: (String) -> (tracked: Bool, text: Bool) = { id in
+            if calls[id] != nil { return (true, false) }
             guard let s = spawns[id] else { return (false, false) }
             return (true, s.tool == .delegate || s.tool == .taskStatus)
         }
         let wantText = file.role == .session && !file.sawText
-        guard let line = ClaudeTranscript.parse(p, n, wanted: wanted, wantText: wantText) else { return }
+        guard let line = ClaudeTranscript.parse(p, n, wanted: wanted, wantText: wantText) else { return .skipped }
+        if line.activityOnly { return .activity }
+        claudeApply(line, file: &file)
+        return .read
+    }
+
+    private func claudeApply(_ line: ClaudeTranscript.Line, file: inout TranscriptFile) {
+        guard let sid = file.session else { return }
+        let wantText = file.role == .session && !file.sawText
         let owner = file.agent ?? "session:" + sid
-        let at = line.at ?? 0
+        var at = line.at ?? 0
+        if line.activityOnly, at > readingMtime + 1 { at = readingMtime }
+        // The harness's limit message is no work: it must not clear the wait it raises.
+        let works = at > 0 && line.limit == nil
         if line.assistant { file.sawText = true }
         if let text = line.text, wantText {
             file.sawText = true
@@ -305,7 +351,7 @@ public actor TaskObserver {
         }
         if let agent = file.agent {
             if var a = state.attempts[agent] {
-                if at > 0 {
+                if works {
                     if a.out.run == nil { a.startedAt = min(a.startedAt, at) }
                     a.lastAt = max(a.lastAt, at)
                 }
@@ -313,27 +359,38 @@ public actor TaskObserver {
                 if line.model != nil, a.model == nil { a.model = line.model }
                 // A subagent's turn ends once, with its answer; a workflow agent hands its result back.
                 if line.endTurn || line.returnsOutput, at > 0, at > (a.endedAt ?? 0) { a.endedAt = at; a.outcome = .ok }
+                if let note = line.limit, at > 0, a.limitAt.map({ a.lastAt > $0 }) ?? true { a.limitAt = at; a.limitNote = note }
                 state.attempts[agent] = a
                 touch(agent)
+                if works { foregroundWork(agent, at: at) }
             }
         } else if var s = state.sessions[sid] {
             // After its turn ended, only a reply of its own counts as activity.
-            if at > 0, line.assistant || s.stoppedAt == nil {
+            if works, line.assistant || s.stoppedAt == nil {
                 s.startedAt = s.lastAt == 0 ? at : min(s.startedAt, at)
                 s.lastAt = max(s.lastAt, at)
             }
             if s.project == nil, let cwd = line.cwd { s.project = Bytes.lastPathComponent(cwd) }
+            if s.cwd == nil, let cwd = line.cwd, !cwd.isEmpty { s.cwd = cwd }
+            if s.host == nil, line.entrypoint == "claude-desktop" { s.host = Self.desktopHost }
             s.tokens += tokens
-            if let m = line.model, line.assistant { s.model = m }
+            if let m = line.model, line.assistant, line.limit == nil, m != "<synthetic>" { s.model = m }
             if line.assistant {
-                if s.stoppedAt != nil, line.messageKey != s.stopKey { s.stoppedAt = nil; s.stopKey = nil }
+                if s.stoppedAt != nil, line.messageKey != s.stopKey, works { s.stoppedAt = nil; s.stopKey = nil; s.interrupted = nil }
                 if line.endTurn, at > 0 { s.stoppedAt = at; s.stopKey = line.messageKey }
             }
+            // Retries against the same limit add nothing; a limit after more work is a new one.
+            if let note = line.limit, at > 0, s.limitAt.map({ s.lastAt > $0 }) ?? true { s.limitAt = at; s.limitNote = note }
             state.sessions[sid] = s
             touchSession(sid)
         }
         for sp in line.spawns { spawned(sp, by: owner, session: sid, at: at) }
-        for r in line.results { result(r, meta: line.resultMeta, at: at) }
+        for r in line.results {
+            if let c = state.pendingCalls[r.toolUseID] { callResult(r, c, meta: line.resultMeta, at: at) }
+            else { result(r, meta: line.resultMeta, at: at, interrupted: line.interrupted) }
+        }
+        for c in line.calls { harnessCall(c, owner: owner, session: sid, at: at) }
+        if line.interrupted, at > 0 { interrupted(owner, session: sid, at: at) }
         if let notice = line.notice, let sp = state.spawns[notice.toolUseID] {
             let outcome: TaskAttemptOutcome = notice.status == "completed" ? .ok : .error
             if let key = sp.attempt { end(key, at: at, outcome) } else {
@@ -367,17 +424,27 @@ public actor TaskObserver {
         changed = true
     }
 
-    private func result(_ r: ClaudeTranscript.Result, meta: ClaudeTranscript.ResultMeta?, at: Double) {
+    private func result(_ r: ClaudeTranscript.Result, meta: ClaudeTranscript.ResultMeta?, at: Double, interrupted: Bool = false) {
         guard let sp = state.spawns[r.toolUseID] else { return }
+        if sp.resultAt == nil { state.spawns[r.toolUseID]?.resultAt = at }
+        let failure: TaskAttemptOutcome = interrupted ? .interrupted : .error
         switch sp.tool {
         case .agent:
-            guard let id = meta?.agentID, let key = TaskRunID.sanitize(id).map({ "agent:" + $0 }) else { return }
+            guard let id = meta?.agentID, let key = TaskRunID.sanitize(id).map({ "agent:" + $0 }) else {
+                // No agent id: it failed or was cut short, maybe after its meta file linked it.
+                guard r.isError else { break }
+                if let key = sp.attempt { end(key, at: at, failure) } else {
+                    state.spawns[r.toolUseID]?.endedAt = at
+                    state.spawns[r.toolUseID]?.outcome = failure
+                }
+                break
+            }
             if state.attempts[key] == nil {
                 state.attempts[key] = AttemptRec(key: key, kind: .agent, session: sp.session, spawner: sp.spawner, provider: "claude", startedAt: sp.at, lastAt: sp.at)
             }
             link(key, to: r.toolUseID)
             if let m = meta?.model { state.attempts[key]?.model = m }
-            if r.isError { end(key, at: at, .error) } else if meta?.status == "completed" { end(key, at: at, .ok) }
+            if r.isError { end(key, at: at, failure) } else if meta?.status == "completed" { end(key, at: at, .ok) }
             touch(key)
         case .workflow:
             guard let run = meta?.runID, let id = TaskRunID.sanitize(run) else { return }
@@ -410,6 +477,130 @@ public actor TaskObserver {
         changed = true
     }
 
+    // MARK: Questions, plans, interrupts
+
+    /// A question or plan tool call. Plans count only from the main session's own transcript.
+    private func harnessCall(_ call: HarnessCall, owner: String, session sid: String, at: Double) {
+        switch call {
+        case .ask(let id, let text, let options, let async):
+            let q = PendingQuestion(id: id, text: text, options: options, at: at)
+            if owner.hasPrefix("session:") { state.sessions[sid]?.question = q; touchSession(sid) } else { state.attempts[owner]?.question = q; touch(owner) }
+            state.pendingCalls[id] = CallRec(kind: async ? .asyncQuestion : .question, owner: owner, session: sid, at: at)
+        case .planCreate(let id, let title):
+            guard owner.hasPrefix("session:") else { return }
+            state.pendingCalls[id] = CallRec(kind: .planCreate, owner: owner, session: sid, at: at, title: title)
+        default:
+            guard owner.hasPrefix("session:"), var s = state.sessions[sid] else { return }
+            applyPlan(call, to: &s, at: at)
+            state.sessions[sid] = s
+            touchSession(sid)
+        }
+        changed = true
+    }
+
+    /// The result of a question or plan call.
+    private func callResult(_ r: ClaudeTranscript.Result, _ c: CallRec, meta: ClaudeTranscript.ResultMeta?, at: Double) {
+        state.pendingCalls[r.toolUseID] = nil
+        switch c.kind {
+        case .question, .asyncQuestion:
+            answered(r.toolUseID, owner: c.owner, session: c.session, at: at)
+        case .planCreate:
+            guard !r.isError, var s = state.sessions[c.session] else { break }
+            var list = s.plan ?? []
+            // The id Claude Code gave it; its ids count up from 1 when the result doesn't say.
+            let id = meta?.taskID.flatMap { TaskRunID.sanitize($0) == $0 ? $0 : nil } ?? String((list.compactMap { Int($0.id) }.max() ?? 0) + 1)
+            // A reused id (the list was started over) takes the old item's place.
+            let entry = PlanEntry(id: id, title: HarnessText.clip(c.title ?? "", HarnessText.titleLength), status: .pending)
+            if let i = list.firstIndex(where: { $0.id == id }) { list[i] = entry } else { list.append(entry) }
+            s.plan = list
+            s.planTool = HarnessCall.toolLabel("TaskCreate")
+            s.planAt = at
+            state.sessions[c.session] = s
+            touchSession(c.session)
+        }
+        changed = true
+    }
+
+    private func answered(_ id: String, owner: String, session sid: String, at: Double) {
+        if owner.hasPrefix("session:") {
+            guard state.sessions[sid]?.question?.id == id else { return }
+            state.sessions[sid]?.question?.answeredAt = at
+            touchSession(sid)
+        } else {
+            guard state.attempts[owner]?.question?.id == id else { return }
+            state.attempts[owner]?.question?.answeredAt = at
+            touch(owner)
+        }
+    }
+
+    /// The person interrupted a turn: the session stops, and the foreground agents it was
+    /// waiting on are cut off with it. In an agent's own transcript, that agent is.
+    private func interrupted(_ owner: String, session sid: String, at: Double) {
+        guard owner.hasPrefix("session:") else {
+            end(owner, at: at, .interrupted)
+            return
+        }
+        for (id, sp) in state.spawns where sp.tool == .agent && sp.spawner == owner && sp.resultAt == nil && sp.endedAt == nil && sp.at <= at {
+            if let key = sp.attempt { end(key, at: at, .interrupted) } else {
+                state.spawns[id]?.endedAt = at
+                state.spawns[id]?.outcome = .interrupted
+            }
+        }
+        if var s = state.sessions[sid], s.stoppedAt == nil {
+            s.stoppedAt = at
+            s.stopKey = nil
+            s.interrupted = true
+            state.sessions[sid] = s
+            touchSession(sid)
+        }
+        changed = true
+    }
+
+    /// Applies a plan tool call to the session's list.
+    private func applyPlan(_ call: HarnessCall, to s: inout SessionRec, at: Double) {
+        var list = s.plan ?? []
+        switch call {
+        case .planList(let tool, let items):
+            var seen: Set<String> = []
+            list = items.enumerated().map { i, d in
+                var id = d.id.flatMap { TaskRunID.sanitize($0) == $0 ? $0 : nil } ?? HarnessText.positionalID(i, d.title)
+                if !seen.insert(id).inserted { id = HarnessText.positionalID(i, d.title + "\u{1F}\(i)") }
+                return PlanEntry(id: id, title: HarnessText.clip(d.title, HarnessText.titleLength), status: Self.planStatus(d.status))
+            }
+            s.planTool = tool
+        case .planUpdate(let task, let status, let title):
+            guard let i = list.firstIndex(where: { $0.id == task }) else { return }
+            if status == "deleted" { list.remove(at: i) } else {
+                if let status { list[i].status = Self.planStatus(status) }
+                if let title { list[i].title = HarnessText.clip(title, HarnessText.titleLength) }
+            }
+        case .planStep(let advance, let done, let start):
+            guard !list.isEmpty else { return }
+            for d in done where d >= 1 && d <= list.count { list[d - 1].status = .completed }
+            if advance {
+                if let i = list.firstIndex(where: { $0.status == .inProgress }) { list[i].status = .completed }
+                if start == nil, let j = list.firstIndex(where: { $0.status == .pending }) { list[j].status = .inProgress }
+            }
+            if let st = start, st >= 1, st <= list.count { list[st - 1].status = .inProgress }
+        case .planFinish:
+            for i in list.indices where list[i].status == .pending || list[i].status == .inProgress { list[i].status = .completed }
+        case .ask, .planCreate:
+            return
+        }
+        guard list != s.plan ?? [] else { return }
+        s.plan = list
+        s.planAt = at
+    }
+
+    static func planStatus(_ raw: String?) -> TaskPlanItem.Status {
+        switch raw?.lowercased() {
+        case "in_progress", "in-progress", "inprogress", "active", "running": .inProgress
+        case "completed", "complete", "done": .completed
+        case "cancelled", "canceled", "deleted", "skipped": .cancelled
+        default: .pending
+        }
+    }
+
     /// Fills an agent from the call that spawned it.
     private func link(_ key: String, to toolUseID: String) {
         guard var a = state.attempts[key], let sp = state.spawns[toolUseID] else { return }
@@ -424,7 +615,19 @@ public actor TaskObserver {
         if a.lastAt < sp.at { a.lastAt = sp.at }
         state.attempts[key] = a
         if let e = sp.endedAt { end(key, at: e, sp.outcome ?? .ok) }
+        foregroundWork(key, at: a.lastAt)
         touch(key)
+    }
+
+    /// A foreground agent at work is its session at work: the session is waiting on its result.
+    /// (Older Claude Code wrote this as progress lines in the session's own transcript.)
+    private func foregroundWork(_ key: String, at: Double) {
+        guard at > 0, let a = state.attempts[key], a.kind == .agent, a.endedAt == nil, let tu = a.toolUseID, let sp = state.spawns[tu],
+              sp.tool == .agent, sp.resultAt == nil, sp.spawner == "session:" + a.session,
+              var s = state.sessions[a.session], s.stoppedAt == nil, at > s.lastAt else { return }
+        s.lastAt = at
+        state.sessions[a.session] = s
+        touchSession(a.session)
     }
 
     private func end(_ key: String, at: Double, _ outcome: TaskAttemptOutcome) {
@@ -445,7 +648,11 @@ public actor TaskObserver {
 
     private func codexLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile) {
         let wantText = !file.sawText
-        guard let (lineAt, event) = CodexTranscript.parse(p, n, wantText: wantText) else { return }
+        // A question waiting on its call's output: only then are output lines looked into.
+        let pending = file.session.flatMap { state.sessions[$0]?.question }.flatMap { q in
+            state.pendingCalls[q.id]?.kind == .question && q.answeredAt == nil ? q.id : nil
+        }
+        guard let (lineAt, event) = CodexTranscript.parse(p, n, wantText: wantText, pendingCall: pending) else { return }
         let at = lineAt ?? 0
         if case .meta(let id, let cwd, let started) = event {
             guard let sid = TaskRunID.sanitize(id), sid == id else { return }
@@ -454,23 +661,54 @@ public actor TaskObserver {
                 state.sessions[sid] = SessionRec(id: sid, harness: "codex", project: cwd.flatMap(Bytes.lastPathComponent),
                                                  startedAt: started ?? at, lastAt: started ?? at)
             }
+            if state.sessions[sid]?.cwd == nil, let cwd, !cwd.isEmpty { state.sessions[sid]?.cwd = cwd }
             touchSession(sid)
             return
         }
         guard let sid = file.session, var s = state.sessions[sid] else { return }
-        // Bookkeeping lines after a turn's end don't reopen it.
-        if at > 0, s.stoppedAt == nil || { if case .started = event { true } else { false } }() { s.lastAt = max(s.lastAt, at) }
+        let works: Bool
         switch event {
-        case .meta: break
+        case .limit, .tokens(_, true), .completed(true): works = false
+        default: works = true
+        }
+        // Bookkeeping lines after a turn's end don't reopen it.
+        if at > 0, works, s.stoppedAt == nil || { if case .started = event { true } else { false } }() { s.lastAt = max(s.lastAt, at) }
+        /// The person's next message answers an async question.
+        func answerAsync() {
+            if let q = s.question, q.answeredAt == nil, state.pendingCalls[q.id]?.kind == .asyncQuestion, at > q.at {
+                s.question?.answeredAt = at
+                state.pendingCalls[q.id] = nil
+            }
+        }
+        func limited() {
+            if at > 0, s.limitAt.map({ s.lastAt > $0 }) ?? true { s.limitAt = at; s.limitNote = "Usage limit reached" }
+        }
+        switch event {
+        case .meta, .activity: break
         case .model(let m): s.model = m
-        case .started: s.stoppedAt = nil; s.aborted = false
-        case .completed: s.stoppedAt = at
-        case .aborted: s.stoppedAt = at; s.aborted = true
-        case .tokens(let t): s.tokens = max(s.tokens, t)
+        case .started: s.stoppedAt = nil; s.aborted = false; s.interrupted = nil; answerAsync()
+        case .completed(let limit): s.stoppedAt = at; if limit { limited() }
+        case .aborted(let byPerson): s.stoppedAt = at; s.aborted = true; s.interrupted = byPerson ? true : nil
+        case .tokens(let t, let limit): s.tokens = max(s.tokens, t); if limit { limited() }
+        case .limit: limited()
+        case .userMessage: answerAsync()
         case .text(let text):
             file.sawText = true
             let c = Fingerprint.candidates(text)
             if !c.isEmpty, s.boundTo == nil { s.candidates = c }
+            answerAsync()
+        case .call(let call):
+            if case .ask(let id, let text, let options, let async) = call {
+                s.question = PendingQuestion(id: id, text: text, options: options, at: at)
+                state.pendingCalls[id] = CallRec(kind: async ? .asyncQuestion : .question, owner: "session:" + sid, session: sid, at: at)
+            } else {
+                applyPlan(call, to: &s, at: at)
+            }
+        case .output(let id):
+            if state.pendingCalls[id]?.kind == .question {
+                state.pendingCalls[id] = nil
+                if s.question?.id == id { s.question?.answeredAt = at }
+            }
         }
         state.sessions[sid] = s
         touchSession(sid)
@@ -526,15 +764,18 @@ public actor TaskObserver {
 
     // MARK: Binding delegates to their sessions
 
-    /// Children start after their delegate (within half an hour); among delegates with the same
-    /// brief, the latest one before the child wins, so a retried brief binds in order.
+    /// Children start after their delegate (within half an hour) in the harness the delegate asked
+    /// for; among delegates with the same brief, the latest one before the child wins, so a
+    /// retried brief binds in order. The same brief sent to Codex and to Claude binds each child
+    /// to its own.
     private func bind() {
         var open = state.attempts.values.filter { $0.kind == .delegate && $0.child == nil && $0.brief != nil }
         guard !open.isEmpty else { return }
         let children = state.sessions.values.filter { $0.boundTo == nil && !($0.candidates ?? []).isEmpty }.sorted { $0.startedAt < $1.startedAt }
         for c in children {
             let set = Set(c.candidates!)
-            guard let d = open.filter({ set.contains($0.brief!) && $0.session != c.id && $0.startedAt <= c.startedAt + 5 && c.startedAt - $0.startedAt < 1800 })
+            guard let d = open.filter({ set.contains($0.brief!) && $0.session != c.id && Self.provider($0.provider, runs: c.harness)
+                    && $0.startedAt <= c.startedAt + 5 && c.startedAt - $0.startedAt < 1800 })
                 .max(by: { $0.startedAt < $1.startedAt }) else { continue }
             open.removeAll { $0.key == d.key }
             state.attempts[d.key]?.child = c.id
@@ -545,6 +786,15 @@ public actor TaskObserver {
             // Its agents move under the delegate, into the delegate's run.
             for a in state.attempts.values where a.session == c.id { touch(a.key) }
             changed = true
+        }
+    }
+
+    /// Whether a delegate's provider (`codex`, `claude`, or unknown: any) runs sessions of `harness`.
+    static func provider(_ provider: String?, runs harness: String) -> Bool {
+        switch provider {
+        case "codex": harness == "codex"
+        case "claude": harness == "claude-code"
+        default: true
         }
     }
 
@@ -565,7 +815,7 @@ public actor TaskObserver {
             last = max(last, c.lastAt)
             tokens = c.tokens
             // The child's turn ending ends the delegate, unless the parent heard of an end since.
-            if let stop = c.stoppedAt, end == nil || stop > end! { end = stop; outcome = c.aborted ? .error : .ok }
+            if let stop = c.stoppedAt, end == nil || stop > end! { end = stop; outcome = c.interrupted == true ? .interrupted : c.aborted ? .error : .ok }
         }
         if a.kind == .agent, end == nil, let w = a.spawner, w.hasPrefix("workflow:"), let wf = state.attempts[w], let e = wf.endedAt {
             end = max(e, last); outcome = wf.outcome
@@ -636,11 +886,21 @@ public actor TaskObserver {
                 a.out.endedAt = nil
                 a.out.outcome = nil
             }
+            // Its own question, or its child session's when it's a delegate.
+            let child = a.kind == .delegate ? a.child.flatMap { state.sessions[$0] } : nil
+            let question = a.question ?? child?.question
+            var answeredAt: Double?
+            if let q = question, let t = q.answeredAt {
+                if a.out.question != nil { answeredAt = t; a.out.question = nil }
+                if a.question != nil { a.question = nil } else if let cid = child?.id { state.sessions[cid]?.question = nil }
+            }
             let ending = fx.end != nil && (a.out.endedAt != fx.end || a.out.outcome != fx.outcome)
             let moved = fx.last > (a.out.activityAt ?? -1) || fx.tokens != (a.out.tokens ?? 0)
-            if moved, ending || wall - (a.out.wall ?? 0) >= Self.activityInterval {
-                event(fx.last, run, .activity(attempt: key, at: nil, tokens: fx.tokens > 0 ? fx.tokens : nil))
-                a.out.activityAt = fx.last
+            // An answer is written at once: it clears the wait.
+            if moved || answeredAt != nil, ending || answeredAt != nil || wall - (a.out.wall ?? 0) >= Self.activityInterval {
+                let last = max(fx.last, answeredAt ?? 0)
+                event(last, run, .activity(attempt: key, at: nil, tokens: fx.tokens > 0 ? fx.tokens : nil))
+                a.out.activityAt = last
                 a.out.tokens = fx.tokens
                 a.out.wall = wall
                 pending.remove(key)
@@ -650,6 +910,15 @@ public actor TaskObserver {
             if fx.end == nil, let w = a.waitAt, w > (a.out.waitAt ?? 0) {
                 event(w, run, .wait(task: nil, attempt: key, reason: .input, note: nil))
                 a.out.waitAt = w
+            }
+            if fx.end == nil, let q = question, q.answeredAt == nil, a.out.question != q.id {
+                event(q.at, run, .wait(task: nil, attempt: key, reason: .input, note: q.text, options: q.options.isEmpty ? nil : q.options))
+                a.out.question = q.id
+            }
+            let limitAt = a.limitAt ?? child?.limitAt
+            if fx.end == nil, let l = limitAt, l > (a.out.limitAt ?? 0) {
+                event(l, run, .wait(task: nil, attempt: key, reason: .limit, note: a.limitAt != nil ? a.limitNote : child?.limitNote))
+                a.out.limitAt = l
             }
             if ending, let e = fx.end {
                 event(e, run, .attemptEnd(attempt: key, outcome: fx.outcome ?? .ok))
@@ -662,22 +931,37 @@ public actor TaskObserver {
         var journals: [String: Bool] = [:]
         for sid in touchedSessions.sorted() {
             guard var s = state.sessions[sid], s.boundTo == nil, s.lastAt > 0, TaskRunID.sanitize(sid) == sid else { continue }
-            if !s.spawned {
+            // A question answered before anything was written for it is nothing to tell.
+            if let q = s.question, q.answeredAt != nil, s.out.question == nil {
+                s.question = nil
+                state.sessions[sid] = s
+            }
+            let planned = (s.plan?.count ?? 0) >= 2 || s.out.plan != nil
+            if !s.spawned, !planned {
                 let has = journals[sid] ?? FileManager.default.fileExists(atPath: TaskJournal.url(run: sid, stream: .journal, home: home).path)
                 journals[sid] = has
                 guard has else { continue }
             }
             let key = "session:" + sid
-            if !state.metaRuns.contains(sid) {
-                event(s.startedAt, sid, .meta(title: nil, project: s.project, harness: s.harness))
+            if s.out.run != sid { s.out = Emitted(run: sid) }
+            let metaKey = [s.project, s.harness, s.host, s.cwd].map { $0 ?? "" }.joined(separator: "\u{1F}")
+            if !state.metaRuns.contains(sid) || s.out.meta != metaKey {
+                event(s.startedAt, sid, .meta(title: nil, project: s.project, harness: s.harness, host: s.host, cwd: s.cwd))
                 state.metaRuns.insert(sid)
+                s.out.meta = metaKey
             }
             let provider = s.harness == "codex" ? "codex" : "claude"
             let specKey = [s.model ?? "", provider].joined(separator: "\u{1F}")
-            if s.out.run != sid { s.out = Emitted(run: sid) }
             if s.out.spec != specKey {
                 event(s.startedAt, sid, .attempt(.init(key: key, kind: .session, model: s.model, provider: provider)))
                 s.out.spec = specKey
+            }
+            if let plan = s.plan, planned {
+                let planKey = plan.map { [$0.id, $0.title, $0.status.rawValue].joined(separator: "\u{1F}") }.joined(separator: "\u{1E}")
+                if s.out.plan != planKey {
+                    event(s.planAt ?? s.lastAt, sid, .planMirror(items: plan.map { TaskPlanItem(id: $0.id, title: $0.title, status: $0.status) }, tool: s.planTool))
+                    s.out.plan = planKey
+                }
             }
             let moved = s.lastAt > (s.out.activityAt ?? -1) || s.tokens != (s.out.tokens ?? 0)
             let stopped = s.stoppedAt != nil
@@ -689,6 +973,21 @@ public actor TaskObserver {
                 pending.remove(sid)
             } else if moved {
                 pending.insert(sid)
+            }
+            if let q = s.question {
+                if let t = q.answeredAt {
+                    // Answered: the run works again. Any written question is past, whichever it was.
+                    if s.out.question != nil { event(t, sid, .resume) }
+                    s.out.question = nil
+                    s.question = nil
+                } else if s.out.question != q.id {
+                    event(q.at, sid, .wait(task: nil, attempt: nil, reason: .input, note: q.text, options: q.options.isEmpty ? nil : q.options))
+                    s.out.question = q.id
+                }
+            }
+            if let l = s.limitAt, l > (s.out.limitAt ?? 0) {
+                event(l, sid, .wait(task: nil, attempt: nil, reason: .limit, note: s.limitNote))
+                s.out.limitAt = l
             }
             if stopped != (s.outStopped ?? false) {
                 if let at = s.stoppedAt { event(at, sid, .stop(blocked: false)) } else { event(s.lastAt, sid, .resume) }
@@ -741,6 +1040,7 @@ public actor TaskObserver {
         state.delegateTasks = state.delegateTasks.filter { state.attempts[$0.value] != nil }
         state.files = state.files.filter { $0.value.mtime >= week }
         state.metaRuns = state.metaRuns.filter { state.sessions[$0] != nil }
+        state.pendingCalls = state.pendingCalls.filter { $0.value.at >= week }
         changed = true
     }
 

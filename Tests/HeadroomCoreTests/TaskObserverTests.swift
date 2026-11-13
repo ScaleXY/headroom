@@ -19,11 +19,12 @@ enum Fx {
     }
 
     static func assistant(_ s: Double, _ session: String, id: String, tokens: Int = 0, stop: String = "tool_use", _ content: [[String: Any]],
-                          agent: String? = nil) -> String {
+                          agent: String? = nil, extra: [String: Any] = [:]) -> String {
         var o: [String: Any] = ["type": "assistant", "timestamp": ts(s), "sessionId": session, "cwd": cwd, "requestId": "req-" + id, "uuid": UUID().uuidString,
                                 "message": ["id": id, "role": "assistant", "model": "claude-opus-5-5", "stop_reason": stop, "content": content,
                                             "usage": ["input_tokens": tokens, "output_tokens": tokens, "cache_read_input_tokens": 50_000, "cache_creation_input_tokens": 0]]]
         if let agent { o["agentId"] = agent; o["isSidechain"] = true }
+        o.merge(extra) { _, new in new }
         return json(o)
     }
 
@@ -477,8 +478,12 @@ extension Array where Element == TaskEvent {
         _ = await h.observer().scan(since: Fx.t0)
         let bytes = h.allBytes()
         #expect(!bytes.isEmpty)
+        // The working folder goes on `run.meta` only (it stays on this Mac); nothing else carries a path.
+        let metas = h.events("s14").ops("run.meta")
+        #expect(!metas.isEmpty && metas.allSatisfy { if case .meta(_, _, _, _, let cwd) = $0.op { cwd == Fx.cwd } else { false } })
+        let rest = bytes.replacingOccurrences(of: #""cwd":"\#(Fx.cwd)""#, with: "")
         for secret in ["SECRET", "/Users", "someone", "code/demo", "payment", "retry queue for the sync", h.logs.url.path, "codex_someone"] {
-            #expect(!bytes.contains(secret), "wrote \(secret)")
+            #expect(!rest.contains(secret), "wrote \(secret)")
         }
         // The observer's own state keeps no prompt either: briefs are hashes.
         let state = try String(decoding: Data(contentsOf: TaskObserver.stateURL(home: h.home)), as: UTF8.self)
