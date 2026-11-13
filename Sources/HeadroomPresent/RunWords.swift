@@ -42,6 +42,20 @@ public enum RunWords {
     public static func alertQuiet(_ run: String) -> String { "\(run) went quiet" }
     public static func alertCriticalFailed(_ run: String) -> String { "\(run): a critical task failed" }
 
+    // The menu bar, where room is short: "quiet 18m", "2 need you".
+    public static func quietShort(_ duration: String) -> String { "quiet \(duration)" }
+    public static func needYou(_ count: Int) -> String { "\(count) need you" }
+
+    // Spoken (VoiceOver) forms for the menu bar.
+    public static let spokenOneNeedsInput = "A run needs your input."
+    public static func spokenNeedInput(_ count: Int) -> String { count == 1 ? spokenOneNeedsInput : "\(count) runs need your input." }
+    public static func spokenLive(_ count: Int) -> String { "\(count) runs going." }
+
+    /// Who is asking, at the top of a question: "Switch the queries over is asking".
+    public static func asking(_ task: String?) -> String { task.map { "\($0) is asking" } ?? "The agent is asking" }
+    /// A plan read from the harness's own list (`plan.mirror`), not declared by the agent.
+    public static let fromSessionPlan = "from the session's plan"
+
     /// The run's state in plain words. `limitWarning` names the limit for a run waiting on one.
     public static func state(_ s: TaskRunState, waitReason: TaskWaitReason?, abandoned: Bool = false, limitWarning: String? = nil) -> String {
         if abandoned { return Self.abandoned }

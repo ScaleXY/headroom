@@ -26,9 +26,12 @@ public struct RunSegment: Sendable, Hashable {
     /// A must-have: drawn with a tick beneath it.
     public var critical: Bool
     public var title: String?
+    /// The leaf failed: drawn in the failure treatment, never as "needs you" (`tone` is `.alert`
+    /// for a failed must-have and for a question alike).
+    public var failed: Bool
 
-    public init(weight: Double, fill: Double, tone: RunTone, critical: Bool = false, title: String? = nil) {
-        self.weight = weight; self.fill = fill; self.tone = tone; self.critical = critical; self.title = title
+    public init(weight: Double, fill: Double, tone: RunTone, critical: Bool = false, title: String? = nil, failed: Bool = false) {
+        self.weight = weight; self.fill = fill; self.tone = tone; self.critical = critical; self.title = title; self.failed = failed
     }
 }
 
@@ -224,15 +227,18 @@ public struct RunsPageModel: Sendable, Hashable {
     public var recent: [RunCardModel]
     /// Finished runs of the last day past the ones shown.
     public var moreRecent: Int
+    /// Every finished run of the last day is listed ("+ N more" was opened).
+    public var allRecent: Bool
 
-    public init(live: [RunCardModel] = [], recent: [RunCardModel] = [], moreRecent: Int = 0) {
-        self.live = live; self.recent = recent; self.moreRecent = moreRecent
+    public init(live: [RunCardModel] = [], recent: [RunCardModel] = [], moreRecent: Int = 0, allRecent: Bool = false) {
+        self.live = live; self.recent = recent; self.moreRecent = moreRecent; self.allRecent = allRecent
     }
 
     public var isEmpty: Bool { live.isEmpty && recent.isEmpty }
 
     public static let emptyTitle = "No runs yet"
-    public static let emptyBody = "Runs show up here when an agent spawns subagents. Run headroom hooks install for needs-input alerts, and headroom task guide to have agents report percentages."
+    public static let emptyBody = "Runs show up here while an agent works through a plan or spawns subagents. Connect Claude Code or Codex to see their questions, progress and a receipt for each run."
+    public static let emptyAction = "Connect your agents"
     public static let recentTitle = "Finished in the last day"
 }
 
@@ -263,6 +269,8 @@ public struct RunsPresenter: Sendable {
     public var now: Date
     public var calendar: Calendar
     public var locale: Locale
+    /// Prices a finished run's receipt; nil leaves the cost out.
+    public var pricing: PricingEngine?
 
     /// Rows per card before "and N more".
     public static let rowCap = 10
@@ -272,69 +280,104 @@ public struct RunsPresenter: Sendable {
     /// Finished runs stay on the tab this long.
     public static let recentWindow: TimeInterval = 86400
     public static let recentCap = 4
+    /// Finished runs listed once "+ N more" is opened.
+    public static let recentExpandedCap = 24
+    /// Past this many counted leaves the map would be hairlines: the three-part bar stands in.
+    public static let maxSegments = 48
 
-    public init(now: Date, calendar: Calendar = Display.calendar, locale: Locale = Display.locale) {
-        self.now = now; self.calendar = calendar; self.locale = locale
+    public init(now: Date, calendar: Calendar = Display.calendar, locale: Locale = Display.locale, pricing: PricingEngine? = nil) {
+        self.now = now; self.calendar = calendar; self.locale = locale; self.pricing = pricing
     }
 
-    /// `runs` most pressing first (`sortedForDisplay`, as `AppModel.taskRuns` has them).
-    public func page(_ runs: [TaskRun], expanded: Set<String> = []) -> RunsPageModel {
-        let shown = runs.filter { now.timeIntervalSince($0.updatedAt) < Self.recentWindow }
-        let live = shown.filter { !$0.state.isTerminal }
-        let finished = shown.filter(\.state.isTerminal).sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
-        let recent = Array(finished.prefix(Self.recentCap))
+    /// Finished, or given up on: it sits with the finished runs and shows a receipt.
+    public static func isFinished(_ r: TaskRun) -> Bool { r.state.isTerminal || r.abandoned }
+
+    /// The key of an opened row in `page(_:expanded:opened:allRecent:)`'s `opened`.
+    public static func rowKey(run: String, row: String) -> String { run + "\u{1F}" + row }
+
+    /// `runs` most pressing first (`sortedForDisplay`, as `AppModel.taskRuns` has them). `expanded`
+    /// holds runs showing all their rows, `opened` rows showing their details (`rowKey`), and
+    /// `allRecent` lists every finished run of the last day.
+    public func page(_ runs: [TaskRun], expanded: Set<String> = [], opened: Set<String> = [], allRecent: Bool = false) -> RunsPageModel {
+        // Hidden runs never show; a run waiting on you stays however long it has waited.
+        let shown = runs.filter { r in
+            !r.hidden && (now.timeIntervalSince(r.updatedAt) < Self.recentWindow || (!Self.isFinished(r) && r.needsInput))
+        }
+        let live = shown.filter { !Self.isFinished($0) }
+        let finished = shown.filter(Self.isFinished).sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
+        let recent = Array(finished.prefix(allRecent ? Self.recentExpandedCap : Self.recentCap))
         // Runs with the same name say when they started.
         var counts: [String: Int] = [:]
         for r in live + recent { counts[baseTitle(r), default: 0] += 1 }
-        func make(_ r: TaskRun) -> RunCardModel { card(r, expanded: expanded.contains(r.id), sayStart: (counts[baseTitle(r)] ?? 0) > 1) }
-        return RunsPageModel(live: live.map(make), recent: recent.map(make), moreRecent: finished.count - recent.count)
+        func make(_ r: TaskRun) -> RunCardModel {
+            card(r, expanded: expanded.contains(r.id), sayStart: (counts[baseTitle(r)] ?? 0) > 1, opened: opened)
+        }
+        return RunsPageModel(live: live.map(make), recent: recent.map(make), moreRecent: finished.count - recent.count,
+                             allRecent: allRecent && finished.count > Self.recentCap)
     }
 
     /// The indicator for the most pressing run that's running or waiting; nil when none is.
     public func menuBar(_ runs: [TaskRun]) -> RunsMenuBarModel? {
-        let live = runs.filter { ($0.state == .running || $0.state == .waiting) && $0.isActive(now: now) }
+        let live = runs.filter { ($0.state == .running || $0.state == .waiting) && !$0.hidden && !$0.abandoned && $0.isActive(now: now) }
         guard let r = live.first else { return nil }
-        let needs = live.contains(where: \.needsInput)
+        let asking = live.filter(\.needsInput).count
+        let quiet = r.state == .running && r.stale
         let name = displayTitle(r)
+        let fraction: Double, figure: String, spokenFigure: String
         if r.hasDeclaredTasks {
-            let pct = percent(r.progress.done)
-            return RunsMenuBarModel(fraction: r.progress.done, text: "\(pct)%", needsInput: needs,
-                                    spoken: "\(name): \(pct)% done." + (needs ? " A run needs your input." : ""))
+            let pct = shownPercent(r)
+            (fraction, figure, spokenFigure) = (max(r.progress.done, r.progress.estimate), "\(pct)%", "\(pct)% done.")
+        } else {
+            let (finished, total) = agentCounts(r)
+            (fraction, figure, spokenFigure) = (total > 0 ? Double(finished) / Double(total) : 0, "\(finished)/\(total)", "\(finished) of \(total) agents finished.")
         }
-        let (finished, total) = agentCounts(r)
-        return RunsMenuBarModel(fraction: total > 0 ? Double(finished) / Double(total) : 0, text: "\(finished)/\(total)", needsInput: needs,
-                                spoken: "\(name): \(finished) of \(total) agents finished." + (needs ? " A run needs your input." : ""))
+        let quietFor = TimeFormat.compact(now.timeIntervalSince(r.updatedAt))
+        let text = asking > 1 ? RunWords.needYou(asking) : quiet ? RunWords.quietShort(quietFor) : figure
+        var spoken = "\(name): " + (quiet ? RunWords.quiet(quietFor) + "." : spokenFigure)
+        if live.count > 1 { spoken += " " + RunWords.spokenLive(live.count) }
+        if asking > 0 { spoken += " " + RunWords.spokenNeedInput(asking) }
+        return RunsMenuBarModel(fraction: fraction, text: text, needsInput: asking > 0, spoken: spoken, liveCount: live.count,
+                                needsInputCount: asking, quiet: quiet && asking < 2)
     }
 
     // MARK: Card
 
-    public func card(_ r: TaskRun, expanded: Bool = false, sayStart: Bool = false) -> RunCardModel {
+    public func card(_ r: TaskRun, expanded: Bool = false, sayStart: Bool = false, opened: Set<String> = []) -> RunCardModel {
         let declared = r.hasDeclaredTasks
+        let finished = Self.isFinished(r)
         let (glyph, tone) = Self.look(r)
         var figures: [String] = []
         var headline: String
-        var estimate: String?
+        var counts: String?
+        var segments: [RunSegment] = []
         if declared {
-            headline = "\(percent(r.progress.done))%"
-            if percent(r.progress.estimate) > percent(r.progress.done) { estimate = "~\(percent(r.progress.estimate))%" }
+            // The best guess, rounded down: the map beside it shows what it's made of.
+            headline = "\(shownPercent(r))%"
+            counts = self.counts(r, live: !finished)
+            if r.mirrored { figures.append(RunWords.fromSessionPlan) }
             if r.mustHaves.total > 0 { figures.append("must-haves \(r.mustHaves.done) of \(r.mustHaves.total)") }
-            if let eta = r.etaSeconds { figures.append("about \(TimeFormat.compact(eta)) left") }
+            if !finished, let eta = etaText(r) { figures.append(eta) }
+            if !finished { segments = Self.segments(r) }
         } else {
             // No percent and no ETA: nobody knows how many more agents will come.
-            let (finished, total) = agentCounts(r)
-            headline = total == 0 ? "No agents yet" : "\(finished) of \(total) agent\(total == 1 ? "" : "s") finished"
+            let (done, total) = agentCounts(r)
+            headline = total == 0 ? "No agents yet" : "\(done) of \(total) agent\(total == 1 ? "" : "s") finished"
             let running = r.nodes.filter { $0.state == .running }.count
             let failed = r.nodes.filter { $0.state == .failed }.count
             if running > 0 { figures.append("\(running) running") }
             if failed > 0 { figures.append("\(failed) failed") }
         }
         if r.tokens > 0 { figures.append("\(NumberFormat.tokens(r.tokens)) tokens") }
-        let built = rows(r, expanded: expanded)
+        let built = rows(r, expanded: expanded, opened: opened)
+        let expandable = built.finished > 0 || built.pressing > Self.rowCap
+        let timeline = finished ? nil : self.timeline(r)
         return RunCardModel(id: r.id, title: displayTitle(r, sayStart: sayStart), subtitle: subtitle(r), stateText: stateText(r), glyph: glyph,
-                            tone: tone, live: !r.state.isTerminal, declared: declared, needsInput: r.needsInput,
+                            tone: tone, live: !finished, declared: declared, needsInput: r.needsInput,
                             provider: TaskLimits.provider(named: r.harness), bar: declared ? r.progress : nil, headline: headline,
-                            estimate: estimate, figures: figures, warning: r.warning, rows: built.rows, expandable: built.finished > 0,
-                            expanded: expanded && built.finished > 0)
+                            estimate: nil, figures: figures, warning: timeline == nil ? r.warning : nil, rows: built.rows,
+                            expandable: expandable, expanded: expanded && expandable,
+                            segments: segments, counts: counts, elapsed: elapsed(r), question: r.needsInput ? question(r) : nil,
+                            timeline: timeline, receipt: finished ? receipt(r) : nil, actions: Self.actions(r))
     }
 
     /// The agent's title; else the project folder; else what ran it. Never the session id.
@@ -366,48 +409,33 @@ public struct RunsPresenter: Sendable {
         if let h = Self.harnessName(r.harness) { parts.append(h) }
         let age = TimeFormat.freshness(since: r.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
-        parts.append(r.state.isTerminal ? "finished \(ago)" : "updated \(ago)")
+        parts.append(Self.isFinished(r) ? "finished \(ago)" : "updated \(ago)")
         return parts.joined(separator: " · ")
     }
 
-    /// The run's state in plain words.
+    /// The run's state in plain words (`RunWords`).
     public func stateText(_ r: TaskRun) -> String {
-        switch r.state {
-        case .running where r.stale: "Quiet for \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt)))"
-        case .running: "Running"
-        case .waiting:
-            switch r.waitReason ?? .dependency {
-            case .input: "Needs your input"
-            case .limit: Self.limitWords(r.warning)
-            case .dependency: "Waiting on another task"
-            }
-        case .stopped: "Stopped with work left"
-        case .done: "Done"
-        case .partial: "Finished with failures"
-        case .failed: "Failed"
-        }
+        if !r.abandoned, r.state == .running, r.stale { return RunWords.quiet(TimeFormat.compact(now.timeIntervalSince(r.updatedAt))) }
+        return RunWords.state(r.state, waitReason: r.waitReason, abandoned: r.abandoned, limitWarning: r.warning)
     }
 
     /// `TaskLimits` names the limit in the warning it writes.
-    static func limitWords(_ warning: String?) -> String {
-        let w = warning ?? ""
-        if w.contains("weekly") { return "Waiting on the weekly limit" }
-        if w.contains("outage") { return "Waiting out an outage" }
-        if w.contains("5-hour") || w.isEmpty { return "Waiting on the 5-hour limit" }
-        return "Waiting on a usage limit"
-    }
+    static func limitWords(_ warning: String?) -> String { RunWords.waitingOnLimit(warning) }
 
+    /// Rose (`.alert` with `.needsInput`) is for a run that needs you; a failure is `.alert` with
+    /// `.failed`, which surfaces draw in their failure colour.
     static func look(_ r: TaskRun) -> (RunGlyph, RunTone) {
+        if r.abandoned { return (.skipped, .quiet) }
         switch r.state {
-        case .running where r.stale: (.stale, .warn)
-        case .running: (.running, .progress)
-        case .waiting where r.waitReason == .input: (.needsInput, .alert)
-        case .waiting where r.waitReason == .limit: (.waiting, .warn)
-        case .waiting: (.waiting, .neutral)
-        case .stopped: (.stopped, .warn)
-        case .done: (.done, .neutral)
-        case .partial: (.partial, .warn)
-        case .failed: (.failed, .alert)
+        case .running where r.stale: return (.stale, .warn)
+        case .running: return (.running, .progress)
+        case .waiting where r.waitReason == .input: return (.needsInput, .alert)
+        case .waiting where r.waitReason == .limit: return (.waiting, .warn)
+        case .waiting: return (.waiting, .neutral)
+        case .stopped: return (.stopped, .warn)
+        case .done: return (.done, .neutral)
+        case .partial: return (.partial, .warn)
+        case .failed: return (.failed, .alert)
         }
     }
 
@@ -420,17 +448,206 @@ public struct RunsPresenter: Sendable {
     /// Whole percent, rounded down (never "100%" before it's done); the nudge keeps 0.57 at 57.
     func percent(_ f: Double) -> Int { Int((min(max(f, 0), 1) * 100 + 1e-9).rounded(.down)) }
 
+    /// The headline figure: the estimate, rounded down, and never 100% until the run is done.
+    func shownPercent(_ r: TaskRun) -> Int {
+        let p = percent(max(r.progress.done, r.progress.estimate))
+        return r.state == .done ? p : min(p, 99)
+    }
+
+    /// "5 of 11 tasks · 3 running": closed counted leaves over all of them ("steps" for a mirrored plan).
+    func counts(_ r: TaskRun, live: Bool) -> String? {
+        var total = 0, done = 0, running = 0
+        for n in r.nodes where n.leaf && n.counted {
+            total += 1
+            if n.state == .done { done += 1 }
+            if n.state == .running { running += 1 }
+        }
+        guard total > 0 else { return nil }
+        let noun = r.mirrored ? (total == 1 ? "step" : "steps") : (total == 1 ? "task" : "tasks")
+        return "\(done) of \(total) \(noun)" + (live && running > 0 ? " · \(running) running" : "")
+    }
+
+    /// "20–35m left" from the range, else "about 25m left".
+    func etaText(_ r: TaskRun) -> String? {
+        if let lo = r.etaLowSeconds, let hi = r.etaHighSeconds, hi > lo {
+            let a = TimeFormat.compact(Self.roundDown5(lo)), b = TimeFormat.compact(Self.roundUp5(hi))
+            if a == b { return "about \(a) left" }
+            if a.last == b.last, a.last == "m" || a.last == "h" { return "\(a.dropLast())–\(b) left" }
+            return "\(a)–\(b) left"
+        }
+        return r.etaSeconds.map { "about \(TimeFormat.compact($0)) left" }
+    }
+
+    static func roundDown5(_ s: Double) -> Double { s < 600 ? s : (s / 300).rounded(.down) * 300 }
+    static func roundUp5(_ s: Double) -> Double { s < 600 ? s : (s / 300).rounded(.up) * 300 }
+
+    /// "1h 12m working" while live (working time only); how long it took once finished.
+    func elapsed(_ r: TaskRun) -> String? {
+        if Self.isFinished(r) { return Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)) }
+        return r.time.working >= 60 ? Self.duration(r.time.working) + " working" : nil
+    }
+
+    /// "<1m", "48m", "1h 12m", "3h", "2d 4h".
+    public static func duration(_ seconds: Double) -> String {
+        let s = max(0, seconds)
+        if s < 60 { return "<1m" }
+        let minutes = Int((s / 60).rounded())
+        if minutes < 60 { return "\(minutes)m" }
+        if minutes < 24 * 60 { return minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes / 60)h \(minutes % 60)m" }
+        let hours = minutes / 60
+        return hours % 24 == 0 ? "\(hours / 24)d" : "\(hours / 24)d \(hours % 24)h"
+    }
+
+    // MARK: Map
+
+    /// The counted leaves as blocks, closed first, then under way, then untouched (plan order
+    /// within each). Empty when the fold gave no shares or there are too many to draw.
+    static func segments(_ r: TaskRun) -> [RunSegment] {
+        let leaves = r.nodes.filter { $0.leaf && $0.counted && $0.share > 0 }
+        guard !leaves.isEmpty, leaves.count <= maxSegments else { return [] }
+        let total = leaves.reduce(0) { $0 + $1.share }
+        guard total > 0 else { return [] }
+        func group(_ n: TaskNode) -> Int {
+            switch n.state {
+            case .done, .partial, .failed, .skipped, .cancelled: 0
+            case .running, .waiting: 1
+            case .planned, .parked: 2
+            }
+        }
+        return leaves.enumerated().sorted { (group($0.element), $0.offset) < (group($1.element), $1.offset) }.map { _, n in
+            let (_, tone) = look(n)
+            let fill: Double = switch n.state {
+            case .done, .failed: 1
+            case .planned: 0
+            default: min(max(n.progress.estimate, 0), 1)
+            }
+            return RunSegment(weight: n.share / total, fill: fill, tone: n.state == .done ? .progress : tone,
+                              critical: n.importance == .critical, title: n.title, failed: n.state == .failed)
+        }
+    }
+
+    // MARK: Question, actions
+
+    /// What the run is asking: the harness's question, else the waiting task's note.
+    func question(_ r: TaskRun) -> RunQuestionModel? {
+        func title(_ id: String?) -> String? { id.flatMap { id in r.nodes.first { $0.id == id }?.title } }
+        if let q = r.question {
+            return RunQuestionModel(asker: RunWords.asking(title(q.task)), text: q.text, options: q.options)
+        }
+        if let n = r.nodes.first(where: { $0.state == .waiting && $0.waitReason == .input }), let note = n.waitNote, !note.isEmpty {
+            return RunQuestionModel(asker: RunWords.asking(n.title), text: note)
+        }
+        return nil
+    }
+
+    /// Open needs the session's app or folder; a resume command needs Claude Code or Codex and a
+    /// session id; anything can be hidden; only an unfinished run can be given up on.
+    public static func actions(_ r: TaskRun) -> RunActionSet {
+        let open = !(r.host ?? "").isEmpty || !(r.cwd ?? "").isEmpty
+        let harness = (r.harness ?? "").lowercased()
+        let resumable = ["claude-code", "claude", "codex"].contains(harness) && UUID(uuidString: r.id) != nil
+        return RunActionSet(openSession: open, copyResume: resumable, hide: true, abandon: !isFinished(r))
+    }
+
+    // MARK: Timeline
+
+    /// Working until the window empties, paused until it resets, working again until done. Only
+    /// when the run is forecast to hit the limit before it finishes.
+    func timeline(_ r: TaskRun) -> RunTimelineModel? {
+        guard let o = r.limitOutlook, let pause = o.pauseAt, let resume = o.resumeAt, let finish = o.finishAt,
+              now < pause, pause < resume, resume < finish else { return nil }
+        let span = finish.timeIntervalSince(now)
+        func at(_ d: Date) -> Double { min(max(d.timeIntervalSince(now) / span, 0), 1) }
+        func clock(_ d: Date) -> String { TimeFormat.clock(d, calendar: calendar, locale: locale) }
+        let spans = [RunTimelineModel.Span(kind: .working, start: 0, end: at(pause)),
+                     RunTimelineModel.Span(kind: .paused, start: at(pause), end: at(resume)),
+                     RunTimelineModel.Span(kind: .working, start: at(resume), end: 1)]
+        let ticks = [RunTimelineModel.Tick(label: "now", time: clock(now), at: 0),
+                     RunTimelineModel.Tick(label: "window empty", time: clock(pause), at: at(pause), strong: true),
+                     RunTimelineModel.Tick(label: "resets", time: clock(resume), at: at(resume)),
+                     RunTimelineModel.Tick(label: "done", time: "~" + clock(finish), at: 1, strong: true)]
+        var notes: [String] = []
+        if let share = o.share, share > 0 {
+            notes.append("Using \(NumberFormat.percent(min(share, 1))) of what \(o.provider.displayName) is spending now")
+        }
+        if let need = o.tokensNeeded, need > 0 {
+            var s = "needs about \(NumberFormat.tokens(need)) more tokens"
+            if let room = o.roomTokens { s += ", the window has room for \(NumberFormat.tokens(max(room, 0)))" }
+            notes.append(notes.isEmpty ? s.prefix(1).uppercased() + s.dropFirst() : s)
+        }
+        return RunTimelineModel(spans: spans, ticks: ticks, note: notes.isEmpty ? nil : notes.joined(separator: " · "))
+    }
+
+    // MARK: Receipt
+
+    func receipt(_ r: TaskRun) -> RunReceiptModel {
+        let cost = pricing.flatMap { Self.cost(r.tokensByModel, pricing: $0) }.map { "about " + NumberFormat.dollars(micros: $0.micros, style: .precise) }
+        let (tasks, note) = Self.receiptTasks(r)
+        var foot: [String] = []
+        if r.scopeChanges > 0 { foot.append("Plan changed \(r.scopeChanges == 1 ? "once" : "\(r.scopeChanges) times") after it started") }
+        let retries = r.nodes.reduce(0) { $0 + $1.attempts.retries }
+        if retries > 0 { foot.append(retries == 1 ? "1 retry" : "\(retries) retries") }
+        return RunReceiptModel(duration: Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)), tokens: NumberFormat.tokens(r.tokens),
+                               cost: cost, tasks: tasks, tasksNote: note, time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
+    }
+
+    /// "4 of 5" and "tasks · 1 optional failed": the plan's leaves (or the agents seen) and how
+    /// the ones that didn't finish ended.
+    static func receiptTasks(_ r: TaskRun) -> (String, String) {
+        // A mirrored plan's items count like declared tasks; helper agents under a plan don't.
+        let leaves = r.nodes.filter { $0.leaf && ($0.declared || !r.hasDeclaredTasks || (r.mirrored && $0.counted)) }
+        let earlier = r.hasDeclaredTasks ? 0 : (r.finishedEarlier ?? 0)
+        var done = earlier, failed = 0, optionalFailed = 0, cancelled = 0, skipped = 0, open = 0
+        for n in leaves {
+            switch n.state {
+            case .done: done += 1
+            case .failed, .partial: if n.importance == .optional { optionalFailed += 1 } else { failed += 1 }
+            case .cancelled: cancelled += 1
+            case .skipped: skipped += 1
+            case .planned, .running, .waiting, .parked: open += 1
+            }
+        }
+        let total = leaves.count + earlier
+        let noun = !r.hasDeclaredTasks ? (total == 1 ? "agent" : "agents") : r.mirrored ? (total == 1 ? "step" : "steps") : (total == 1 ? "task" : "tasks")
+        var parts = [noun]
+        if failed > 0 { parts.append("\(failed) failed") }
+        if optionalFailed > 0 { parts.append("\(optionalFailed) optional failed") }
+        if cancelled > 0 { parts.append("\(cancelled) cancelled") }
+        if skipped > 0 { parts.append("\(skipped) skipped") }
+        if open > 0 { parts.append("\(open) left open") }
+        return ("\(done) of \(total)", parts.joined(separator: " · "))
+    }
+
+    /// Share of fresh tokens (`TaskRun.tokens` leaves cache reads out) taken as output when only
+    /// the total per model is known; the rest is priced as input. Hence "about".
+    static let outputShare = 0.15
+
+    /// The run's tokens at API rates; nil when none of its models has a rate.
+    public static func cost(_ tokensByModel: [String: Int64], pricing: PricingEngine) -> Cost? {
+        var total = Cost.zero, any = false
+        for (model, n) in tokensByModel where n > 0 && pricing.isPriced(model: model) {
+            let output = Int64((Double(n) * outputShare).rounded())
+            total += pricing.price(tokens: TokenCounts(newInput: n - output, output: output), model: model)
+            any = true
+        }
+        return any ? total : nil
+    }
+
     // MARK: Rows
 
     /// Pressing work first at every level (by the most pressing thing beneath each row), three
     /// levels at most, finished rows folded into one unless `expanded`, capped with "and N more".
     /// Linear in the nodes apart from sorting siblings, and only the rows shown are formatted.
-    public func rows(_ r: TaskRun, expanded: Bool) -> (rows: [RunRowModel], finished: Int) {
+    /// `pressing` counts the rows that aren't finished, shown or not.
+    public func rows(_ r: TaskRun, expanded: Bool, opened: Set<String> = []) -> (rows: [RunRowModel], finished: Int, pressing: Int) {
         let l = layout(r, expanded: expanded)
         let nodes = r.nodes
         let cap = expanded ? Self.expandedRowCap : Self.rowCap
         let shown = l.visible.prefix(cap)
-        var out = shown.map { taskRow(nodes[$0.node], depth: $0.depth, run: r, rolled: $0.depth == Self.maxDepth ? descendants($0.node, nodes, l.children) : []) }
+        var out = shown.map {
+            taskRow(nodes[$0.node], depth: $0.depth, run: r, rolled: $0.depth == Self.maxDepth ? descendants($0.node, nodes, l.children) : [],
+                    opened: opened.contains(Self.rowKey(run: r.id, row: nodes[$0.node].id)))
+        }
         if l.visible.count > cap {
             let n = l.visible.count - cap
             out.append(RunRowModel(id: "~more", kind: .more(n), glyph: .more, tone: .quiet, title: "and \(n) more"))
@@ -443,7 +660,7 @@ public struct RunsPresenter: Sendable {
         if let earlier = r.finishedEarlier, earlier > 0 {
             out.append(RunRowModel(id: "~earlier", kind: .earlier(earlier), glyph: .done, tone: .quiet, title: "+ \(earlier) finished earlier"))
         }
-        return (out, finished)
+        return (out, finished, l.visible.count - (expanded ? finished : 0))
     }
 
     /// The rows `rows(_:expanded:)` shows, in order, before the cap: each node with its display
@@ -492,7 +709,7 @@ public struct RunsPresenter: Sendable {
     }
 
     /// One task's row. `rolled` is the work beneath it past the depth cap, in depth-first order.
-    func taskRow(_ n: TaskNode, depth: Int, run: TaskRun, rolled: [TaskNode]) -> RunRowModel {
+    func taskRow(_ n: TaskNode, depth: Int, run: TaskRun, rolled: [TaskNode], opened: Bool = false) -> RunRowModel {
         let (glyph, tone) = Self.look(n)
         var steps: String?
         if let s = n.steps, n.leaf { steps = "\(s.done)/\(s.total)" }
@@ -508,12 +725,44 @@ public struct RunsPresenter: Sendable {
         if n.attempts.retries > 0 { extra.append("retried \(n.attempts.retries)×") }
         if n.attempts.active > 1 { extra.append("\(n.attempts.active) agents") }
         // Observed agents never report an outcome, so only a declared plan expects one.
-        if run.hasDeclaredTasks, !n.confirmed, n.state.isTerminal { extra.append("unconfirmed") }
+        let unconfirmed = run.hasDeclaredTasks && !n.confirmed && n.state.isTerminal
+        if unconfirmed { extra.append("unconfirmed") }
         if !extra.isEmpty { detail = ([detail].compactMap { $0 } + extra).joined(separator: " · ") }
         let quiet = !n.counted || n.state == .skipped || n.state == .cancelled
+        let lines = details(n, unconfirmed: unconfirmed)
         return RunRowModel(id: n.id, glyph: glyph, tone: quiet && tone != .alert ? .quiet : tone, depth: depth, title: n.title,
                            marker: n.importance == .normal ? nil : n.importance.rawValue, steps: steps,
-                           tokens: n.tokens > 0 ? NumberFormat.tokens(n.tokens) : nil, detail: detail, detailTone: detailTone, quiet: quiet)
+                           tokens: n.tokens > 0 ? NumberFormat.tokens(n.tokens) : nil, detail: detail, detailTone: detailTone, quiet: quiet,
+                           details: opened && !lines.isEmpty ? lines : nil, opens: !lines.isEmpty)
+    }
+
+    /// What an opened row shows, in full: the question or wait, evidence, why it failed or was
+    /// dropped, its note, how long it took and with how many agents, its tokens. Empty when
+    /// there's nothing beyond the row itself (tokens alone are already on the row).
+    func details(_ n: TaskNode, unconfirmed: Bool) -> [RunDetailLine] {
+        var out: [RunDetailLine] = []
+        func add(_ label: String, _ value: String?) {
+            if let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { out.append(RunDetailLine(label: label, value: v)) }
+        }
+        if n.state == .waiting { add(n.waitReason == .input ? "Asking" : "Waiting", n.waitNote) }
+        add("Evidence", n.evidence)
+        switch n.state {
+        case .failed, .partial: add("Failed because", n.failure)
+        case .cancelled, .skipped: add("Reason", n.failure)
+        default: break
+        }
+        if n.note != n.evidence { add("Note", n.note) }
+        if unconfirmed { add("Outcome", "Inferred from its agents ending, not reported") }
+        var took: [String] = []
+        if n.workingSeconds >= 60 { took.append(Self.duration(n.workingSeconds)) }
+        if n.attempts.count > 0 {
+            took.append(n.attempts.count == 1 ? "1 agent" : "\(n.attempts.count) agents")
+            took.append(n.attempts.retries == 0 ? "no retries" : n.attempts.retries == 1 ? "1 retry" : "\(n.attempts.retries) retries")
+        }
+        if !took.isEmpty { add(n.state.isTerminal ? "Took" : "So far", took.joined(separator: " · ")) }
+        guard !out.isEmpty else { return [] }
+        if n.tokens > 0 { add("Tokens", NumberFormat.tokens(n.tokens)) }
+        return out
     }
 
     /// The note that matters for the node's state, and its tone.
@@ -522,20 +771,20 @@ public struct RunsPresenter: Sendable {
         switch n.state {
         case .waiting:
             switch n.waitReason ?? .dependency {
-            case .input: return (n.waitNote ?? "Needs your input", .alert)
-            case .limit: return (n.waitNote ?? Self.limitWords(limitWarning), .warn)
-            case .dependency: return (n.waitNote ?? "Waiting on another task", .neutral)
+            case .input: return (n.waitNote ?? RunWords.needsInput, .alert)
+            case .limit: return (n.waitNote ?? RunWords.waitingOnLimit(limitWarning), .warn)
+            case .dependency: return (n.waitNote ?? RunWords.waitingOnTask, .neutral)
             }
-        case .failed: return (n.failure ?? "Failed", n.importance == .optional ? .warn : .alert)
-        case .partial: return (n.failure ?? "Finished with failures", .warn)
+        case .failed: return (n.failure ?? RunWords.failed, n.importance == .optional ? .warn : .alert)
+        case .partial: return (n.failure ?? RunWords.partial, .warn)
         case .running where n.stale:
-            let quiet = "Quiet for \(TimeFormat.compact(now.timeIntervalSince(n.lastActivityAt ?? now)))"
+            let quiet = RunWords.quiet(TimeFormat.compact(now.timeIntervalSince(n.lastActivityAt ?? now)))
             return (n.note.map { quiet + " · " + $0 } ?? quiet, .warn)
         case .running: return (n.note, .quiet)
-        case .parked: return (n.note ?? "Paused with work left", .quiet)
+        case .parked: return (n.note ?? RunWords.paused, .quiet)
         case .done: return (n.evidence ?? n.note, .quiet)
-        case .cancelled: return (n.failure ?? "Cancelled", .quiet)
-        case .skipped: return (n.note ?? "Skipped", .quiet)
+        case .cancelled: return (n.failure ?? RunWords.cancelled, .quiet)
+        case .skipped: return (n.note ?? RunWords.skipped, .quiet)
         case .planned: return (n.note, .quiet)
         }
     }

@@ -15,9 +15,21 @@ struct HitRegion {
         case activityRange(Int)
         case update
         case dismissUpdate
-        /// Show or hide a run card's finished rows.
+        /// Show or hide a run card's finished rows (and the rows past the cap).
         case toggleRun(String)
+        /// Open or close one row's details: run id, row id.
+        case toggleRow(String, String)
+        /// The "···" menu on a run card.
+        case runMenu(String)
+        /// A button in a run card's question block.
+        case runButton(String, RunButton)
+        /// List every finished run of the last day, or go back to the few.
+        case moreRecent
+        /// The empty Runs tab's "Connect your agents".
+        case connectAgents
     }
+
+    enum RunButton: Equatable { case openSession, copyResume }
     var rect: CGRect
     var tooltip: String?
     var action: Action = .none

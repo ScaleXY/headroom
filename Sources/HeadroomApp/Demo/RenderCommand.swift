@@ -122,6 +122,9 @@ enum RenderCommand {
                         write(rep, to: outDir.appendingPathComponent("runs-\(s.name)-\(suffix).png")); written += 1
                     }
                 }
+                if let rep = PopoverPage.renderRecentRuns(theme: theme, now: now) {
+                    write(rep, to: outDir.appendingPathComponent("runs-recent-\(suffix).png")); written += 1
+                }
                 if let rep = PopoverPage.renderSettings(section: .runs, theme: theme) {
                     write(rep, to: outDir.appendingPathComponent("settings-runs-\(suffix).png")); written += 1
                 }
@@ -140,11 +143,7 @@ enum RenderCommand {
             let presenter = Presenter(now: now)
             let items = presenter.menuBarItems([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)], mode: .both, enabled: [.claude, .codex])
             let rp = RunsPresenter(now: now)
-            let indicators: [(String, RunsMenuBarModel?)] = [
-                ("runs", rp.menuBar([Demo.declaredRun(now: now)])),
-                ("runs-observed", rp.menuBar([Demo.observedRun(now: now)])),
-                ("runs-input", rp.menuBar([Demo.inputRun(now: now), Demo.declaredRun(now: now)].sortedForDisplay())),
-            ]
+            let indicators: [(String, RunsMenuBarModel?)] = Demo.menuBarRunSets(now: now).map { ("runs-" + $0.0, rp.menuBar($0.1)) }
             for dark in [true, false] {
                 for (label, runs) in indicators {
                     guard let runs else { continue }
@@ -262,7 +261,8 @@ enum PopoverPage {
 
     /// The Runs tab of the popover for one fixture.
     static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date) -> NSBitmapImageRep? {
-        let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale).page(s.runs, expanded: s.expanded)
+        let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale, pricing: demoPricing)
+            .page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
         let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
         let top = pad + PopoverChrome.headerHeight
         let h = top + RunCardRenderer.drawPage(page, origin: .zero, width: cw, theme: theme, ctx: nil) + 2 + PopoverChrome.footerHeight + pad
@@ -274,13 +274,27 @@ enum PopoverPage {
         }
     }
 
+    /// The bundled rates only: renders never read the user's price override.
+    static var demoPricing: PricingEngine? { (try? PriceTable.bundled()).map(PricingEngine.init(table:)) }
+
+    /// Activity's "Recent runs" section on its own, from the demo receipts.
+    static func renderRecentRuns(theme: Theme, now: Date) -> NSBitmapImageRep? {
+        guard let m = RecentRunsPresenter(now: now, pricing: demoPricing).model(Demo.recentRunRecords(now: now)) else { return nil }
+        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
+        let h = pad + RecentRunsRenderer.sectionHeaderHeight + RecentRunsRenderer.draw(m, origin: .zero, width: cw, theme: theme, ctx: nil) + pad
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
+            RecentRunsRenderer.drawSectionHeader(m, x: pad, y: pad, width: cw, theme: theme, ctx: ctx)
+            RecentRunsRenderer.draw(m, origin: CGPoint(x: pad, y: pad + RecentRunsRenderer.sectionHeaderHeight), width: cw, theme: theme, ctx: ctx)
+        }
+    }
+
     /// The menu bar with the run indicator on dark, light and busy wallpapers.
     static func renderRunMenuBars(now: Date) -> NSBitmapImageRep? {
         let presenter = Presenter(now: now, locale: Locale(identifier: "en_US"))
         let items = presenter.menuBarItems([Demo.claudeMockup(now: now), Demo.codexMockup(now: now)], mode: .both, enabled: [.claude, .codex])
         let rp = RunsPresenter(now: now)
-        let rows = [rp.menuBar([Demo.declaredRun(now: now)]), rp.menuBar([Demo.observedRun(now: now)]),
-                    rp.menuBar([Demo.inputRun(now: now), Demo.declaredRun(now: now)].sortedForDisplay())].compactMap(\.self)
+        let rows = Demo.menuBarRunSets(now: now).compactMap { rp.menuBar($0.1) }
         let w: CGFloat = 340, stripH: CGFloat = 28
         let backgrounds = ["dark", "light", "busy"]
         let h = CGFloat(rows.count * backgrounds.count) * (stripH + 6) + 6

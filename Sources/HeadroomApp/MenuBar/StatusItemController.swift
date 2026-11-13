@@ -82,9 +82,17 @@ final class StatusItemController: NSObject {
     @objc private func clicked(_ sender: NSStatusBarButton) {
         if NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
             showMenu()
+        } else if !popover.isShown, runNeedsYou() {
+            // A run waiting on an answer: open where the question is.
+            popover.show(relativeTo: sender, tab: PopoverRootView.runsTab)
         } else {
             popover.toggle(relativeTo: sender)
         }
+    }
+
+    /// A live run is waiting on you and the Runs tab is there to show it.
+    private func runNeedsYou(now: Date = Date()) -> Bool {
+        model.settings.taskTracking && model.taskRuns.contains { $0.needsInput && !$0.hidden && !$0.abandoned && $0.isActive(now: now) }
     }
 
     private func showMenu() {
