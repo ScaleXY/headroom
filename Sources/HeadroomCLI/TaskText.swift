@@ -4,28 +4,7 @@ import HeadroomKit
 /// Agent-written text (titles, notes, evidence, reasons) is cleaned on the way in and again on
 /// the way out: newlines and tabs become spaces, other control characters and bidi overrides go,
 /// and it is capped, so one line stays one line and nothing reaches a terminal as an escape code.
-enum TaskText {
-    static let titleLimit = 120
-    static let noteLimit = 400
-
-    /// Nil when nothing is left.
-    static func clean(_ s: String?, limit: Int) -> String? {
-        guard let s else { return nil }
-        var out = String.UnicodeScalarView()
-        for u in s.unicodeScalars {
-            if u == "\n" || u == "\r" || u == "\t" { out.append(" "); continue }
-            if u.properties.generalCategory == .control { continue }
-            if (0x202A...0x202E).contains(u.value) || (0x2066...0x2069).contains(u.value) { continue }
-            out.append(u)
-        }
-        let trimmed = String(out).trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        return trimmed.count > limit ? String(trimmed.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : trimmed
-    }
-
-    static func title(_ s: String?) -> String? { clean(s, limit: titleLimit) }
-    static func note(_ s: String?) -> String? { clean(s, limit: noteLimit) }
-
+extension TaskText {
     /// Safe to print, whatever is stored (journals written before cleaning, or by hand).
     static func display(_ s: String, limit: Int = noteLimit) -> String { clean(s, limit: limit) ?? "" }
 }

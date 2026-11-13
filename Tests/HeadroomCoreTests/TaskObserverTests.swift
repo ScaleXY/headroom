@@ -205,6 +205,10 @@ extension Array where Element == TaskEvent {
         _ = await h.observer().scan(since: Fx.t0)
         let ev = h.events("s3")
         #expect(ev.end("agent:a1") == .error && ev.end("agent:a2") == .error)
+        // The orchestrator is still in its turn: a run with no plan isn't over until it ends one.
+        #expect(try #require(h.fold("s3")).state == .running)
+        try h.append("s3.jsonl", [Fx.assistant(13, "s3", id: "m2", stop: "end_turn", [Fx.text("Both failed.")])])
+        _ = await h.observer().scan(since: Fx.t0)
         let run = try #require(h.fold("s3"))
         #expect(run.state == .failed || run.state == .partial)
     }

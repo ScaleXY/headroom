@@ -159,7 +159,7 @@ import HeadroomKit
         let (code, out) = h.run(["task", "status"])
         #expect(code == 0)
         #expect(out == """
-        run r1 "Refactor auth" · 6% · 0 of 3 done
+        run r1 "Refactor auth" · 8% · 0 of 3 done
         api       running  0/2
           schema  planned
           tests   running  1/4  22m, no report for 22m
