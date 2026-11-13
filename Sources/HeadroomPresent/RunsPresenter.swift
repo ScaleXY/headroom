@@ -249,6 +249,8 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     public var verdict: RunVerdictModel?
     /// The rows' header: "Tasks", "Steps" for a session's own plan, "Agents" with nothing declared.
     public var rowsTitle = "Tasks"
+    /// The run's own page: status line, facts, limit, grouped tasks and lanes.
+    public var page: RunPageModel?
 
     public init(id: String, title: String, subtitle: String, stateText: String, glyph: RunGlyph, tone: RunTone, live: Bool, declared: Bool,
                 needsInput: Bool = false, provider: Provider? = nil, bar: TaskProgress? = nil, headline: String, estimate: String? = nil,
@@ -425,6 +427,7 @@ public struct RunsPresenter: Sendable {
         card.hero = hero(r)
         card.verdict = verdict(r, timeline: timeline != nil)
         card.rowsTitle = !declared ? "Agents" : r.mirrored ? "Steps" : "Tasks"
+        card.page = pageModel(r, showDone: expanded, opened: opened)
         return card
     }
 

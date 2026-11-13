@@ -121,7 +121,8 @@ final class PopoverController: NSObject {
             MainActor.assumeIsolated { self?.close() }
         }) { monitors.append(m) }
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
-            if event.keyCode == 53 { MainActor.assumeIsolated { self?.close() }; return nil }
+            // Esc goes back from a run's page first, then closes.
+            if event.keyCode == 53 { MainActor.assumeIsolated { if self?.root?.goBack() != true { self?.close() } }; return nil }
             return event
         }) { monitors.append(m) }
     }
@@ -169,21 +170,34 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
 
     private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
     private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }
-    /// Activity and Runs keep a row of controls above their cards.
-    private var hasControls: Bool { cards.historyWeek == nil && (tab == 1 || (tab == Self.runsTab && showsRuns)) }
+    /// Activity keeps a row of controls above its cards; a run's page keeps its way back.
+    private var hasControls: Bool { cards.historyWeek == nil && (tab == 1 || (tab == Self.runsTab && showsRuns && cards.detailRun != nil)) }
     var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (hasControls ? 36 : 0) }
     var bottomHeight: CGFloat { PopoverChrome.footerHeight + PopoverChrome.pad }
 
     var preferredHeight: CGFloat { topHeight + cards.contentHeight + bottomHeight }
 
-    /// The Runs tab's controls row: Cards · Compact on the left, what's going on on the right.
-    static func drawRunsControls(compact: Bool, summary: String, x: CGFloat, y: CGFloat, width: CGFloat, theme t: Theme, ctx: CGContext, out: RenderOutput?) {
-        let views = Segmented(items: ["Cards", "Compact"], selected: compact ? 1 : 0, font: F.sf(11.5, 600), padX: 10, height: 26)
-        views.draw(in: CGRect(x: x + 1, y: y, width: views.width, height: 26), theme: t, ctx: ctx, out: out) { .runsLayout($0) }
-        if !summary.isEmpty {
-            RunCardRenderer.fit(summary, F.sf(11.5, 550, tabular: true), t.muted, width: width - views.width - 14)
-                .draw(x: x + width - 3, capCenter: y + 13, align: .right, in: ctx)
+    /// A run's page: "‹ Runs" back to the list on the left, where the run sits on the right.
+    static func drawRunCrumb(position: String?, x: CGFloat, y: CGFloat, width: CGFloat, theme t: Theme, ctx: CGContext, out: RenderOutput?) {
+        let label = Text("Runs", F.sf(12.5, 600), t.azure)
+        let mid = y + 13
+        let chevron = CGMutablePath()
+        chevron.move(to: CGPoint(x: x + 8, y: mid - 4.5)); chevron.addLine(to: CGPoint(x: x + 3.5, y: mid)); chevron.addLine(to: CGPoint(x: x + 8, y: mid + 4.5))
+        ctx.stroke(chevron, t.azure, width: 1.8, cap: .round, join: .round)
+        label.draw(x: x + 12, capCenter: mid, in: ctx)
+        out?.add(CGRect(x: x - 4, y: y, width: label.width + 24, height: 26), tooltip: "Back to every run (Esc)", action: .closeRun, hover: 8)
+        if let position {
+            RunCardRenderer.fit(position, F.sf(11.5, 550, tabular: true), t.muted, width: width - label.width - 40)
+                .draw(x: x + width - 3, capCenter: mid, align: .right, in: ctx)
         }
+    }
+
+    /// Back from a run's page; false when there was nowhere to go back to.
+    func goBack() -> Bool {
+        guard tab == Self.runsTab, cards.detailRun != nil else { return false }
+        cards.detailRun = nil
+        rebuild(animated: false)
+        return true
     }
 
     func rebuild(animated: Bool) {
@@ -246,8 +260,9 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         }
         if tab == Self.runsTab && hasControls {
             let y = pad + PopoverChrome.headerHeight + bannerSpace
-            Self.drawRunsControls(compact: model.settings.runsCompact, summary: cards.runsSummary, x: pad, y: y, width: cw, theme: t, ctx: ctx, out: out)
+            Self.drawRunCrumb(position: cards.detailPosition, x: pad, y: y, width: cw, theme: t, ctx: ctx, out: out)
         }
+        Hover.draw(out.regions, at: hoverPoint, theme: t, ctx: ctx)
         PopoverChrome.drawFooter(model.footer, x: pad, y: bounds.height - bottomHeight, width: cw, theme: t, ctx: ctx, out: out)
     }
 
@@ -261,16 +276,16 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         switch region.action {
         case .tab(let i):
             if i < 0 { cards.historyWeek = nil } else { tab = i }
+            cards.detailRun = nil
             rebuild(animated: false)
+        case .closeRun:
+            _ = goBack()
         case .activityMode(let i):
             model.settings.activityMode = ActivityMode(rawValue: i) ?? .all
             rebuild(animated: false)
         case .activityRange(let i):
             model.settings.activityRange = ActivityRange(rawValue: i) ?? .day
             cards.selection = nil
-            rebuild(animated: false)
-        case .runsLayout(let i):
-            model.settings.runsCompact = i == 1
             rebuild(animated: false)
         case .refresh:
             model.refreshNow()
@@ -286,6 +301,41 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: Hover
+
+    private var hoverPoint: CGPoint?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for a in trackingAreas { removeTrackingArea(a) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if Hover.region(out.regions, at: p)?.rect != Hover.region(out.regions, at: hoverPoint)?.rect { needsDisplay = true }
+        hoverPoint = p
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if Hover.region(out.regions, at: hoverPoint) != nil { needsDisplay = true }
+        hoverPoint = nil
+    }
+}
+
+/// The popover's hover: the region under the pointer that asked for one gets a soft fill.
+@MainActor
+enum Hover {
+    static func region(_ regions: [HitRegion], at p: CGPoint?) -> HitRegion? {
+        guard let p else { return nil }
+        return regions.last { $0.hover != nil && $0.rect.contains(p) }
+    }
+
+    static func draw(_ regions: [HitRegion], at p: CGPoint?, theme t: Theme, ctx: CGContext) {
+        guard let r = region(regions, at: p), let radius = r.hover else { return }
+        ctx.fill(rounded(r.rect, radius), t.isDark ? white(0.065) : black(0.045))
+    }
 }
 
 // MARK: - Cards
@@ -307,17 +357,18 @@ final class CardsView: NSView, NSViewToolTipOwner {
     private var weeks: [PastWeeksModel] = []
     private var sessionHistories: [SessionHistoryModel] = []
     private var runsPage = RunsPageModel()
-    /// In the compact view, the runs shown as full cards.
-    private var compactOpen: Set<String> = []
-    /// "3 live · 1 needs you": for the Runs tab's controls row.
-    var runsSummary: String {
-        let live = runsPage.live.count, needs = runsPage.live.filter(\.needsInput).count
-        var parts: [String] = []
-        if live > 0 { parts.append("\(live) live") }
-        if needs > 0 { parts.append("\(needs) need\(needs == 1 ? "s" : "") you") }
-        if !runsPage.recent.isEmpty { parts.append("\(runsPage.recent.count + runsPage.moreRecent) finished today") }
-        return parts.joined(separator: " · ")
+    /// The run whose own page is open in the Runs tab; nil for the list.
+    var detailRun: String? { didSet { if detailRun != oldValue { offset = 0 } } }
+    /// Two-line's folded finished runs, opened.
+    private var showFinished = false
+    /// "2 of 4 live": where the open run sits, for the page's crumb.
+    var detailPosition: String? {
+        guard let id = detailRun else { return nil }
+        if let i = runsPage.live.firstIndex(where: { $0.id == id }) { return "\(i + 1) of \(runsPage.live.count) live" }
+        if runsPage.recent.contains(where: { $0.id == id }) { return "finished" }
+        return nil
     }
+    private var detailCard: RunCardModel? { detailRun.flatMap { id in (runsPage.live + runsPage.recent).first { $0.id == id } } }
     /// Run cards showing their finished rows (for as long as the app runs).
     private var expandedRuns: Set<String> = []
     /// Rows showing their details (`RunsPresenter.rowKey`).
@@ -367,6 +418,8 @@ final class CardsView: NSView, NSViewToolTipOwner {
         }
         if tab == PopoverRootView.runsTab {
             runsPage = RunsPresenter(now: now, pricing: model.pricingEngine).page(model.taskRuns, expanded: expandedRuns, opened: openRows, allRecent: allRecent)
+            // A run that's gone (hidden, aged out) closes its page.
+            if detailRun != nil, detailCard == nil { detailRun = nil }
         }
         if animated, states != lastStates, !lastStates.isEmpty, window != nil { beginFade() }
         contentHeight = measure()
@@ -443,11 +496,12 @@ final class CardsView: NSView, NSViewToolTipOwner {
             return y + 2
         }
         if tab == PopoverRootView.runsTab {
-            if model.settings.runsCompact {
-                return RunCompactRenderer.drawPage(runsPage, open: compactOpen, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx,
-                                                   out: ctx == nil ? nil : out) + 2
+            if let card = detailCard {
+                return RunPageRenderer.draw(card, style: model.settings.runPageStyle, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx,
+                                            out: ctx == nil ? nil : out) + 2
             }
-            return RunCardRenderer.drawPage(runsPage, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
+            return RunListRenderer.drawPage(runsPage, style: model.settings.runsListStyle, showFinished: showFinished, origin: CGPoint(x: pad, y: y),
+                                            width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
         }
         let mode = model.settings.activityMode, kind = model.settings.breakdown
         for (i, card) in activityCards.enumerated() {
@@ -502,6 +556,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
             ctx.saveGState()
             ctx.translateBy(x: 0, y: -self.offset)
             self.layout(ctx: ctx, width: self.bounds.width)
+            Hover.draw(self.out.regions, at: self.hoverPoint.map { CGPoint(x: $0.x, y: $0.y + self.offset) }, theme: self.theme, ctx: ctx)
             ctx.restoreGState()
             if let f = self.fade, let a = fadeAlpha {
                 ctx.saveGState()
@@ -544,6 +599,28 @@ final class CardsView: NSView, NSViewToolTipOwner {
     /// View point → content point.
     private func content(_ p: NSPoint) -> NSPoint { NSPoint(x: p.x, y: p.y + offset) }
 
+    // MARK: Hover
+
+    /// The pointer, in view coordinates, while it's over the cards.
+    private var hoverPoint: CGPoint?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for a in trackingAreas { removeTrackingArea(a) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if Hover.region(out.regions, at: p)?.rect != Hover.region(out.regions, at: hoverPoint)?.rect { needsDisplay = true }
+        hoverPoint = p
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if Hover.region(out.regions, at: hoverPoint) != nil { needsDisplay = true }
+        hoverPoint = nil
+    }
+
     private func barIndex(_ p: NSPoint, provider: Provider) -> Int? {
         guard let l = chartLayouts[provider], l.barCount > 0, l.chartRect.insetBy(dx: 0, dy: -6).contains(p) else { return nil }
         return min(max(Int((p.x - l.chartRect.minX) / l.barWidth), 0), l.barCount - 1)
@@ -564,8 +641,15 @@ final class CardsView: NSView, NSViewToolTipOwner {
             case .toggleRun(let id):
                 toggleRun(id)
                 return
-            case .openCompact(let id):
-                if compactOpen.remove(id) == nil { compactOpen.insert(id) }
+            case .openRun(let id):
+                detailRun = id
+                root?.rebuild(animated: false)
+                return
+            case .closeRun:
+                _ = root?.goBack()
+                return
+            case .toggleFinished:
+                showFinished.toggle()
                 root?.rebuild(animated: false)
                 return
             case .toggleRow(let run, let row):

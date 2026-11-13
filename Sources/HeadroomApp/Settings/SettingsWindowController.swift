@@ -169,10 +169,12 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case runsPage(RunsPage)
         case connect(ConnectRow.Kind)
         case quietAfter(TimeInterval)
+        case listStyle(RunsListStyle)
+        case pageStyle(RunPageStyle)
     }
 
-    /// Runs splits in two: setting agents up, and what to be told about.
-    enum RunsPage: Hashable { case connect, alerts }
+    /// Runs splits in three: setting agents up, what to be told about, and how runs look.
+    enum RunsPage: Hashable { case connect, alerts, layout }
 
     var runsPage: RunsPage = .connect {
         didSet { if runsPage != oldValue { needsDisplay = true } }
@@ -303,6 +305,8 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             setupMessage = result.message.isEmpty ? nil : (result.message, result.failed)
             setup = AgentSetupState.read(setupContext, bundledCLI: CLIInstaller.bundledCLI?.path)
         case .quietAfter(let v): s.runQuietAfter = v
+        case .listStyle(let style): s.runsListStyle = style
+        case .pageStyle(let style): s.runPageStyle = style
         }
         needsDisplay = true
     }
@@ -734,14 +738,37 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         toggleRow("Track agent runs", "Reads the transcripts Headroom already reads for usage.", on: on, action: Action.taskTracking,
                   x: x, y: cy, w: w, ctx: ctx)
         cy += 48 + 8
-        let pages: [RunsPage] = [.connect, .alerts]
-        segmented(["Connect your agents", "Alerts"], selected: pages.firstIndex(of: runsPage) ?? 0, x: x, y: cy, w: w,
+        let pages: [RunsPage] = [.connect, .alerts, .layout]
+        segmented(["Connect your agents", "Alerts", "Layout"], selected: pages.firstIndex(of: runsPage) ?? 0, x: x, y: cy, w: w,
                   actions: pages.map { AnyHashable(Action.runsPage($0)) }, ctx: ctx)
         cy += 30 + 16
         switch runsPage {
         case .connect: drawConnect(x: x, y: cy, w: w, ctx: ctx)
         case .alerts: drawRunAlerts(x: x, y: cy, w: w, enabled: on, ctx: ctx)
+        case .layout: drawRunLayout(x: x, y: cy, w: w, enabled: on, ctx: ctx)
         }
+    }
+
+    /// How the Runs tab lists runs, and how a run's own page draws it.
+    private func drawRunLayout(x: CGFloat, y: CGFloat, w: CGFloat, enabled on: Bool, ctx: CGContext) {
+        var cy = y
+        sectionLabel("RUNS LIST", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let lists = RunsListStyle.allCases
+        segmented(lists.map(\.title), selected: lists.firstIndex(of: settings.runsListStyle) ?? 0, x: x, y: cy, w: w,
+                  actions: lists.map { AnyHashable(Action.listStyle($0)) }, enabled: on, ctx: ctx)
+        cy += 30 + 8
+        Text(settings.runsListStyle.detail, F.sf(12, 500), theme.muted2).draw(x: x + 1, capCenter: cy + 6, in: ctx)
+        cy += 34
+        sectionLabel("RUN PAGE", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let pages = RunPageStyle.allCases
+        segmented(pages.map(\.title), selected: pages.firstIndex(of: settings.runPageStyle) ?? 0, x: x, y: cy, w: w,
+                  actions: pages.map { AnyHashable(Action.pageStyle($0)) }, enabled: on, ctx: ctx)
+        cy += 30 + 8
+        Text(settings.runPageStyle.detail, F.sf(12, 500), theme.muted2).draw(x: x + 1, capCenter: cy + 6, in: ctx)
+        cy += 34
+        hint(symbol: "cursorarrow.click", "Click a run in the list to open its page. \u{2039} Runs, or Esc, goes back to the list.", x: x, y: cy, w: w, ctx: ctx)
     }
 
     private func drawRunAlerts(x: CGFloat, y: CGFloat, w: CGFloat, enabled on: Bool, ctx: CGContext) {

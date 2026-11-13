@@ -12,13 +12,9 @@ extension Demo {
         public var opened: Set<String>
         public var allRecent: Bool
         public var note: String
-        /// In the compact view, the runs shown as full cards.
-        public var compactOpen: Set<String> = []
 
-        public init(name: String, runs: [TaskRun], expanded: Set<String> = [], opened: Set<String> = [], allRecent: Bool = false, note: String,
-                    compactOpen: Set<String> = []) {
+        public init(name: String, runs: [TaskRun], expanded: Set<String> = [], opened: Set<String> = [], allRecent: Bool = false, note: String) {
             self.name = name; self.runs = runs; self.expanded = expanded; self.opened = opened; self.allRecent = allRecent; self.note = note
-            self.compactOpen = compactOpen
         }
     }
 

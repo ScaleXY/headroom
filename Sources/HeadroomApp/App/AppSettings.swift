@@ -179,10 +179,16 @@ final class AppSettings {
 
     static let runQuietChoices: [TimeInterval] = [10 * 60, 15 * 60, 30 * 60, 60 * 60]
 
-    /// The Runs tab lists every run on one line instead of as cards. Off by default.
-    var runsCompact: Bool {
-        get { defaults.bool(forKey: "runsCompact") }
-        set { defaults.set(newValue, forKey: "runsCompact") }
+    /// How the Runs tab lists runs. Ledger by default.
+    var runsListStyle: RunsListStyle {
+        get { RunsListStyle(rawValue: defaults.integer(forKey: "runsListStyle")) ?? .ledger }
+        set { defaults.set(newValue.rawValue, forKey: "runsListStyle"); changed() }
+    }
+
+    /// How a run's own page draws it. Briefing by default.
+    var runPageStyle: RunPageStyle {
+        get { RunPageStyle(rawValue: defaults.integer(forKey: "runPageStyle")) ?? .briefing }
+        set { defaults.set(newValue.rawValue, forKey: "runPageStyle"); changed() }
     }
 
     /// While a run is live, its progress (and a mark when one needs you) beside the meters. On by default.

@@ -83,7 +83,7 @@ enum SettingsStage {
         Text("One click, and Headroom is back in seconds.", F.sf(12, 500), t.muted).draw(x: rect.midX, capCenter: rect.maxY - 25, align: .center, in: ctx)
     }
 
-    /// A run card as the Runs tab draws it, and the run alerts that are on.
+    /// A run's page as the Runs tab draws it (in the chosen style), and the run alerts that are on.
     private static func runs(_ rect: CGRect, settings: AppSettings, theme t: Theme, ctx: CGContext) {
         guard settings.taskTracking else {
             let c = CGPoint(x: rect.midX, y: rect.midY - 20)
@@ -94,13 +94,13 @@ enum SettingsStage {
         }
         let card = RunsPresenter(now: Demo.now).card(Demo.inputRun(now: Demo.now))
         let width = PopoverChrome.width - PopoverChrome.pad * 2
-        let height = RunCardRenderer.draw(card, origin: .zero, width: width, theme: t, ctx: nil)
+        let height = RunPageRenderer.draw(card, style: settings.runPageStyle, origin: .zero, width: width, theme: t, ctx: nil)
         let k = min((rect.width - 36) / width, 1)
         var y = rect.minY + 44
         ctx.withState {
             ctx.translateBy(x: rect.midX - width * k / 2, y: y)
             ctx.scaleBy(x: k, y: k)
-            RunCardRenderer.draw(card, origin: .zero, width: width, theme: t, ctx: ctx)
+            RunPageRenderer.draw(card, style: settings.runPageStyle, origin: .zero, width: width, theme: t, ctx: ctx)
         }
         y += height * k + 16
         let samples: [(TaskNotificationKind, String, String)] = [

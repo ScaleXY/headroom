@@ -27,23 +27,27 @@ struct HitRegion {
         case moreRecent
         /// The empty Runs tab's "Connect your agents".
         case connectAgents
-        /// The Runs tab's view: 0 cards, 1 compact.
-        case runsLayout(Int)
-        /// In the compact view, open a run's full card in its line's place (or close it again).
-        case openCompact(String)
+        /// Open a run's own page from the Runs list.
+        case openRun(String)
+        /// Back from a run's page to the list.
+        case closeRun
+        /// Show or hide the finished runs folded into one line (Two-line's summary).
+        case toggleFinished
     }
 
     enum RunButton: Equatable { case openSession, copyResume }
     var rect: CGRect
     var tooltip: String?
     var action: Action = .none
+    /// Draws a hover fill of this corner radius over `rect` while the pointer is on it.
+    var hover: CGFloat?
 }
 
 /// Collects hit regions during a render pass.
 final class RenderOutput {
     var regions: [HitRegion] = []
-    func add(_ rect: CGRect, tooltip: String? = nil, action: HitRegion.Action = .none) {
-        regions.append(HitRegion(rect: rect, tooltip: tooltip, action: action))
+    func add(_ rect: CGRect, tooltip: String? = nil, action: HitRegion.Action = .none, hover: CGFloat? = nil) {
+        regions.append(HitRegion(rect: rect, tooltip: tooltip, action: action, hover: hover))
     }
 }
 
