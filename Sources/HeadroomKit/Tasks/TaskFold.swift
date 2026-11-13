@@ -1,65 +1,165 @@
 import Foundation
 
-/// Folds task events into runs: a pure function of the events, the clock, the stale threshold
-/// and the token calibration.
+/// Folds task events into runs: a pure function of the events, the clock, the stale and abandon
+/// thresholds and the token calibration.
 ///
 /// Leaf states, in order of precedence:
 /// 1. A declared terminal state (done, failed, skipped, cancelled) wins over liveness. A new
 ///    attempt, or a `start`, after it reopens the task and counts a retry.
 /// 2. Any active attempt makes the leaf `running`, unless a wait declared after that attempt
-///    started holds. A wait for `input` is cleared by any later activity on the task or its attempts.
+///    started holds. A wait is cleared by a later `start` or `progress`, or by later activity on
+///    the task's attempts; a wait an agent or a person declared only by activity a minute after it
+///    (the call that declared it shows up as activity of its own).
 /// 3. With every attempt ended and nothing declared since: the last attempt's `error` gives
-///    `failed`, anything else `done`, both flagged unconfirmed.
-/// 4. Otherwise the declared mark: planned, running (`start`, `progress`) or waiting.
+///    `failed`, `interrupted` gives `parked` (cut short: the session ended, or the agent was silent
+///    for `abandonAfter`), anything else `done`; all three flagged unconfirmed.
+/// 4. Otherwise the declared mark: planned, running (`start`, `progress`) or waiting. A task the
+///    orchestrator was doing itself is `parked` once the session has ended or gone silent.
 ///
 /// Parents are always derived from their children (a terminal op on a parent closes its open
-/// descendants instead). An agent nobody tagged gets an implicit `~` task under the task its
-/// spawning attempt works on. Once any task is declared such helpers are shown but never count,
-/// so they can't dilute a declared plan; in a run with nothing declared they are the plan, and an
-/// agent that spawned others counts as one unit beside them (finished agents over spawned agents).
-/// A `session` attempt is the orchestrator itself: it adds activity and tokens to the run but no
-/// task, so the agents it spawns sit at the top.
+/// descendants instead). A parent weighs what its counted children weigh together, unless an
+/// effort was declared for it. An agent nobody tagged gets an implicit `~` task under the task its
+/// spawning attempt works on; once there is a plan such helpers are shown but never count, so they
+/// can't dilute it. In a run with no plan the agents are the plan, and an agent that spawned others
+/// counts as one unit beside them. A `session` attempt is the orchestrator itself: it adds activity
+/// to the run, and its tokens and working time go to the tasks it is doing itself (running, with no
+/// agent on them), split by effort.
+///
+/// The plan is what an agent or a person declared; failing that, the harness's own plan list
+/// (`plan.mirror`), one task per item under `~plan/`, until anything is declared. Agents seen before
+/// the first declaration keep counting, grouped under `~earlier` beside the plan, so declaring late
+/// doesn't throw away what they did. A tag naming a task the plan doesn't have makes a helper
+/// under the deepest task it does have.
+///
+/// `progress.done` is closed work with a confirmed outcome, plus the steps or fraction agents
+/// reported on open tasks. `progress.estimate` is the best guess: it adds agents that ended without
+/// a word (inferred done) and partial credit for running tasks from, in order of trust, reported
+/// progress, tokens against the calibrated tokens per effort unit, and working time against what
+/// the run's finished tasks took per unit of effort, capped at `maxGuess`.
 public enum TaskFold {
     public static let defaultStaleAfter: TimeInterval = 15 * 60
-    /// How far back the forecast looks for the recent rate.
+    /// With no activity for this long an agent counts as cut short, and the run as stopped.
+    public static let defaultAbandonAfter: TimeInterval = 2 * 3600
+    /// How much working time the forecast's recent rate looks back over.
     public static let forecastWindow: TimeInterval = 45 * 60
+    /// Activity closer together than this is one stretch of work.
+    public static let workingGap: TimeInterval = 5 * 60
+    /// How much working time the recent token rate looks back over…
+    public static let recentWindow: TimeInterval = 30 * 60
+    /// …and never further back than this on the clock.
+    public static let recentLookback: TimeInterval = 3 * 3600
+    /// An agent's or a person's own wait isn't cleared by activity sooner than this after it.
+    public static let waitGrace: TimeInterval = 60
+    /// Partial credit for a running task never goes past this without a report saying so.
+    public static let maxGuess = 0.9
+    /// A run that isn't finished never reads as all done.
+    static let openCap = 0.99
+    /// The group holding agents that worked before anything was declared.
+    public static let earlierID = "~earlier"
+    public static let earlierTitle = "Earlier work"
+    /// Mirrored plan items: `~plan/<item id made path-safe>`. Never created as a node of its own.
+    public static let planPrefix = "~plan/"
 
     /// Every run in `events`, most recently updated first. Events apply in timestamp order, ties in
     /// the order given (pass the journal before the observed file).
     public static func fold(_ events: [TaskEvent], now: Date, staleAfter: TimeInterval = defaultStaleAfter,
-                            tokensPerEffortUnit: Double? = nil) -> [TaskRun] {
+                            tokensPerEffortUnit: Double? = nil, abandonAfter: TimeInterval = defaultAbandonAfter) -> [TaskRun] {
         var byRun: [String: [TaskEvent]] = [:]
         for e in events { byRun[e.run, default: []].append(e) }
-        return byRun.map { run, list in fold(run: run, list, now: now, staleAfter: staleAfter, tokensPerEffortUnit: tokensPerEffortUnit) }
-            .sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
+        return byRun.map { run, list in
+            fold(run: run, list, now: now, staleAfter: staleAfter, tokensPerEffortUnit: tokensPerEffortUnit, abandonAfter: abandonAfter)
+        }.sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
     }
 
     /// Folds twice: first to learn tokens per effort unit from the finished leaves, then with it.
-    public static func foldCalibrated(_ events: [TaskEvent], now: Date, staleAfter: TimeInterval = defaultStaleAfter) -> [TaskRun] {
-        let first = fold(events, now: now, staleAfter: staleAfter)
+    public static func foldCalibrated(_ events: [TaskEvent], now: Date, staleAfter: TimeInterval = defaultStaleAfter,
+                                      abandonAfter: TimeInterval = defaultAbandonAfter) -> [TaskRun] {
+        let first = fold(events, now: now, staleAfter: staleAfter, abandonAfter: abandonAfter)
         guard let tpu = tokensPerEffortUnit(first) else { return first }
-        return fold(events, now: now, staleAfter: staleAfter, tokensPerEffortUnit: tpu)
+        return fold(events, now: now, staleAfter: staleAfter, tokensPerEffortUnit: tpu, abandonAfter: abandonAfter)
     }
 
     /// Median of tokens ÷ effort over done leaves that spent tokens.
     public static func tokensPerEffortUnit(_ runs: [TaskRun]) -> Double? {
-        let rates = runs.flatMap(\.nodes).filter { $0.leaf && $0.counted && $0.state == .done && $0.tokens > 0 && $0.effort > 0 }
-            .map { Double($0.tokens) / $0.effort }.sorted()
-        guard !rates.isEmpty else { return nil }
-        let mid = rates.count / 2
-        return rates.count % 2 == 1 ? rates[mid] : (rates[mid - 1] + rates[mid]) / 2
+        median(runs.flatMap(\.nodes).filter { $0.leaf && $0.counted && $0.state == .done && $0.tokens > 0 && $0.effort > 0 }
+            .map { Double($0.tokens) / $0.effort })
     }
 
-    static func fold(run: String, _ events: [TaskEvent], now: Date, staleAfter: TimeInterval, tokensPerEffortUnit: Double?) -> TaskRun {
+    static func median(_ values: [Double]) -> Double? {
+        let v = values.sorted()
+        guard !v.isEmpty else { return nil }
+        let mid = v.count / 2
+        return v.count % 2 == 1 ? v[mid] : (v[mid - 1] + v[mid]) / 2
+    }
+
+    static func fold(run: String, _ events: [TaskEvent], now: Date, staleAfter: TimeInterval, tokensPerEffortUnit: Double?,
+                     abandonAfter: TimeInterval) -> TaskRun {
         let ordered = events.enumerated().sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }.map(\.element)
-        var b = RunBuilder(id: run, at: ordered.first?.at ?? now)
-        // The forecast needs `done` at one moment, the start of its window: sample it on the way past.
-        b.windowStart = max(now.addingTimeInterval(-forecastWindow), b.startedAt)
-        for e in ordered {
-            if b.doneAtWindowStart == nil, e.at > b.windowStart { b.doneAtWindowStart = b.derive(now: e.at, staleAfter: .infinity, tpu: nil).root.node.progress.done }
-            b.apply(e)
-        }
+        var b = RunBuilder(id: run, at: ordered.first?.at ?? now, abandonAfter: abandonAfter)
+        for e in ordered { b.apply(e) }
+        b.flushSessionTokens()
         return b.result(now: now, staleAfter: staleAfter, tpu: tokensPerEffortUnit)
+    }
+}
+
+// MARK: - Spans
+
+/// A stretch of time, `start…end`.
+struct Span: Hashable {
+    var start: Date
+    var end: Date
+    var length: Double { max(0, end.timeIntervalSince(start)) }
+}
+
+extension Array where Element == Span {
+    /// Activity at `t`: extends the last stretch when within `gap` of its end, else starts a new
+    /// one. A time before the last end is inside work already seen.
+    mutating func mark(_ t: Date, gap: TimeInterval) {
+        if let last = last {
+            if t <= last.end { return }
+            if t.timeIntervalSince(last.end) <= gap { self[count - 1].end = t; return }
+        }
+        append(Span(start: t, end: t))
+    }
+}
+
+/// Sets of time as sorted, disjoint stretches.
+enum Spans {
+    static func normalized(_ s: [Span]) -> [Span] {
+        guard s.count > 1 else { return s }
+        var out: [Span] = []
+        for x in s.sorted(by: { ($0.start, $0.end) < ($1.start, $1.end) }) {
+            if let l = out.last, x.start <= l.end { out[out.count - 1].end = Swift.max(l.end, x.end) } else { out.append(x) }
+        }
+        return out
+    }
+
+    static func measure(_ s: [Span]) -> Double { s.reduce(0) { $0 + $1.length } }
+
+    static func clip(_ s: [Span], from: Date, to: Date) -> [Span] {
+        s.compactMap { x in
+            let a = Swift.max(x.start, from), b = Swift.min(x.end, to)
+            return a < b ? Span(start: a, end: b) : nil
+        }
+    }
+
+    /// `a` without `b`; both normalized.
+    static func subtract(_ a: [Span], _ b: [Span]) -> [Span] {
+        guard !b.isEmpty else { return a }
+        var out: [Span] = []
+        var j = 0
+        for x in a {
+            var start = x.start
+            while j < b.count, b[j].end <= start { j += 1 }
+            var k = j
+            while k < b.count, b[k].start < x.end {
+                if b[k].start > start { out.append(Span(start: start, end: b[k].start)) }
+                start = Swift.max(start, b[k].end)
+                k += 1
+            }
+            if start < x.end { out.append(Span(start: start, end: x.end)) }
+        }
+        return out
     }
 }
 
@@ -72,18 +172,34 @@ struct RunBuilder {
         case terminal(TaskState)
     }
 
-    struct Rec {
-        var id: String
+    /// A task as the events left it. A class: the fold touches one for nearly every event, and
+    /// reading a field out of a dictionary of large structs copies the whole struct.
+    final class Rec {
+        let id: String
         var title: String
         var effort = TaskEffort.defaultWeight
+        /// An effort was declared for it (a group's own weight then wins over its children's).
+        var effortSet = false
         var importance = TaskImportance.normal
         var declared: Bool
         /// Set for the implicit task of an untagged attempt: placed by that attempt's parent.
         var ownerAttempt: String?
+        /// Where a helper sits regardless of its spawner: a task id, or "" for the top.
+        var anchor: String?
+        /// An item of the harness's plan list.
+        var mirrored = false
+        var createdAt: Date
         var steps: TaskSteps?
+        /// A step reported while no total was known: shown once one is.
+        var pendingStep: Int?
+        var stepsAt: Date?
         var fraction: Double?
+        var fractionAt: Date?
         var note: String?
         var waitNote: String?
+        var waitOptions: [String] = []
+        /// Activity clears the wait only after this.
+        var waitClearAfter: Date
         var evidence: String?
         var failure: String?
         var mark = Mark.planned
@@ -92,180 +208,335 @@ struct RunBuilder {
         var retries = 0
         var startedAt: Date?
         var lastActivity: Date
+        /// The orchestrator's tokens spent while it was doing this task itself.
+        var sessionTokens: Int64 = 0
+        var stretches: [Span] = []
+
+        init(id: String, title: String, declared: Bool, at: Date) {
+            self.id = id; self.title = title; self.declared = declared
+            createdAt = at; markAt = at; lastActivity = at; waitClearAfter = at
+        }
     }
 
-    struct Att {
+    final class Att {
         var attempt: TaskAttempt
+        /// "" for the orchestrator's own session.
         var task: String
+        init(attempt: TaskAttempt, task: String) { self.attempt = attempt; self.task = task }
+    }
+
+    struct RunWait {
+        var reason: TaskWaitReason
+        var at: Date
+        var clearAfter: Date
+        var note: String?
+        var options: [String]
     }
 
     let id: String
+    let abandonAfter: TimeInterval
     var title: String?
     var project: String?
     var harness: String?
+    var host: String?
+    var cwd: String?
     var startedAt: Date
     var updatedAt: Date
     var tasks: [String: Rec] = [:]
     var order: [String] = []
+    /// Children by path parent, for telling leaves apart while applying.
+    var childCount: [String: Int] = [:]
     var attempts: [String: Att] = [:]
     var stoppedAt: Date?
-    var runWait: (reason: TaskWaitReason, at: Date)?
+    /// The session ended (`run.end`), until it works again.
+    var endedAt: Date?
+    var runWait: RunWait?
     var firstStart: Date?
     var scopeChanges = 0
     var lastActivity: Date
-    var windowStart: Date
-    /// `done` just before the first event after `windowStart`; nil while every event is at or before it.
-    var doneAtWindowStart: Double?
+    var lastSessionActivity: Date?
+    var hidden = false
+    var abandoned = false
+    /// An agent or a person declared a task, and when that first happened.
+    var declaredAny = false
+    var firstDeclaredAt: Date?
+    var mirrorCount = 0
+    /// Tasks whose mark is `started`, and how many wait for each reason (by urgency).
+    var startedSet: Set<String> = []
+    var waitCounts = [0, 0, 0]
+    /// Where the run's time went: activity stretches, and spans waiting for input or a limit.
+    var runStretches: [Span] = []
+    var inputSpans: [Span] = []
+    var limitSpans: [Span] = []
+    var inputOpen: Date?
+    var limitOpen: Date?
+    /// Token growth as it was seen, for the recent rate.
+    var tokenSamples: [(at: Date, tokens: Int64)] = []
+    /// Session tokens not yet given to the tasks the orchestrator is doing.
+    var pendingSessionTokens: Int64 = 0
+    /// `orchestratorTasks()` as of the last event that could change it.
+    var ownedCache: [String]?
 
-    init(id: String, at: Date) {
-        self.id = id; startedAt = at; updatedAt = at; lastActivity = at; windowStart = at
+    init(id: String, at: Date, abandonAfter: TimeInterval = TaskFold.defaultAbandonAfter) {
+        self.id = id; self.abandonAfter = abandonAfter
+        startedAt = at; updatedAt = at; lastActivity = at
     }
+
+    /// The harness's plan list is the plan.
+    var mirrorActive: Bool { !declaredAny && mirrorCount > 0 }
+    /// Something besides the agents makes the plan: helpers then never count.
+    var hasPlan: Bool { declaredAny || mirrorActive }
 
     // MARK: Applying events
 
     mutating func apply(_ e: TaskEvent) {
-        updatedAt = max(updatedAt, e.at)
+        // Activity of an attempt already seen and still open is the one kind of event that changes
+        // nothing but times and token totals, so session tokens can pile up across it.
+        var plain = false
+        if case .activity(let key, _, _) = e.op, let a = attempts[key] { plain = a.attempt.isActive }
+        if !plain { flushSessionTokens(); ownedCache = nil }
+        defer { noteWaits(at: e.at) }
+        if case .hide = e.op {} else { updatedAt = max(updatedAt, e.at) }
         startedAt = min(startedAt, e.at)
-        if e.source == .agent || e.source == .user, e.op.task != nil { workResumed(at: e.at) }
+        let byAgent = e.source == .agent, byPerson = e.source == .user
+        if byAgent || byPerson, e.op.task != nil {
+            // A person acting on a task is back at the run; an agent reporting is working.
+            if byPerson { stoppedAt = nil; endedAt = nil; runWait = nil } else if byAgent { clearRunWait(at: e.at) }
+        }
         switch e.op {
-        case .meta(let t, let p, let h, _, _):
-            // Contract: `host` and `cwd` go on the run (engine workstream).
-            if let t, !t.isEmpty { title = t }
-            if let p, !p.isEmpty { project = p }
-            if let h, !h.isEmpty { harness = h }
+        case .meta(let t, let p, let h, let host, let cwd):
+            if let t = TaskText.title(t) { title = t }
+            if let p = TaskText.title(p) { project = p }
+            if let h = TaskText.title(h) { harness = h }
+            if let host = TaskText.clean(host, limit: 400) { self.host = host }
+            if let cwd = TaskText.clean(cwd, limit: 2048) { self.cwd = cwd }
         case .add(let spec):
             let existed = tasks[spec.id] != nil
             guard ensure(spec.id, at: e.at, declared: true) else { return }
             let effort = spec.effort.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             if firstStart != nil, !existed || (effort != nil && effort != tasks[spec.id]?.effort) { scopeChanges += 1 }
-            update(spec.id, at: e.at) { r in
-                if let t = spec.title, !t.isEmpty { r.title = t }
-                if let effort { r.effort = effort }
-                if let imp = spec.importance { r.importance = imp }
-                if let n = spec.steps, n > 0 { r.steps = TaskSteps(done: min(r.steps?.done ?? 0, n), total: n) }
+            let r = tasks[spec.id]!
+            if let t = TaskText.title(spec.title) { r.title = t }
+            if let effort { r.effort = effort; r.effortSet = true }
+            if let imp = spec.importance { r.importance = imp }
+            if let n = spec.steps, n > 0 {
+                r.steps = TaskSteps(done: min(r.steps?.done ?? r.pendingStep ?? 0, n), total: n)
+                r.pendingStep = nil
             }
+            touch(spec.id, at: e.at, work: false)
         case .start(let t):
             guard ensure(t, at: e.at, declared: true) else { return }
-            update(t, at: e.at) { r in
-                if case .terminal = r.mark { r.retries += 1 }
-                r.mark = .started; r.markAt = e.at
-                r.startedAt = r.startedAt ?? e.at
-            }
+            if case .terminal = tasks[t]!.mark { tasks[t]!.retries += 1 }
+            setMark(t, .started, at: e.at)
+            tasks[t]!.startedAt = tasks[t]!.startedAt ?? e.at
+            touch(t, at: e.at)
             firstStart = firstStart ?? e.at
         case .progress(let t, let step, let total, let fraction, let note):
             guard ensure(t, at: e.at, declared: true) else { return }
-            update(t, at: e.at) { r in
-                if let total, total > 0 { r.steps = TaskSteps(done: r.steps?.done ?? 0, total: total) }
-                if let step, step >= 0 { r.steps = TaskSteps(done: step, total: max(step, r.steps?.total ?? step)) }
-                if let fraction, fraction.isFinite { r.fraction = min(1, max(0, fraction)) }
-                if let note, !note.isEmpty { r.note = note }
-                if r.mark == .planned || r.mark == .waiting(.input) { r.mark = .started; r.markAt = e.at }
-                r.startedAt = r.startedAt ?? e.at
+            let r = tasks[t]!
+            let known = total.flatMap { $0 > 0 ? $0 : nil } ?? r.steps?.total
+            if let step, step >= 0 {
+                // With no total known, a step says how far but not how far along.
+                r.stepsAt = e.at
+                if let known { r.steps = TaskSteps(done: step, total: max(step, known)); r.pendingStep = nil } else { r.pendingStep = step }
+            } else if let total, total > 0 {
+                r.steps = TaskSteps(done: r.steps?.done ?? r.pendingStep ?? 0, total: total)
+                r.pendingStep = nil
             }
+            if let fraction, fraction.isFinite { r.fraction = min(1, max(0, fraction)); r.fractionAt = e.at }
+            if let note = TaskText.note(note) { r.note = note }
+            r.startedAt = r.startedAt ?? e.at
+            switch r.mark {
+            case .planned, .waiting: setMark(t, .started, at: e.at)
+            default: break
+            }
+            touch(t, at: e.at)
             firstStart = firstStart ?? e.at
-        case .wait(let t, let key, let reason, let note, _):
+        case .wait(let t, let key, let reason, let note, let options):
+            let note = TaskText.note(note), options = TaskText.options(options)
+            let clearAfter = e.at.addingTimeInterval(byAgent || byPerson ? TaskFold.waitGrace : 0)
             // An unknown agent asking for input still means the run needs a person.
             guard let target = t ?? key.flatMap({ attempts[$0]?.task }).flatMap({ $0.isEmpty ? nil : $0 }) else {
-                runWait = (reason, e.at)
+                runWait = RunWait(reason: reason, at: e.at, clearAfter: clearAfter, note: note, options: options)
                 return
             }
             // Only agents and people declare; a hook or the observer waiting on a task doesn't.
-            guard ensure(target, at: e.at, declared: e.source == .agent || e.source == .user) else { return }
-            update(target, at: e.at) { r in
-                if case .terminal = r.mark { return }
-                r.mark = .waiting(reason); r.markAt = e.at
-                r.waitNote = note
-            }
+            guard ensure(target, at: e.at, declared: byAgent || byPerson) else { return }
+            if case .terminal = tasks[target]!.mark { touch(target, at: e.at, work: false); return }
+            let working = inWork(target)
+            setMark(target, .waiting(reason), at: e.at)
+            tasks[target]!.waitNote = note
+            tasks[target]!.waitOptions = options
+            tasks[target]!.waitClearAfter = clearAfter
+            touch(target, at: e.at, work: working)
         case .done(let t, let evidence):
-            close(t, as: .done, at: e.at) { $0.evidence = evidence ?? $0.evidence }
+            close(t, as: .done, at: e.at) { r in if let v = TaskText.note(evidence) { r.evidence = v } }
             firstStart = firstStart ?? e.at
         case .fail(let t, let reason):
-            close(t, as: .failed, at: e.at) { $0.failure = reason ?? $0.failure }
+            close(t, as: .failed, at: e.at) { r in if let v = TaskText.note(reason) { r.failure = v } }
             firstStart = firstStart ?? e.at
         case .skip(let t, let reason):
-            close(t, as: .skipped, at: e.at) { $0.note = reason ?? $0.note }
+            close(t, as: .skipped, at: e.at) { r in if let v = TaskText.note(reason) { r.note = v } }
         case .cancel(let t, let reason):
-            close(t, as: .cancelled, at: e.at) { $0.note = reason ?? $0.note }
+            close(t, as: .cancelled, at: e.at) { r in if let v = TaskText.note(reason) { r.note = v } }
         case .attempt(let spec):
             upsert(spec, at: e.at)
         case .activity(let key, let at, let tokens):
             if attempts[key] == nil { upsert(TaskEvent.AttemptSpec(key: key), at: e.at) }
+            let a = attempts[key]!
             let when = at ?? e.at
-            attempts[key]!.attempt.lastActivityAt = max(attempts[key]!.attempt.lastActivityAt, when)
-            if let tokens { attempts[key]!.attempt.tokens = max(attempts[key]!.attempt.tokens, tokens) }
-            activity(onAttempt: key, at: when)
+            a.attempt.lastActivityAt = max(a.attempt.lastActivityAt, when)
+            var gained: Int64 = 0
+            if let tokens, tokens > a.attempt.tokens { gained = tokens - a.attempt.tokens; a.attempt.tokens = tokens }
+            if gained > 0 { tokenSamples.append((when, gained)) }
+            if a.task.isEmpty {
+                // The orchestrator: its time and tokens go to what it is doing itself.
+                pendingSessionTokens += gained
+                orchestratorActive(at: when)
+                if ownedCache == nil { ownedCache = orchestratorTasks() }
+                for id in ownedCache! { tasks[id]?.stretches.mark(when, gap: TaskFold.workingGap) }
+                touchRun(when)
+            } else {
+                activity(onAttempt: key, at: when)
+            }
         case .attemptEnd(let key, let outcome):
             // An end for an agent never seen starting is one of the harness's own (prompt
             // suggestions, side questions): nothing to show.
-            guard attempts[key] != nil else { return }
-            attempts[key]!.attempt.endedAt = e.at
-            attempts[key]!.attempt.outcome = outcome
-            attempts[key]!.attempt.lastActivityAt = max(attempts[key]!.attempt.lastActivityAt, e.at)
-            touch(attempts[key]!.task, at: e.at)
+            guard let a = attempts[key] else { return }
+            a.attempt.endedAt = e.at
+            a.attempt.outcome = outcome
+            a.attempt.lastActivityAt = max(a.attempt.lastActivityAt, e.at)
+            touch(a.task, at: e.at)
         case .stop(let blocked):
             // A Stop hook that sent the agent back to work didn't stop anything.
             if !blocked { stoppedAt = e.at }
         case .resume:
             stoppedAt = nil
+            endedAt = nil
             runWait = nil
+            abandoned = false
         case .end:
             stoppedAt = e.at
+            endedAt = e.at
             runWait = nil
-            // Nothing outlives the session: close what is still open.
-            for (k, a) in attempts where a.attempt.isActive { attempts[k]!.attempt.endedAt = e.at }
-        case .planMirror, .hide, .abandon:
-            // Contract only: the engine workstream implements these.
-            break
+            // Nothing outlives the session: what is still open was cut short.
+            interruptActive(at: e.at)
+        case .planMirror(let items, _):
+            if !declaredAny { mirror(items, at: e.at) }
+        case .hide(let h):
+            hidden = h
+        case .abandon(let reason):
+            abandon(reason: reason, at: e.at)
         }
     }
 
-    /// The orchestrator is working again: the run is no longer stopped or waiting on a person.
-    mutating func workResumed(at: Date) {
-        stoppedAt = nil
-        if let w = runWait, w.reason == .input, at > w.at { runWait = nil }
+    /// The orchestrator did something: a stop or end before it is over, and a run-level wait
+    /// before it (past its grace) is answered.
+    mutating func orchestratorActive(at: Date) {
+        lastSessionActivity = max(lastSessionActivity ?? at, at)
+        if let s = stoppedAt, at > s { stoppedAt = nil }
+        if let e = endedAt, at > e { endedAt = nil }
+        clearRunWait(at: at)
+    }
+
+    mutating func clearRunWait(at: Date) {
+        if let w = runWait, at > w.clearAfter { runWait = nil }
     }
 
     /// Creates `path` and any missing ancestors (as implicit groups). False for an invalid path.
     @discardableResult
     mutating func ensure(_ path: String, at: Date, declared: Bool, title: String? = nil) -> Bool {
         guard TaskPath.isValid(path) else { return false }
+        if declared { declare(at: at) }
         for ancestor in TaskPath.ancestors(path) where tasks[ancestor] == nil {
-            insert(Rec(id: ancestor, title: TaskPath.last(ancestor), declared: false, markAt: at, lastActivity: at))
+            insert(Rec(id: ancestor, title: TaskPath.last(ancestor), declared: false, at: at))
         }
         if tasks[path] == nil {
-            insert(Rec(id: path, title: title ?? TaskPath.last(path), declared: declared, markAt: at, lastActivity: at))
+            insert(Rec(id: path, title: title ?? TaskPath.last(path), declared: declared, at: at))
         } else if declared {
             tasks[path]!.declared = true
         }
         return true
     }
 
+    /// The first declaration replaces a mirrored plan.
+    mutating func declare(at: Date) {
+        guard !declaredAny else { return }
+        declaredAny = true
+        firstDeclaredAt = at
+        for id in order where tasks[id]?.mirrored == true { remove(id) }
+        mirrorCount = 0
+    }
+
     mutating func insert(_ r: Rec) {
         tasks[r.id] = r
         order.append(r.id)
+        childCount[TaskPath.parent(r.id) ?? "", default: 0] += 1
+        if r.mark == .started { startedSet.insert(r.id) }
     }
 
-    mutating func update(_ path: String, at: Date, _ change: (inout Rec) -> Void) {
-        guard tasks[path] != nil else { return }
-        change(&tasks[path]!)
-        touch(path, at: at)
+    mutating func remove(_ id: String) {
+        guard let r = tasks[id] else { return }
+        if case .waiting(let reason) = r.mark { waitCounts[reason.urgency] -= 1 }
+        startedSet.remove(id)
+        childCount[TaskPath.parent(id) ?? "", default: 0] -= 1
+        tasks[id] = nil
+        order.removeAll { $0 == id }
     }
 
-    mutating func touch(_ path: String, at: Date) {
-        if let last = tasks[path]?.lastActivity { tasks[path]!.lastActivity = max(last, at) }
+    mutating func setMark(_ id: String, _ m: Mark, at: Date) {
+        guard let old = tasks[id]?.mark else { return }
+        if case .waiting(let r) = old { waitCounts[r.urgency] -= 1 }
+        if old == .started { startedSet.remove(id) }
+        if case .waiting(let r) = m { waitCounts[r.urgency] += 1 }
+        if m == .started { startedSet.insert(id) }
+        tasks[id]!.mark = m
+        tasks[id]!.markAt = at
+    }
+
+    /// Opens or closes the spans waiting for input and for a limit.
+    mutating func noteWaits(at: Date) {
+        let input = runWait?.reason == .input || waitCounts[TaskWaitReason.input.urgency] > 0
+        let limit = runWait?.reason == .limit || waitCounts[TaskWaitReason.limit.urgency] > 0
+        if input, inputOpen == nil { inputOpen = at } else if !input, let s = inputOpen { inputSpans.append(Span(start: s, end: at)); inputOpen = nil }
+        if limit, limitOpen == nil { limitOpen = at } else if !limit, let s = limitOpen { limitSpans.append(Span(start: s, end: at)); limitOpen = nil }
+    }
+
+    /// Something happened on `path`; `work` when it was work on it (not declaring or closing a
+    /// task nobody had started), which counts toward its working time.
+    mutating func touch(_ path: String, at: Date, work: Bool = true) {
+        if let r = tasks[path] {
+            r.lastActivity = max(r.lastActivity, at)
+            if work { r.stretches.mark(at, gap: TaskFold.workingGap) }
+        }
+        touchRun(at)
+    }
+
+    /// Started, waiting after a start, or with an agent on it.
+    func inWork(_ id: String) -> Bool {
+        guard let r = tasks[id] else { return false }
+        switch r.mark {
+        case .started: return true
+        case .waiting: return r.startedAt != nil || !r.attemptKeys.isEmpty
+        default: return !r.attemptKeys.isEmpty && r.attemptKeys.contains { attempts[$0]?.attempt.isActive == true }
+        }
+    }
+
+    mutating func touchRun(_ at: Date) {
         lastActivity = max(lastActivity, at)
+        runStretches.mark(at, gap: TaskFold.workingGap)
     }
 
     /// A terminal op closes the task and every open task beneath it.
     mutating func close(_ path: String, as state: TaskState, at: Date, extra: (inout Rec) -> Void) {
         guard ensure(path, at: at, declared: true) else { return }
-        update(path, at: at, extra)
+        extra(&tasks[path]!)
         let prefix = path + "/"
         for id in order where id == path || id.hasPrefix(prefix) || isPlaced(id, under: path) {
-            update(id, at: at) { r in
-                if case .terminal = r.mark, r.id != path { return }
-                r.mark = .terminal(state); r.markAt = at
-            }
+            if id != path, case .terminal = tasks[id]!.mark { continue }
+            let working = inWork(id)
+            setMark(id, .terminal(state), at: at)
+            touch(id, at: at, work: working)
         }
     }
 
@@ -282,120 +553,271 @@ struct RunBuilder {
 
     mutating func upsert(_ spec: TaskEvent.AttemptSpec, at: Date) {
         let tagged = spec.taggedPath
-        if var existing = attempts[spec.key] {
+        let title = TaskText.title(spec.title)
+        if let existing = attempts[spec.key] {
             var a = existing.attempt
             a.kind = spec.kind
             a.agentType = spec.agentType ?? a.agentType
             a.model = spec.model ?? a.model
             a.provider = spec.provider ?? a.provider
-            a.title = spec.title ?? a.title
+            a.title = title ?? a.title
             a.parentKey = spec.parentKey ?? a.parentKey
             a.lastActivityAt = max(a.lastActivityAt, at)
             var resumed = false
             if let end = a.endedAt, at > end { a.endedAt = nil; a.outcome = nil; resumed = true }
             existing.attempt = a
-            if let tagged, !existing.task.isEmpty, tagged != existing.task, ensure(tagged, at: at, declared: false, title: spec.title) {
-                // The tag arrived after the attempt was first seen (a hook fires before the observer
-                // reads the prompt): move it, and drop the implicit task it leaves empty.
-                let old = existing.task
-                tasks[old]?.attemptKeys.removeAll { $0 == spec.key }
-                if let o = tasks[old], o.ownerAttempt == spec.key, o.attemptKeys.isEmpty, !order.contains(where: { parent(of: $0) == old }) {
-                    tasks[old] = nil
-                    order.removeAll { $0 == old }
-                }
-                existing.task = tagged
-                attempts[spec.key] = existing
-                attach(spec.key, to: tagged, at: at)
-            } else {
-                attempts[spec.key] = existing
-                // A label arriving later (the observer after a hook) names the agent's own task.
-                if let t = spec.title, !t.isEmpty, tasks[existing.task]?.ownerAttempt == spec.key { tasks[existing.task]?.title = t }
-                if resumed { reopen(existing.task, at: at) }
-                activity(onAttempt: spec.key, at: at)
+            if existing.task.isEmpty {
+                if a.kind == .session { orchestratorActive(at: at) }
+                touchRun(at)
+                return
             }
-            if spec.kind == .session { workResumed(at: at) }
+            if let tagged, tagged != existing.task {
+                if let dest = bindTarget(tagged, at: at, title: title) {
+                    if dest != existing.task {
+                        // The tag arrived after the attempt was first seen (a hook fires before the
+                        // observer reads the prompt): move it, and drop the implicit task it leaves empty.
+                        let old = existing.task
+                        tasks[old]?.attemptKeys.removeAll { $0 == spec.key }
+                        if let o = tasks[old], o.ownerAttempt == spec.key, o.attemptKeys.isEmpty, !order.contains(where: { parent(of: $0) == old }) { remove(old) }
+                        existing.task = dest
+                        attach(spec.key, to: dest, at: at)
+                        return
+                    }
+                } else if tasks[existing.task]?.ownerAttempt == spec.key {
+                    tasks[existing.task]!.anchor = anchor(forMistyped: tagged)
+                }
+            }
+            // A label arriving later (the observer after a hook) names the agent's own task.
+            if let t = title, tasks[existing.task]?.ownerAttempt == spec.key { tasks[existing.task]!.title = t }
+            if resumed, reopen(existing.task, at: at) { tasks[existing.task]!.retries += 1 }
+            activity(onAttempt: spec.key, at: at)
             return
         }
         if spec.kind == .session {
             // The orchestrator: tracked for activity and tokens, never a task of its own.
             attempts[spec.key] = Att(attempt: TaskAttempt(key: spec.key, kind: .session, agentType: spec.agentType, model: spec.model, provider: spec.provider,
-                                                          title: spec.title, parentKey: spec.parentKey, startedAt: at), task: "")
-            touch("", at: at)
-            workResumed(at: at)
+                                                          title: title, parentKey: spec.parentKey, startedAt: at), task: "")
+            touchRun(at)
+            orchestratorActive(at: at)
             return
         }
         let task: String
-        if let tagged, ensure(tagged, at: at, declared: false, title: spec.title) {
-            task = tagged
+        if let tagged, let dest = bindTarget(tagged, at: at, title: title) {
+            task = dest
         } else {
             task = TaskPath.implicit(forAttempt: spec.key)
             if tasks[task] == nil {
-                var r = Rec(id: task, title: spec.title ?? spec.agentType ?? spec.key, declared: false, markAt: at, lastActivity: at)
+                let r = Rec(id: task, title: title ?? TaskText.title(spec.agentType) ?? spec.key, declared: false, at: at)
                 r.ownerAttempt = spec.key
+                if let tagged {
+                    r.anchor = anchor(forMistyped: tagged)
+                } else if mirrorActive, spec.parentKey.map({ attempts[$0]?.attempt.kind == .session }) ?? true, let only = singleMirrorInProgress() {
+                    // Spawned while the orchestrator works on one plan item: helping with it.
+                    r.anchor = only
+                }
                 insert(r)
             }
         }
         attempts[spec.key] = Att(attempt: TaskAttempt(key: spec.key, kind: spec.kind, agentType: spec.agentType, model: spec.model, provider: spec.provider,
-                                                      title: spec.title, parentKey: spec.parentKey, startedAt: at), task: task)
+                                                      title: title, parentKey: spec.parentKey, startedAt: at), task: task)
         attach(spec.key, to: task, at: at)
-        if spec.kind == .session { workResumed(at: at) }
+    }
+
+    /// The task a tag binds an agent to: one that exists, or (with no plan yet) one it creates.
+    /// Nil once there is a plan and the tag names a task it doesn't have.
+    mutating func bindTarget(_ tagged: String, at: Date, title: String?) -> String? {
+        if tasks[tagged] != nil { return tagged }
+        if hasPlan { return nil }
+        return ensure(tagged, at: at, declared: false, title: title) ? tagged : nil
+    }
+
+    /// Where a helper with a mistyped tag sits: the deepest task of that path the run has.
+    func anchor(forMistyped path: String) -> String {
+        if let a = TaskPath.ancestors(path).reversed().first(where: { tasks[$0] != nil }) { return a }
+        return mirrorActive ? singleMirrorInProgress() ?? "" : ""
+    }
+
+    func singleMirrorInProgress() -> String? {
+        let ids = startedSet.filter { tasks[$0]?.mirrored == true }
+        return ids.count == 1 ? ids.first : nil
     }
 
     mutating func attach(_ key: String, to task: String, at: Date) {
-        let hadAttempts = !(tasks[task]?.attemptKeys.isEmpty ?? true)
+        // Agents working side by side aren't retries: only one that starts after the others ended is.
+        let prior = tasks[task]?.attemptKeys.compactMap { attempts[$0]?.attempt } ?? []
+        let afterEnd = !prior.isEmpty && prior.allSatisfy { a in a.endedAt.map { $0 <= at } ?? (at.timeIntervalSince(a.lastActivityAt) > abandonAfter) }
         tasks[task]?.attemptKeys.append(key)
-        if hadAttempts { tasks[task]?.retries += 1 }
-        reopen(task, at: at, counted: hadAttempts)
-        update(task, at: at) { r in r.startedAt = r.startedAt ?? at }
+        let reopened = reopen(task, at: at)
+        if tasks[task] != nil {
+            if afterEnd || reopened { tasks[task]!.retries += 1 }
+            tasks[task]!.startedAt = tasks[task]!.startedAt ?? at
+        }
         activity(onAttempt: key, at: at)
         firstStart = firstStart ?? at
     }
 
     /// A new attempt after a terminal state reopens the task.
-    mutating func reopen(_ task: String, at: Date, counted: Bool = false) {
-        guard let r = tasks[task], case .terminal = r.mark, at > r.markAt else { return }
-        tasks[task]!.mark = .started
-        tasks[task]!.markAt = at
-        if !counted { tasks[task]!.retries += 1 }
+    mutating func reopen(_ task: String, at: Date) -> Bool {
+        guard let r = tasks[task], case .terminal = r.mark, at > r.markAt else { return false }
+        setMark(task, .started, at: at)
+        return true
     }
 
-    /// Activity clears a wait for input on the attempt's task.
+    /// Activity clears a wait on the attempt's task (past its grace).
     mutating func activity(onAttempt key: String, at: Date) {
-        guard let task = attempts[key]?.task else { return }
-        if let r = tasks[task], r.mark == .waiting(.input), at > r.markAt {
-            tasks[task]!.mark = .started
-            tasks[task]!.markAt = at
-        }
+        guard let task = attempts[key]?.task, let r = tasks[task] else { touchRun(at); return }
+        if case .waiting = r.mark, at > r.waitClearAfter { setMark(task, .started, at: at) }
         touch(task, at: at)
+    }
+
+    /// Ends every open agent as cut short.
+    mutating func interruptActive(at: Date) {
+        for (k, a) in attempts where a.attempt.isActive && !a.task.isEmpty {
+            attempts[k]!.attempt.endedAt = at
+            attempts[k]!.attempt.outcome = .interrupted
+        }
+    }
+
+    /// Running tasks the orchestrator is doing itself: leaves with no agent on them.
+    func orchestratorTasks() -> [String] {
+        guard !startedSet.isEmpty else { return [] }
+        return startedSet.filter { id in
+            guard let r = tasks[id], r.ownerAttempt == nil, childCount[id, default: 0] == 0 else { return false }
+            return r.attemptKeys.allSatisfy { attempts[$0]?.attempt.isActive != true }
+        }
+    }
+
+    /// Gives the session tokens seen since the last change to the tasks the orchestrator is doing,
+    /// split by effort. Done in whole tokens, the remainder to the first task, so splitting a
+    /// stretch of activity differently never changes the result.
+    mutating func flushSessionTokens() {
+        guard pendingSessionTokens > 0 else { return }
+        let pool = pendingSessionTokens
+        pendingSessionTokens = 0
+        let owners = orchestratorTasks().sorted()
+        guard !owners.isEmpty else { return }
+        let weights = owners.map { max(tasks[$0]!.effort, 0) }
+        let total = weights.reduce(0, +)
+        var given: Int64 = 0
+        var shares = [Int64](repeating: 0, count: owners.count)
+        for i in owners.indices {
+            shares[i] = total > 0 ? Int64((Double(pool) * weights[i] / total).rounded(.down)) : (i == 0 ? pool : 0)
+            given += shares[i]
+        }
+        shares[0] += pool - given
+        for (i, id) in owners.enumerated() { tasks[id]!.sessionTokens += shares[i] }
+    }
+
+    /// Mirrors the harness's plan list: one task per item, items no longer listed dropped.
+    mutating func mirror(_ items: [TaskPlanItem], at: Date) {
+        var keep: Set<String> = []
+        for (i, item) in items.enumerated() {
+            var base = TaskRunID.clean(item.id, limit: 120)
+            if base.isEmpty { base = "item-\(i + 1)" }
+            var id = TaskFold.planPrefix + base
+            var n = 2
+            while keep.contains(id) { id = TaskFold.planPrefix + base + "-\(n)"; n += 1 }
+            keep.insert(id)
+            let title = TaskText.title(item.title) ?? base
+            let mark: Mark = switch item.status {
+            case .pending: .planned
+            case .inProgress: .started
+            case .completed: .terminal(.done)
+            case .cancelled: .terminal(.cancelled)
+            }
+            if tasks[id] == nil {
+                let r = Rec(id: id, title: title, declared: false, at: at)
+                r.mirrored = true
+                insert(r)
+                mirrorCount += 1
+            } else {
+                tasks[id]!.title = title
+            }
+            if tasks[id]!.mark != mark {
+                let working = mark == .started || tasks[id]!.mark == .started
+                setMark(id, mark, at: at)
+                if mark == .started { tasks[id]!.startedAt = tasks[id]!.startedAt ?? at }
+                touch(id, at: at, work: working)
+            }
+        }
+        for id in order where tasks[id]?.mirrored == true && !keep.contains(id) {
+            remove(id)
+            mirrorCount -= 1
+        }
+        touchRun(at)
+    }
+
+    /// A person gave up: every open task is cancelled and every open agent cut short.
+    mutating func abandon(reason: String?, at: Date) {
+        abandoned = true
+        let why = TaskText.note(reason) ?? "Abandoned"
+        for id in order {
+            let r = tasks[id]!
+            let (state, _, _, _) = leafState(r, r.attemptKeys.compactMap { attempts[$0]?.attempt }, gone: false)
+            guard !state.isTerminal else { continue }
+            setMark(id, .terminal(.cancelled), at: at)
+            tasks[id]!.note = why
+        }
+        interruptActive(at: at)
+        runWait = nil
     }
 
     // MARK: Deriving the tree
 
-    /// The parent of a task: its path parent, or for an implicit task the task its spawning
-    /// attempt works on (root when unknown, or when that would make a cycle).
+    /// The parent of a task: its anchor, its path parent, or for an implicit task the task its
+    /// spawning attempt works on (root when unknown, or when that would make a cycle).
     func parent(of id: String) -> String? {
-        guard let r = tasks[id] else { return nil }
-        guard r.ownerAttempt != nil else { return TaskPath.parent(id) }
-        guard let target = spawnerTask(of: id), tasks[target] != nil else { return nil }
+        guard tasks[id] != nil, let target = rawParent(of: id) else { return nil }
+        guard tasks[id]!.ownerAttempt != nil || tasks[id]!.anchor != nil else { return target }
+        guard tasks[target] != nil else { return nil }
         // Refuse a placement that would put the task beneath itself.
         var seen: Set<String> = [id]
         var cur: String? = target
         while let c = cur {
             guard seen.insert(c).inserted else { return nil }
-            cur = tasks[c]?.ownerAttempt != nil ? spawnerTask(of: c) : TaskPath.parent(c)
+            cur = rawParent(of: c)
         }
         return target
     }
 
+    func rawParent(of id: String) -> String? {
+        guard let r = tasks[id] else { return nil }
+        if let a = r.anchor { return a.isEmpty ? nil : a }
+        if r.ownerAttempt != nil { return spawnerTask(of: id) }
+        return TaskPath.parent(id)
+    }
+
     /// The task the spawning attempt of an implicit task's attempt works on.
     func spawnerTask(of id: String) -> String? {
-        tasks[id]?.ownerAttempt.flatMap { attempts[$0]?.attempt.parentKey }.flatMap { attempts[$0]?.task }
+        tasks[id]?.ownerAttempt.flatMap { attempts[$0]?.attempt.parentKey }.flatMap { attempts[$0]?.task }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// An attempt as of `now`: one silent for longer than `abandonAfter` was cut short.
+    func effective(_ a: TaskAttempt, now: Date) -> TaskAttempt {
+        guard a.endedAt == nil, now.timeIntervalSince(a.lastActivityAt) > abandonAfter else { return a }
+        var b = a
+        b.endedAt = a.lastActivityAt
+        b.outcome = .interrupted
+        return b
+    }
+
+    /// The undeclared spawner's own unit of work, beside the agents it spawned.
+    struct Own {
+        var node: TaskNode
+        var working: Double
     }
 
     struct Calc {
         var node: TaskNode
+        var kids: [String] = []
+        /// Children that make this node's state and progress.
+        var parts: [String] = []
+        var own: Own?
         var doneLeaves = 0
         var critical = TaskMustHaves(done: 0, total: 0)
+        var spans: [Span] = []
+        /// The latest sign of life beneath it, the orchestrator's included for tasks it does itself.
+        var liveAt: Date
     }
 
     struct Derived {
@@ -404,89 +826,167 @@ struct RunBuilder {
     }
 
     func derive(now: Date, staleAfter: TimeInterval, tpu: Double?) -> Derived {
+        let gone = endedAt != nil || now.timeIntervalSince(lastActivity) > abandonAfter
+        let planned = hasPlan
         var children: [String: [String]] = [:]
         var roots: [String] = []
         for id in order {
             if let p = parent(of: id), tasks[p] != nil { children[p, default: []].append(id) } else { roots.append(id) }
         }
+
+        // Work from before the first declaration: top-level tasks nobody declared, with nothing
+        // declared beneath them.
+        var earlier: [String] = []
+        if declaredAny, let first = firstDeclaredAt {
+            var declaredBelow: Set<String> = []
+            for id in order where tasks[id]!.declared { for a in TaskPath.ancestors(id) { declaredBelow.insert(a) } }
+            earlier = roots.filter { id in
+                let r = tasks[id]!
+                return !r.declared && !r.mirrored && !declaredBelow.contains(id) && r.createdAt < first
+            }
+        }
+        let earlierSet = Set(earlier)
+        let earlierRec = Rec(id: TaskFold.earlierID, title: TaskFold.earlierTitle, declared: false, at: firstDeclaredAt ?? startedAt)
+
         var calcs: [String: Calc] = [:]
+        var spePerUnit: [Double] = []
 
-        /// Implicit tasks of untagged agents, once anything is declared: shown, but they never make
-        /// a parent's state or progress, and at the top only count when nothing else is there.
-        let undeclared = !hasDeclaredTasks
-        func isHelper(_ id: String) -> Bool { !undeclared && tasks[id]?.ownerAttempt != nil }
+        /// Helpers never count once there is a plan, except among the earlier work.
+        func isHelper(_ id: String, inEarlier: Bool) -> Bool { planned && !inEarlier && tasks[id]?.ownerAttempt != nil }
 
-        func compute(_ id: String, depth: Int) -> Calc {
-            let r = tasks[id]!
-            let kids = children[id] ?? []
-            let kidCalcs = kids.map { compute($0, depth: depth + 1) }
-            let counted = kidCalcs.filter { !isHelper($0.node.id) }
-            let atts = r.attemptKeys.compactMap { attempts[$0]?.attempt }
-            let ownTokens = atts.reduce(Int64(0)) { $0 + $1.tokens }
-            let allTokens = ownTokens + kidCalcs.reduce(Int64(0)) { $0 + $1.node.tokens }
-            var lastActive = atts.map { max($0.lastActivityAt, $0.endedAt ?? .distantPast) }.max() ?? r.lastActivity
-            lastActive = max(lastActive, r.lastActivity)
-            for k in kidCalcs { if let l = k.node.lastActivityAt { lastActive = max(lastActive, l) } }
-            let last = atts.max { $0.startedAt < $1.startedAt }
-            let summary = TaskAttemptsSummary(count: atts.count, active: atts.filter(\.isActive).count, retries: r.retries, last: last)
+        func compute(_ id: String, parent: String?, depth: Int, inEarlier: Bool) -> Calc {
+            let synthetic = id == TaskFold.earlierID
+            let r = synthetic ? earlierRec : tasks[id]!
+            let kids = synthetic ? earlier : (children[id] ?? [])
+            let kidsEarlier = inEarlier || synthetic
+            let kidCalcs = kids.map { compute($0, parent: id, depth: depth + 1, inEarlier: kidsEarlier) }
+            let parts = kidCalcs.filter { !isHelper($0.node.id, inEarlier: kidsEarlier) }
+            let atts = r.attemptKeys.compactMap { attempts[$0]?.attempt }.map { effective($0, now: now) }
+            let ownTokens = atts.reduce(Int64(0)) { $0 + $1.tokens } + r.sessionTokens
+            let tokens = ownTokens + kidCalcs.reduce(Int64(0)) { $0 + $1.node.tokens }
+            var lastActive = max(atts.map { max($0.lastActivityAt, $0.endedAt ?? .distantPast) }.max() ?? r.lastActivity, r.lastActivity)
+            var liveAt = lastActive
+            for k in kidCalcs {
+                if let l = k.node.lastActivityAt { lastActive = max(lastActive, l) }
+                liveAt = max(liveAt, k.liveAt)
+            }
+            let spans = Spans.normalized(r.stretches + kidCalcs.flatMap(\.spans))
+            let active = atts.filter(\.isActive)
+            let summary = TaskAttemptsSummary(count: atts.count, active: active.count, retries: r.retries, last: atts.max { $0.startedAt < $1.startedAt })
 
-            var node = TaskNode(id: id, title: r.title, parent: parent(of: id).flatMap { tasks[$0] != nil ? $0 : nil }, depth: depth,
-                                state: .planned, waitReason: nil, stale: false, progress: .zero, effort: r.effort, importance: r.importance,
-                                declared: r.declared, confirmed: true, leaf: counted.isEmpty, counted: true, steps: r.steps, fraction: r.fraction,
-                                note: r.note, waitNote: r.waitNote, evidence: r.evidence, failure: r.failure, attempts: summary, tokens: allTokens,
-                                startedAt: r.startedAt, endedAt: nil, lastActivityAt: lastActive)
-            var calc = Calc(node: node)
-            if counted.isEmpty {
-                let (state, reason, confirmed, ended) = leafState(r, atts)
+            var node = TaskNode(id: id, title: r.title, parent: parent, depth: depth, state: .planned, waitReason: nil, stale: false, progress: .zero,
+                                effort: r.effort, importance: r.importance, declared: r.declared, confirmed: true, leaf: parts.isEmpty, counted: true,
+                                steps: r.steps, fraction: r.fraction, note: r.note, waitNote: r.waitNote, evidence: r.evidence, failure: r.failure,
+                                attempts: summary, tokens: tokens, startedAt: r.startedAt, endedAt: nil, lastActivityAt: lastActive,
+                                workingSeconds: Spans.measure(spans))
+            var calc = Calc(node: node, kids: kids, parts: parts.map(\.node.id), spans: spans, liveAt: liveAt)
+            let lost: Set<TaskState> = [.failed, .cancelled, .partial]
+            if parts.isEmpty {
+                let (state, reason, confirmed, ended) = leafState(r, atts, gone: gone)
                 node.state = state; node.waitReason = reason; node.confirmed = confirmed; node.endedAt = ended
-                node.counted = !(state == .skipped || (r.importance == .optional && (state == .failed || state == .cancelled)))
-                node.progress = leafProgress(state: state, r: r, tokens: allTokens, tpu: tpu)
-                if node.counted, state == .done { calc.doneLeaves = 1 }
+                node.counted = !(state == .skipped || (r.importance == .optional && lost.contains(state))) && !isHelper(id, inEarlier: inEarlier)
+                if node.counted, state == .done {
+                    calc.doneLeaves = 1
+                    if node.workingSeconds > 0, r.effort > 0 { spePerUnit.append(node.workingSeconds / r.effort) }
+                }
                 if r.importance == .critical, state != .skipped { calc.critical = TaskMustHaves(done: state == .done ? 1 : 0, total: 1) }
+                // A task the orchestrator does itself is as alive as the orchestrator.
+                if state == .running, active.isEmpty, let s = lastSessionActivity { calc.liveAt = max(calc.liveAt, s) }
             } else {
-                var parts = counted.map(\.node)
+                var states = parts.map(\.node)
                 var ownDone = 0
-                if undeclared, r.ownerAttempt != nil, !atts.isEmpty {
+                if !planned || inEarlier, r.ownerAttempt != nil, !atts.isEmpty {
                     // An undeclared agent that spawned agents is one unit of work beside them.
                     var own = node
-                    let (state, reason, confirmed, ended) = leafState(r, atts)
+                    let (state, reason, confirmed, ended) = leafState(r, atts, gone: gone)
                     own.state = state; own.waitReason = reason; own.confirmed = confirmed; own.endedAt = ended
-                    own.progress = leafProgress(state: state, r: r, tokens: ownTokens, tpu: tpu)
-                    if state == .done { ownDone = 1 }
-                    parts.append(own)
+                    own.effort = TaskEffort.defaultWeight; own.leaf = true
+                    own.counted = state != .skipped
+                    own.tokens = ownTokens
+                    if own.counted, state == .done { ownDone = 1 }
+                    states.append(own)
+                    calc.own = Own(node: own, working: Spans.measure(Spans.normalized(r.stretches)))
                 }
-                let (state, reason) = parentState(parts)
+                let (state, reason) = parentState(states)
                 node.state = state; node.waitReason = reason
-                if atts.contains(where: \.isActive), state != .running, state != .waiting { node.state = .running; node.waitReason = nil }
-                node.startedAt = ([r.startedAt] + counted.map(\.node.startedAt)).compactMap { $0 }.min()
-                if node.state.isTerminal { node.endedAt = parts.compactMap(\.endedAt).max() }
-                let weighed = parts.filter(\.counted)
-                node.counted = !weighed.isEmpty && !(r.importance == .optional && (node.state == .failed || node.state == .cancelled))
-                node.progress = weightedMean(weighed)
-                calc.doneLeaves = counted.reduce(ownDone) { $0 + $1.doneLeaves }
-                calc.critical = counted.reduce(TaskMustHaves(done: 0, total: 0)) { TaskMustHaves(done: $0.done + $1.critical.done, total: $0.total + $1.critical.total) }
+                if !active.isEmpty, state != .running, state != .waiting { node.state = .running; node.waitReason = nil }
+                node.startedAt = ([r.startedAt] + parts.map(\.node.startedAt)).compactMap { $0 }.min()
+                if node.state.isTerminal { node.endedAt = states.compactMap(\.endedAt).max() }
+                let weighed = states.filter(\.counted)
+                let sum = weighed.reduce(0) { $0 + $1.effort }
+                node.effort = r.effortSet || sum <= 0 ? r.effort : sum
+                node.counted = !weighed.isEmpty && !(r.importance == .optional && lost.contains(node.state))
+                calc.doneLeaves = parts.reduce(ownDone) { $0 + $1.doneLeaves }
+                calc.critical = parts.reduce(TaskMustHaves(done: 0, total: 0)) { TaskMustHaves(done: $0.done + $1.critical.done, total: $0.total + $1.critical.total) }
             }
-            node.stale = node.state == .running && now.timeIntervalSince(lastActive) > staleAfter
+            if isHelper(id, inEarlier: inEarlier) { node.counted = false }
+            node.stale = node.state == .running && now.timeIntervalSince(calc.liveAt) > staleAfter
             calc.node = node
             calcs[id] = calc
             return calc
         }
 
-        let rootCalcs = roots.map { compute($0, depth: 0) }
-        let declaredRoots = rootCalcs.filter { !isHelper($0.node.id) }
-        // Helpers at the top only count when nothing was declared.
-        let top = declaredRoots.isEmpty ? rootCalcs : declaredRoots
-        if declaredRoots.isEmpty == false {
-            for c in rootCalcs where isHelper(c.node.id) { calcs[c.node.id]?.node.counted = false }
+        var rootIDs = roots.filter { !earlierSet.contains($0) }
+        if !earlier.isEmpty { rootIDs.insert(TaskFold.earlierID, at: 0) }
+        let rootCalcs = rootIDs.map { compute($0, parent: nil, depth: 0, inEarlier: false) }
+        let spe = TaskFold.median(spePerUnit)
+
+        /// Progress bottom-up, now that the run's own seconds per effort unit are known.
+        func progress(_ id: String) -> TaskProgress {
+            let c = calcs[id]!
+            let kidProgress = Dictionary(uniqueKeysWithValues: c.kids.map { ($0, progress($0)) })
+            let p: TaskProgress
+            if c.parts.isEmpty {
+                let r = id == TaskFold.earlierID ? earlierRec : tasks[id]!
+                p = leafProgress(c.node.state, r, confirmed: c.node.confirmed, tokens: c.node.tokens, working: c.node.workingSeconds,
+                                 effort: c.node.effort, tpu: tpu, spe: spe)
+            } else {
+                var items = c.parts.compactMap { k -> (TaskProgress, Double)? in
+                    let n = calcs[k]!.node
+                    return n.counted ? (kidProgress[k]!, n.effort) : nil
+                }
+                if var own = c.own, own.node.counted {
+                    own.node.progress = leafProgress(own.node.state, tasks[id]!, confirmed: own.node.confirmed, tokens: own.node.tokens,
+                                                     working: own.working, effort: own.node.effort, tpu: tpu, spe: spe)
+                    calcs[id]!.own = own
+                    items.append((own.node.progress, own.node.effort))
+                }
+                p = weightedMean(items)
+            }
+            calcs[id]!.node.progress = p
+            return p
         }
+
+        /// Shares top-down: each counted node's part of the whole run's weight.
+        func assign(_ id: String, _ share: Double) {
+            calcs[id]!.node.share = calcs[id]!.node.counted ? share : 0
+            let c = calcs[id]!
+            let weighed = c.parts.filter { calcs[$0]!.node.counted }
+            let total = weighed.reduce(0) { $0 + calcs[$1]!.node.effort } + (c.own.map { $0.node.counted ? $0.node.effort : 0 } ?? 0)
+            for k in c.kids {
+                assign(k, total > 0 && weighed.contains(k) ? share * calcs[k]!.node.effort / total : 0)
+            }
+        }
+
+        for c in rootCalcs { _ = progress(c.node.id) }
+        let declaredRoots = rootCalcs.filter { !isHelper($0.node.id, inEarlier: false) }
+        let top = (declaredRoots.isEmpty ? rootCalcs : declaredRoots).map { calcs[$0.node.id]! }
+        let topWeight = top.filter(\.node.counted).reduce(0) { $0 + $1.node.effort }
+        let topIDs = Set(top.map(\.node.id))
+        for c in rootCalcs {
+            let n = calcs[c.node.id]!.node
+            assign(n.id, topWeight > 0 && n.counted && topIDs.contains(n.id) ? n.effort / topWeight : 0)
+        }
+
         var root = TaskNode(id: "", title: title ?? id, parent: nil, depth: -1, state: .planned, waitReason: nil, stale: false, progress: .zero,
                             effort: 1, importance: .normal, declared: true, confirmed: true, leaf: top.isEmpty, counted: true, attempts: TaskAttemptsSummary(),
-                            tokens: attempts.values.reduce(Int64(0)) { $0 + $1.attempt.tokens })
+                            tokens: attempts.values.reduce(Int64(0)) { $0 + $1.attempt.tokens }, share: 1,
+                            workingSeconds: Spans.measure(Spans.normalized(runStretches)))
         if !top.isEmpty {
             (root.state, root.waitReason) = parentState(top.map(\.node))
-            root.progress = weightedMean(top.map(\.node).filter(\.counted))
+            root.progress = weightedMean(top.map(\.node).filter(\.counted).map { ($0.progress, $0.effort) })
         }
-        var rootCalc = Calc(node: root)
+        var rootCalc = Calc(node: root, liveAt: lastActivity)
         rootCalc.doneLeaves = top.reduce(0) { $0 + $1.doneLeaves }
         rootCalc.critical = top.reduce(TaskMustHaves(done: 0, total: 0)) { TaskMustHaves(done: $0.done + $1.critical.done, total: $0.total + $1.critical.total) }
 
@@ -494,16 +994,14 @@ struct RunBuilder {
         var nodes: [TaskNode] = []
         func walk(_ id: String) {
             guard let c = calcs[id] else { return }
-            var n = c.node
-            if n.parent != nil, isHelper(id) { n.counted = false }
-            nodes.append(n)
-            for k in children[id] ?? [] { walk(k) }
+            nodes.append(c.node)
+            for k in c.kids { walk(k) }
         }
-        for r in roots { walk(r) }
+        for r in rootIDs { walk(r) }
         return Derived(root: rootCalc, nodes: nodes)
     }
 
-    func leafState(_ r: Rec, _ atts: [TaskAttempt]) -> (TaskState, TaskWaitReason?, Bool, Date?) {
+    func leafState(_ r: Rec, _ atts: [TaskAttempt], gone: Bool) -> (TaskState, TaskWaitReason?, Bool, Date?) {
         if case .terminal(let s) = r.mark { return (s, nil, true, r.markAt) }
         let active = atts.filter(\.isActive)
         if let newest = active.map(\.startedAt).max() {
@@ -513,36 +1011,63 @@ struct RunBuilder {
         if let lastEnd = atts.compactMap(\.endedAt).max() {
             switch r.mark {
             case .waiting(let reason) where r.markAt >= lastEnd: return (.waiting, reason, true, nil)
-            case .started where r.markAt > lastEnd: return (.running, nil, true, nil)
+            case .started where r.markAt > lastEnd: return (gone ? .parked : .running, nil, true, nil)
             default:
-                let last = atts.max { $0.startedAt < $1.startedAt }
-                return (last?.outcome == .error ? .failed : .done, nil, false, lastEnd)
+                switch atts.max(by: { $0.startedAt < $1.startedAt })?.outcome {
+                case .error: return (.failed, nil, false, lastEnd)
+                case .interrupted: return (.parked, nil, false, nil)
+                default: return (.done, nil, false, lastEnd)
+                }
             }
         }
         switch r.mark {
         case .planned: return (.planned, nil, true, nil)
-        case .started: return (.running, nil, true, nil)
+        case .started: return (gone ? .parked : .running, nil, true, nil)
         case .waiting(let reason): return (.waiting, reason, true, nil)
         case .terminal(let s): return (s, nil, true, r.markAt)
         }
     }
 
-    func leafProgress(state: TaskState, r: Rec, tokens: Int64, tpu: Double?) -> TaskProgress {
+    /// The steps or fraction last reported, whichever came later (steps on a tie); a step with no
+    /// total known says nothing about how far along.
+    func reportedFraction(_ r: Rec) -> Double? {
+        let steps = r.steps.flatMap { s in r.stepsAt.map { (at: $0, value: s.fraction) } }
+        let frac = r.fraction.flatMap { f in r.fractionAt.map { (at: $0, value: f) } }
+        switch (steps, frac) {
+        case let (s?, f?): return f.at > s.at ? f.value : s.value
+        case let (s?, nil): return s.value
+        case let (nil, f?): return f.value
+        default: return nil
+        }
+    }
+
+    func leafProgress(_ state: TaskState, _ r: Rec, confirmed: Bool, tokens: Int64, working: Double, effort: Double,
+                      tpu: Double?, spe: Double?) -> TaskProgress {
         switch state {
-        case .done: return .complete
-        case .running, .waiting:
-            let done = r.steps.map(\.fraction) ?? r.fraction ?? 0
-            var estimate = done
-            if let tpu, tpu > 0, r.effort > 0 { estimate = max(done, min(0.9, Double(tokens) / (tpu * r.effort))) }
-            return TaskProgress(done: done, inFlight: 1 - done, estimate: estimate)
-        default: return .zero
+        case .done:
+            // Inferred from an agent ending: the best guess, not closed work.
+            return confirmed ? .complete : TaskProgress(done: 0, inFlight: 1, estimate: 1)
+        case .running, .waiting, .parked:
+            let reported = reportedFraction(r)
+            let done = reported ?? 0
+            var guess = done
+            if reported == nil, effort > 0 {
+                if let tpu, tpu > 0, tokens > 0 {
+                    guess = min(TaskFold.maxGuess, Double(tokens) / (tpu * effort))
+                } else if let spe, spe > 0, working > 0 {
+                    guess = min(TaskFold.maxGuess, working / (spe * effort))
+                }
+            }
+            return TaskProgress(done: done, inFlight: state == .parked ? 0 : 1 - done, estimate: max(done, guess))
+        default:
+            return .zero
         }
     }
 
     /// Any running child: running. Any waiting: waiting, for the most urgent reason. All finished:
     /// failed when a critical child failed or was cancelled, partial when a normal one did (or a
     /// child ended partial), skipped when all were skipped, else done. Optional children never
-    /// block. Otherwise planned if nothing started, parked if some finished.
+    /// block. Otherwise planned if nothing started, parked if some finished or were cut short.
     func parentState(_ kids: [TaskNode]) -> (TaskState, TaskWaitReason?) {
         if kids.contains(where: { $0.state == .running }) { return (.running, nil) }
         if let reason = kids.filter({ $0.state == .waiting }).compactMap({ $0.waitReason ?? .dependency }).min() { return (.waiting, reason) }
@@ -557,57 +1082,151 @@ struct RunBuilder {
         return (.parked, nil)
     }
 
-    func weightedMean(_ nodes: [TaskNode]) -> TaskProgress {
-        let total = nodes.reduce(0) { $0 + $1.effort }
+    func weightedMean(_ items: [(TaskProgress, Double)]) -> TaskProgress {
+        let total = items.reduce(0) { $0 + $1.1 }
         guard total > 0 else { return .zero }
-        func mean(_ f: (TaskProgress) -> Double) -> Double { min(1, max(0, nodes.reduce(0) { $0 + f($1.progress) * $1.effort } / total)) }
+        func mean(_ f: (TaskProgress) -> Double) -> Double { min(1, max(0, items.reduce(0) { $0 + f($1.0) * $1.1 } / total)) }
         return TaskProgress(done: mean(\.done), inFlight: mean(\.inFlight), estimate: mean(\.estimate))
     }
-
-    /// An agent or a person declared at least one task.
-    var hasDeclaredTasks: Bool { tasks.values.contains(where: \.declared) }
 
     // MARK: Result
 
     func result(now: Date, staleAfter: TimeInterval, tpu: Double?) -> TaskRun {
         let d = derive(now: now, staleAfter: staleAfter, tpu: tpu)
         let root = d.root.node
-        let anyActive = attempts.values.contains { $0.attempt.isActive }
+        let gone = endedAt != nil
+        let silent = now.timeIntervalSince(lastActivity) > abandonAfter
+        let agents = attempts.values.filter { !$0.task.isEmpty }.map { effective($0.attempt, now: now) }
+        let anyActive = agents.contains(where: \.isActive)
+        let lastAgentEnd = agents.compactMap(\.endedAt).max() ?? .distantPast
+        // The orchestrator isn't working: its turn ended (or the session did) with no agent left, or
+        // nothing has happened for `abandonAfter`.
+        let quiet = (stoppedAt != nil || gone) && !anyActive || silent
+        let mapped: TaskRunState? = switch root.state {
+        case .done, .skipped: .done
+        case .partial, .cancelled: .partial
+        case .failed: .failed
+        default: nil
+        }
         var state: TaskRunState
         var reason: TaskWaitReason?
         if d.nodes.isEmpty {
-            state = stoppedAt != nil ? .stopped : .running
+            state = stoppedAt != nil || gone || silent ? .stopped : .running
+        } else if let mapped {
+            // With no plan the agents are the plan, and the orchestrator may spawn more: finished
+            // only once its turn ended after the last of them, or the session is over.
+            let finished = hasPlan || gone || silent || (stoppedAt.map { $0 >= lastAgentEnd } ?? false)
+            state = finished ? mapped : .running
+        } else if root.state == .waiting {
+            let r = root.waitReason ?? .dependency
+            if gone || (silent && r == .dependency) { state = .stopped } else { state = .waiting; reason = r }
         } else {
-            switch root.state {
-            case .running: state = stoppedAt != nil && !anyActive ? .stopped : .running
-            case .waiting: state = .waiting; reason = root.waitReason
-            case .planned, .parked: state = stoppedAt != nil && !anyActive ? .stopped : .running
-            case .done, .skipped: state = .done
-            case .partial, .cancelled: state = .partial
-            case .failed: state = .failed
-            }
+            state = quiet ? .stopped : .running
         }
         // The orchestrator itself waiting on a person, while work remains.
-        if let w = runWait, !state.isTerminal, state != .waiting || w.reason < (reason ?? .dependency) {
+        if let w = runWait, !state.isTerminal, !gone, !(silent && w.reason == .dependency), state != .waiting || w.reason < (reason ?? .dependency) {
             state = .waiting; reason = w.reason
         }
+        if abandoned { state = mapped ?? .partial; reason = nil }
+
+        var progress = root.progress
+        if state == .done {
+            progress = .complete
+        } else if !state.isTerminal {
+            progress.done = min(progress.done, TaskFold.openCap)
+            progress.estimate = min(progress.estimate, TaskFold.openCap)
+        }
         let stale = state == .running && now.timeIntervalSince(lastActivity) > staleAfter
+
+        var question: TaskQuestion?
+        if state == .waiting, reason == .input {
+            if let w = runWait, w.reason == .input {
+                question = TaskQuestion(text: w.note ?? "", options: w.options, task: nil, askedAt: w.at)
+            } else if let n = d.nodes.first(where: { $0.leaf && $0.state == .waiting && $0.waitReason == .input }), let r = tasks[n.id] {
+                question = TaskQuestion(text: r.waitNote ?? "", options: r.waitOptions, task: n.id, askedAt: r.markAt)
+            }
+        }
+
+        // Where the time went: waiting on a person first, then on a limit, then working, then idle.
+        let live = !state.isTerminal && state != .stopped
+        let end = live ? max(now, updatedAt) : updatedAt
+        let input = Spans.clip(Spans.normalized(inputSpans + (inputOpen.map { [Span(start: $0, end: end)] } ?? [])), from: startedAt, to: end)
+        let limit = Spans.clip(Spans.normalized(limitSpans + (limitOpen.map { [Span(start: $0, end: end)] } ?? [])), from: startedAt, to: end)
+        let work = Spans.clip(Spans.normalized(runStretches), from: startedAt, to: end)
+        let working = Spans.subtract(work, Spans.normalized(input + limit))
+        var time = TaskTimeSplit(working: Spans.measure(working), waitingInput: Spans.measure(input),
+                                 waitingLimit: Spans.measure(Spans.subtract(limit, input)))
+        time.idle = max(0, end.timeIntervalSince(startedAt) - time.working - time.waitingInput - time.waitingLimit)
+
+        var eta: (mid: Double, low: Double, high: Double)?
+        if state == .running {
+            let closed = d.nodes.filter { $0.leaf && $0.counted && $0.state == .done }.compactMap { n in n.endedAt.map { (at: $0, share: n.share) } }
+            eta = forecast(working: working, closed: closed, doneLeaves: d.root.doneLeaves, progress: progress)
+        }
+
+        var byModel: [String: Int64] = [:]
+        for a in attempts.values where a.attempt.tokens > 0 { byModel[a.attempt.model ?? "unknown", default: 0] += a.attempt.tokens }
+
+        var tokensToFinish: Int64?
+        if !state.isTerminal {
+            if let tpu, tpu > 0 {
+                let left = d.nodes.filter { $0.leaf && $0.counted && !$0.state.isTerminal }.reduce(0.0) { $0 + tpu * $1.effort * (1 - $1.progress.estimate) }
+                tokensToFinish = Int64(left.rounded())
+            } else if progress.estimate >= 0.1, root.tokens > 0 {
+                tokensToFinish = Int64((Double(root.tokens) * (1 - progress.estimate) / progress.estimate).rounded())
+            }
+        }
+
         return TaskRun(id: id, title: title ?? id, project: project, harness: harness, startedAt: startedAt, updatedAt: updatedAt, state: state,
-                       waitReason: reason, stale: stale, progress: root.progress, mustHaves: d.root.critical,
-                       etaSeconds: state.isTerminal ? nil : forecast(now: now, doneLeaves: d.root.doneLeaves, progress: root.progress),
-                       tokens: root.tokens, scopeChanges: scopeChanges, warning: nil, hasDeclaredTasks: hasDeclaredTasks, nodes: d.nodes)
+                       waitReason: reason, stale: stale, progress: progress, mustHaves: d.root.critical, etaSeconds: eta?.mid,
+                       tokens: root.tokens, scopeChanges: scopeChanges, warning: nil, hasDeclaredTasks: hasPlan, nodes: d.nodes,
+                       hidden: hidden, abandoned: abandoned, question: question, time: time, etaLowSeconds: eta?.low, etaHighSeconds: eta?.high,
+                       tokensByModel: byModel, recentTokensPerHour: live ? recentRate(working: working, end: end) : nil,
+                       tokensToFinish: tokensToFinish, mirrored: mirrorActive, host: host, cwd: cwd)
     }
 
-    /// Seconds to finish: what's left of the estimate over the gain in `done` across the last
-    /// 45 minutes (or since the start, if sooner), falling back to the whole-run rate. Nothing
-    /// in the first minute: a plan marked off in one burst would forecast seconds.
-    func forecast(now: Date, doneLeaves: Int, progress: TaskProgress) -> Double? {
-        guard doneLeaves >= 2, now.timeIntervalSince(startedAt) >= 60 else { return nil }
-        let from = windowStart
-        var rate = 0.0
-        if now > from { rate = (progress.done - (doneAtWindowStart ?? progress.done)) / now.timeIntervalSince(from) }
-        if !(rate > 0), now > startedAt { rate = progress.done / now.timeIntervalSince(startedAt) }
+    /// Seconds to finish: what's left of the estimate over the share of the run closed per working
+    /// second across the last 45 minutes of working time, falling back to the whole run's rate.
+    /// Nothing until two leaves are done or with under a minute of work. The range is wide (half to
+    /// double) until five leaves have closed, then narrows, and always spans the other rate's figure.
+    func forecast(working: [Span], closed: [(at: Date, share: Double)], doneLeaves: Int, progress: TaskProgress) -> (mid: Double, low: Double, high: Double)? {
+        let total = Spans.measure(working)
+        guard doneLeaves >= 2, total >= 60 else { return nil }
+        // Where each close falls on the working clock.
+        var gainedAll = 0.0, gainedRecent = 0.0
+        let windowStart = total - TaskFold.forecastWindow
+        var i = 0, before = 0.0
+        for c in closed.sorted(by: { $0.at < $1.at }) {
+            while i < working.count, working[i].end <= c.at { before += working[i].length; i += 1 }
+            let pos = before + (i < working.count && working[i].start < c.at ? c.at.timeIntervalSince(working[i].start) : 0)
+            gainedAll += c.share
+            if pos > windowStart { gainedRecent += c.share }
+        }
+        let rateAll = gainedAll / total
+        let rateRecent = total > TaskFold.forecastWindow ? gainedRecent / TaskFold.forecastWindow : rateAll
+        let rate = rateRecent > 0 ? rateRecent : rateAll
         guard rate > 0, rate.isFinite else { return nil }
-        return max(0, (1 - progress.estimate) / rate)
+        let left = max(0, 1 - progress.estimate)
+        let mid = left / rate
+        let other = rate == rateRecent && rateAll > 0 ? left / rateAll : mid
+        let f = doneLeaves < 5 ? 2.0 : max(1.15, 1 + 2.5 / Double(doneLeaves))
+        return (mid, min(mid / f, other), max(mid * f, other))
+    }
+
+    /// Tokens per hour over the last 30 minutes of working time (looking back at most three hours).
+    func recentRate(working: [Span], end: Date) -> Double? {
+        let floor = end.addingTimeInterval(-TaskFold.recentLookback)
+        var need = TaskFold.recentWindow, got = 0.0
+        var from = end
+        for s in working.reversed() {
+            let start = max(s.start, floor)
+            guard s.end > start else { break }
+            let len = s.end.timeIntervalSince(start)
+            if len >= need { got += need; from = s.end.addingTimeInterval(-need); need = 0; break }
+            got += len; need -= len; from = start
+        }
+        guard got >= 60 else { return nil }
+        let tokens = tokenSamples.reduce(Int64(0)) { $0 + ($1.at > from && $1.at <= end ? $1.tokens : 0) }
+        return Double(tokens) / (got / 3600)
     }
 }

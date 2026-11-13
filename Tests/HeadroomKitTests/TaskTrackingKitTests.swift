@@ -25,33 +25,78 @@ import Testing
         tl.at(20, .attemptEnd(attempt: "agent:b", outcome: .ok), .harness)
         tl.at(21, .attemptEnd(attempt: "agent:c", outcome: .ok), .harness)
         run = tl.fold(30)
-        // b done, and a counts as one unit beside its own c: (0 + 1) / 2 for a, then (½ + 1) / 2.
-        #expect(near(run.node("~agent-a").progress.done, 0.5))
-        #expect(near(run.progress.done, 0.75))
+        // Finished agents over spawned agents: b and c of a, b, c. A weighs its own unit and c's.
+        #expect(near(run.node("~agent-a").progress.estimate, 0.5) && run.node("~agent-a").effort == 8)
+        #expect(near(run.progress.estimate, 2.0 / 3))
+        // Agents ending on their own are a guess, not a confirmed outcome.
+        #expect(run.progress.done == 0)
         #expect(run.state == .running && run.node("~agent-a").state == .running)
+        #expect(near(run.node("~agent-b").share + run.node("~agent-c").share, 2.0 / 3))
 
         tl.at(40, .attemptEnd(attempt: "agent:a", outcome: .ok), .harness)
         run = tl.fold(50)
-        #expect(run.state == .done && near(run.progress.done, 1))
+        // Every agent has ended but the orchestrator's turn hasn't: still running, not done.
+        #expect(run.state == .running && run.progress.estimate < 1)
+        tl.at(45, .stop(blocked: false), .hook)
+        run = tl.fold(50)
+        #expect(run.state == .done && run.progress == .complete)
         #expect(run.nodes.allSatisfy { $0.counted })
+    }
+
+    @Test func aRunWithNoPlanIsntDoneBetweenBatches() {
+        var tl = spawned()
+        for (s, k) in [(20.0, "agent:c"), (21, "agent:a"), (22, "agent:b")] { tl.at(s, .attemptEnd(attempt: k, outcome: .ok), .harness) }
+        // The orchestrator keeps working after its agents: not done, so no "finished" alert...
+        tl.session(23, 300)
+        #expect(tl.fold(300).state == .running)
+        // ...and the next batch carries on the same run.
+        tl.attempt(310, "agent:d", parent: "session:1")
+        #expect(tl.fold(320).state == .running)
+        tl.at(400, .attemptEnd(attempt: "agent:d", outcome: .ok), .harness)
+        // A stop from before the last agent ended doesn't finish it either.
+        var early = tl
+        early.at(350, .stop(blocked: false), .hook)
+        #expect(early.fold(410).state == .running)
+        tl.at(410, .stop(blocked: false), .hook)
+        #expect(tl.fold(420).state == .done)
+        // A session that ended for good finishes it too.
+        var ended = spawned()
+        for (s, k) in [(20.0, "agent:c"), (21, "agent:a"), (22, "agent:b")] { ended.at(s, .attemptEnd(attempt: k, outcome: .ok), .harness) }
+        ended.at(30, .end, .hook)
+        #expect(ended.fold(40).state == .done)
     }
 
     @Test func aFailedAgentMakesTheRunPartial() {
         var tl = spawned()
         for (s, k) in [(20.0, "agent:c"), (21, "agent:a")] { tl.at(s, .attemptEnd(attempt: k, outcome: .ok), .harness) }
         tl.at(22, .attemptEnd(attempt: "agent:b", outcome: .error), .harness)
+        tl.at(23, .stop(blocked: false), .hook)
         let run = tl.fold(30)
         #expect(run.state == .partial && run.node("~agent-b").state == .failed)
     }
 
-    @Test func declaringATaskKeepsHelpersOutOfTheCount() {
+    @Test func declaringLateKeepsEarlierAgentsCounting() {
         var tl = spawned()
+        tl.attempt(3, "agent:d", parent: "session:1")
+        for (s, k) in [(4.0, "agent:b"), (4, "agent:c"), (4, "agent:a")] { tl.at(s, .attemptEnd(attempt: k, outcome: .ok), .harness) }
+        // Three of four agents done, then one task declared: the agents stay as earlier work.
+        let before = tl.fold(6).progress.estimate
         tl.add(5, "api")
-        tl.at(20, .attemptEnd(attempt: "agent:b", outcome: .ok), .harness)
+        tl.attempt(20, "agent:late", parent: "session:1")
+        tl.at(25, .attemptEnd(attempt: "agent:late", outcome: .ok), .harness)
         let run = tl.fold(30)
-        #expect(run.hasDeclaredTasks)
-        #expect(!run.node("~agent-b").counted && run.node("api").counted)
-        #expect(run.progress.done == 0)
+        #expect(run.hasDeclaredTasks && !run.mirrored)
+        #expect(run.nodes.map(\.id) == [TaskFold.earlierID, "~agent-a", "~agent-c", "~agent-b", "~agent-d", "api", "~agent-late"])
+        #expect(run.node(TaskFold.earlierID).title == TaskFold.earlierTitle && run.node("~agent-b").parent == TaskFold.earlierID)
+        #expect(run.node("~agent-b").counted && run.node("api").counted)
+        // An agent spawned after the plan is a helper.
+        #expect(!run.node("~agent-late").counted && run.node("~agent-late").share == 0)
+        // Four agents (16) beside one task (4): three quarters of 16 of 20.
+        #expect(near(before, 0.75) && near(run.progress.estimate, 0.6))
+        // Shares: the counted leaves, plus a's own unit beside the agent it spawned, make the whole.
+        let leaves = run.nodes.filter { $0.leaf && $0.counted }.reduce(0) { $0 + $1.share }
+        #expect(near(run.node(TaskFold.earlierID).share, 0.8) && near(run.node("api").share, 0.2))
+        #expect(near(leaves + run.node("~agent-a").share - run.node("~agent-c").share, 1))
     }
 
     @Test func observedWaitsDontDeclare() {

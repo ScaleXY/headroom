@@ -36,7 +36,9 @@ public struct TaskNode: Codable, Sendable, Hashable, Identifiable {
     public var endedAt: Date?
     public var lastActivityAt: Date?
     /// This node's share (0…1) of the whole run's weight, for drawing the run as a map of its
-    /// tasks: counted leaves' shares sum to 1. 0 for nodes that don't count.
+    /// tasks: counted leaves' shares sum to 1. 0 for nodes that don't count. In a run with no plan,
+    /// an agent that spawned others is a group that also counts as one unit of its own: that part
+    /// is its share less its children's.
     public var share: Double
     /// Seconds of work on this task (its own and its children's activity, gaps excluded).
     public var workingSeconds: Double
@@ -114,15 +116,17 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
     public var stale: Bool
     public var progress: TaskProgress
     public var mustHaves: TaskMustHaves
-    /// Seconds to finish at the recent rate; nil until two leaves are done or while nothing moves.
+    /// Seconds of work to finish at the recent rate (over working time, not waiting or idle); nil
+    /// unless running, until two leaves are done, or while nothing moves.
     public var etaSeconds: Double?
     public var tokens: Int64
     /// Tasks added, and efforts changed, after the first task started.
     public var scopeChanges: Int
     /// Free-form, for the app to explain something odd about the run.
     public var warning: String?
-    /// Something was declared. Without that, the agents seen running are the plan: state and
-    /// progress read as finished agents over spawned agents.
+    /// There is a plan: something was declared, or the harness's plan list is mirrored. Without
+    /// one, the agents seen running are the plan: state and progress read as finished agents over
+    /// spawned agents.
     public var hasDeclaredTasks: Bool
     public var nodes: [TaskNode]
     /// Finished leaves `TaskCompaction` dropped from `nodes`; their work is still in the progress,
