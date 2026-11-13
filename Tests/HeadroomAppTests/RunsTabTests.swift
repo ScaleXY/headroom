@@ -158,3 +158,16 @@ import HeadroomPresent
         #expect(page.recent.allSatisfy { $0.compactFlag == nil })
     }
 }
+
+/// Picking a style in Settings reaches the open popover: the setting is kept and announced.
+@MainActor @Suite struct RunsStyleSettingTests {
+    @Test func stylesPersistAndAnnounceTheChange() {
+        let s = AppSettings(defaults: UserDefaults(suiteName: "headroom-tests-\(UUID().uuidString)")!)
+        #expect(s.runsListStyle == .ledger && s.runPageStyle == .briefing)
+        var changes = 0
+        s.onChange = { changes += 1 }
+        s.runsListStyle = .fill
+        s.runPageStyle = .lanes
+        #expect(changes == 2 && s.runsListStyle == .fill && s.runPageStyle == .lanes)
+    }
+}
