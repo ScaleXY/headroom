@@ -169,10 +169,22 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
 
     private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
     private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }
-    var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (tab == 1 && cards.historyWeek == nil ? 36 : 0) }
+    /// Activity and Runs keep a row of controls above their cards.
+    private var hasControls: Bool { cards.historyWeek == nil && (tab == 1 || (tab == Self.runsTab && showsRuns)) }
+    var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (hasControls ? 36 : 0) }
     var bottomHeight: CGFloat { PopoverChrome.footerHeight + PopoverChrome.pad }
 
     var preferredHeight: CGFloat { topHeight + cards.contentHeight + bottomHeight }
+
+    /// The Runs tab's controls row: Cards · Compact on the left, what's going on on the right.
+    static func drawRunsControls(compact: Bool, summary: String, x: CGFloat, y: CGFloat, width: CGFloat, theme t: Theme, ctx: CGContext, out: RenderOutput?) {
+        let views = Segmented(items: ["Cards", "Compact"], selected: compact ? 1 : 0, font: F.sf(11.5, 600), padX: 10, height: 26)
+        views.draw(in: CGRect(x: x + 1, y: y, width: views.width, height: 26), theme: t, ctx: ctx, out: out) { .runsLayout($0) }
+        if !summary.isEmpty {
+            RunCardRenderer.fit(summary, F.sf(11.5, 550, tabular: true), t.muted, width: width - views.width - 14)
+                .draw(x: x + width - 3, capCenter: y + 13, align: .right, in: ctx)
+        }
+    }
 
     func rebuild(animated: Bool) {
         if !showsRuns, tab == Self.runsTab { tab = 0 }
@@ -232,6 +244,10 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
             let ranges = Segmented(items: ActivityRange.allCases.map(\.label), selected: model.settings.activityRange.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
             ranges.draw(in: CGRect(x: pad + cw - 1 - ranges.width, y: y, width: ranges.width, height: 26), theme: t, ctx: ctx, out: out) { .activityRange($0) }
         }
+        if tab == Self.runsTab && hasControls {
+            let y = pad + PopoverChrome.headerHeight + bannerSpace
+            Self.drawRunsControls(compact: model.settings.runsCompact, summary: cards.runsSummary, x: pad, y: y, width: cw, theme: t, ctx: ctx, out: out)
+        }
         PopoverChrome.drawFooter(model.footer, x: pad, y: bounds.height - bottomHeight, width: cw, theme: t, ctx: ctx, out: out)
     }
 
@@ -252,6 +268,9 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         case .activityRange(let i):
             model.settings.activityRange = ActivityRange(rawValue: i) ?? .day
             cards.selection = nil
+            rebuild(animated: false)
+        case .runsLayout(let i):
+            model.settings.runsCompact = i == 1
             rebuild(animated: false)
         case .refresh:
             model.refreshNow()
@@ -288,6 +307,17 @@ final class CardsView: NSView, NSViewToolTipOwner {
     private var weeks: [PastWeeksModel] = []
     private var sessionHistories: [SessionHistoryModel] = []
     private var runsPage = RunsPageModel()
+    /// In the compact view, the runs shown as full cards.
+    private var compactOpen: Set<String> = []
+    /// "3 live · 1 needs you": for the Runs tab's controls row.
+    var runsSummary: String {
+        let live = runsPage.live.count, needs = runsPage.live.filter(\.needsInput).count
+        var parts: [String] = []
+        if live > 0 { parts.append("\(live) live") }
+        if needs > 0 { parts.append("\(needs) need\(needs == 1 ? "s" : "") you") }
+        if !runsPage.recent.isEmpty { parts.append("\(runsPage.recent.count + runsPage.moreRecent) finished today") }
+        return parts.joined(separator: " · ")
+    }
     /// Run cards showing their finished rows (for as long as the app runs).
     private var expandedRuns: Set<String> = []
     /// Rows showing their details (`RunsPresenter.rowKey`).
@@ -413,6 +443,10 @@ final class CardsView: NSView, NSViewToolTipOwner {
             return y + 2
         }
         if tab == PopoverRootView.runsTab {
+            if model.settings.runsCompact {
+                return RunCompactRenderer.drawPage(runsPage, open: compactOpen, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx,
+                                                   out: ctx == nil ? nil : out) + 2
+            }
             return RunCardRenderer.drawPage(runsPage, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
         }
         let mode = model.settings.activityMode, kind = model.settings.breakdown
@@ -529,6 +563,10 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 return
             case .toggleRun(let id):
                 toggleRun(id)
+                return
+            case .openCompact(let id):
+                if compactOpen.remove(id) == nil { compactOpen.insert(id) }
+                root?.rebuild(animated: false)
                 return
             case .toggleRow(let run, let row):
                 let key = RunsPresenter.rowKey(run: run, row: row)

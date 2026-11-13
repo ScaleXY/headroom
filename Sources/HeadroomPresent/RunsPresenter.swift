@@ -947,3 +947,19 @@ public struct RunsPresenter: Sendable {
         }
     }
 }
+
+extension RunCardModel {
+    /// The compact view's word in place of the time when the run isn't simply running: what needs
+    /// you or holds it up ("asks", "quiet", "limit", "waiting", "stopped"); nil otherwise.
+    public var compactFlag: String? {
+        switch glyph {
+        case .needsInput: "asks"
+        case .stale: "quiet"
+        case .waiting where tone == .warn: "limit"
+        case .waiting: "waiting"
+        // A Mac that stopped syncing reads "Mac last seen…": its run isn't stopped, its Mac is away.
+        case .stopped where live: stateText.hasPrefix("Mac last seen") ? "offline" : "stopped"
+        default: nil
+        }
+    }
+}

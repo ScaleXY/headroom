@@ -5,18 +5,21 @@ import HeadroomWidgetUI
 import SwiftUI
 
 /// Agent runs from every Mac, at the top of Now: live runs first, the last day's finished ones
-/// folded below. It's there only while some Mac syncs a run. Tapping a card with more rows than
-/// fit lists every row its Mac synced.
+/// folded below. It's there only while some Mac syncs a run. Cards by default; the compact view
+/// puts each run on one line, and a tap opens that run's card in its place.
 struct RunsSection: View {
     var model: MobileModel
     var columns = 1
     @State private var showFinished = false
     @State private var expanded: Set<String> = []
+    @State private var opened: Set<String> = []
+    @AppStorage("runsCompact") private var compact = false
 
     var body: some View {
         let page = RunsPresenter(now: model.reader.now, calendar: .current, locale: .current).page(model.reader.runs, expanded: expanded)
         if !page.isEmpty {
-            RunsSectionContent(page: page, columns: columns, showFinished: $showFinished) { id in
+            RunsSectionContent(page: page, columns: columns, showFinished: $showFinished, compact: $compact, opened: opened,
+                               open: { id in withAnimation(.snappy) { if opened.contains(id) { opened.remove(id) } else { opened.insert(id) } } }) { id in
                 withAnimation(.snappy) { if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) } }
             }
         }
@@ -28,31 +31,40 @@ public struct RunsSectionContent: View {
     var page: RunsPageModel
     var columns: Int
     @Binding var showFinished: Bool
+    @Binding var compact: Bool
+    /// In the compact view, the runs shown as cards.
+    var opened: Set<String>
+    var open: ((String) -> Void)?
     var toggle: ((String) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
-    public init(page: RunsPageModel, columns: Int = 1, showFinished: Binding<Bool>, toggle: ((String) -> Void)? = nil) {
-        self.page = page; self.columns = columns; self._showFinished = showFinished; self.toggle = toggle
+    public init(page: RunsPageModel, columns: Int = 1, showFinished: Binding<Bool>, compact: Binding<Bool> = .constant(false),
+                opened: Set<String> = [], open: ((String) -> Void)? = nil, toggle: ((String) -> Void)? = nil) {
+        self.page = page; self.columns = columns; self._showFinished = showFinished; self._compact = compact
+        self.opened = opened; self.open = open; self.toggle = toggle
     }
 
     public var body: some View {
         let p = Palette(scheme)
-        let grid = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: columns)
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Agent runs").font(.headline).foregroundStyle(p.ink)
                 Spacer()
                 if page.live.contains(where: \.needsInput) {
                     Text(RunWords.needsInput).font(.caption.weight(.semibold)).foregroundStyle(p.rose)
                 }
+                Button { withAnimation(.snappy) { compact.toggle() } } label: {
+                    Image(systemName: compact ? "rectangle.grid.1x2" : "list.bullet")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(p.muted)
+                        .frame(width: 30, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(p.chipFill))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(compact ? "Show runs as cards" : "Show runs on one line each")
             }
             .padding(.horizontal, 4)
             .accessibilityAddTraits(.isHeader)
-            if !page.live.isEmpty {
-                LazyVGrid(columns: grid, spacing: 14) {
-                    ForEach(page.live) { card in RunCardView(card: card) { toggle?(card.id) } }
-                }
-            }
+            if !page.live.isEmpty { runs(page.live, spacing: 14) }
             if !page.recent.isEmpty {
                 // Not a DisclosureGroup: its indent would set finished cards off the live ones' edges.
                 Button { withAnimation(.snappy) { showFinished.toggle() } } label: {
@@ -67,13 +79,175 @@ public struct RunsSectionContent: View {
                 .padding(.horizontal, 4).padding(.top, 4)
                 .accessibilityValue(showFinished ? "Shown" : "Hidden")
                 if showFinished {
-                    LazyVGrid(columns: grid, spacing: 10) {
-                        ForEach(page.recent) { card in RunCardView(card: card) { toggle?(card.id) } }
-                    }
+                    runs(page.recent, spacing: 10)
                     if page.moreRecent > 0 {
                         Text("+ \(page.moreRecent) more").font(.caption).foregroundStyle(p.muted).padding(.horizontal, 4)
                     }
                 }
+            }
+        }
+    }
+
+    /// Cards in a grid, or, compact, lines in shared lists broken by the runs opened into cards.
+    @ViewBuilder private func runs(_ cards: [RunCardModel], spacing: CGFloat) -> some View {
+        if compact {
+            VStack(spacing: 10) {
+                ForEach(Array(Self.groups(cards, opened: opened).enumerated()), id: \.offset) { _, group in
+                    switch group {
+                    case .card(let card):
+                        RunCardView(card: card) { toggle?(card.id) }
+                            .overlay(alignment: .topTrailing) {
+                                Button { open?(card.id) } label: {
+                                    Image(systemName: "chevron.up").font(.caption.weight(.bold)).foregroundStyle(Palette(scheme).muted)
+                                        .frame(width: 32, height: 32).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).padding(.top, 54).padding(.trailing, 8)
+                                .accessibilityLabel("Back to one line")
+                            }
+                    case .lines(let cards):
+                        RunCompactList(cards: cards) { open?($0) }
+                    }
+                }
+            }
+        } else {
+            let grid = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: columns)
+            LazyVGrid(columns: grid, spacing: spacing) {
+                ForEach(cards) { card in RunCardView(card: card) { toggle?(card.id) } }
+            }
+        }
+    }
+
+    enum Group { case card(RunCardModel), lines([RunCardModel]) }
+
+    static func groups(_ cards: [RunCardModel], opened: Set<String>) -> [Group] {
+        var out: [Group] = [], lines: [RunCardModel] = []
+        for c in cards {
+            if opened.contains(c.id) {
+                if !lines.isEmpty { out.append(.lines(lines)); lines = [] }
+                out.append(.card(c))
+            } else {
+                lines.append(c)
+            }
+        }
+        if !lines.isEmpty { out.append(.lines(lines)) }
+        return out
+    }
+}
+
+/// Runs a line each, in one card: the provider's tile with a state dot, the title, a small task
+/// meter, the percent and the time left (or what holds it up); a finished run's outcome, title,
+/// tasks, how long and what it cost.
+struct RunCompactList: View {
+    var cards: [RunCardModel]
+    var open: (String) -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let p = Palette(scheme)
+        VStack(spacing: 0) {
+            ForEach(Array(cards.enumerated()), id: \.element.id) { i, card in
+                if i > 0, !card.needsInput, !cards[i - 1].needsInput {
+                    Rectangle().fill(p.separator).frame(height: 0.5).padding(.leading, 44)
+                }
+                Button { open(card.id) } label: { RunCompactRow(card: card).contentShape(Rectangle()) }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the run")
+            }
+        }
+        .padding(.vertical, 5).padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(p.cardSolid))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(p.groupBorder, lineWidth: 0.5))
+    }
+}
+
+struct RunCompactRow: View {
+    var card: RunCardModel
+    @Environment(\.colorScheme) private var scheme
+    @ScaledMetric(relativeTo: .footnote) private var meterWidth: CGFloat = 40
+    @ScaledMetric(relativeTo: .footnote) private var figureWidth: CGFloat = 38
+    @ScaledMetric(relativeTo: .footnote) private var sideWidth: CGFloat = 48
+
+    var body: some View {
+        let p = Palette(scheme), hue = RunHue(card.tone, glyph: card.glyph), tone = p.run(hue)
+        HStack(spacing: 8) {
+            if card.live { tile(p, tone: tone) } else { outcome(p, tone: tone) }
+            Text(card.title).font(.subheadline.weight(.semibold)).foregroundStyle(card.live ? p.ink : p.ink.opacity(0.88)).lineLimit(1)
+            Spacer(minLength: 4)
+            if card.live {
+                meter.frame(width: meterWidth)
+                // At least the column's width, so figures line up; wider when a count needs it.
+                figure(p, tone: tone).frame(minWidth: figureWidth, alignment: .trailing)
+                side(p, tone: tone).frame(width: sideWidth, alignment: .trailing)
+            } else if let r = card.receipt {
+                Text(r.tasks).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(p.muted2).lineLimit(1).fixedSize()
+                Text(r.duration).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1).fixedSize()
+                if let cost = r.cost {
+                    Text(cost.replacingOccurrences(of: "about ", with: "~")).font(.footnote.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(p.ink).lineLimit(1).fixedSize()
+                }
+            }
+        }
+        .padding(.horizontal, 8).frame(minHeight: 42)
+        .background {
+            if card.needsInput {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.rose.opacity(p.dark ? 0.12 : 0.08))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(p.rose.opacity(0.26), lineWidth: 0.5))
+                    .padding(.vertical, 2)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel([card.title, card.stateText, card.hero.map { "\($0.number)\($0.unit) · \($0.label)" }, card.hero?.sideCaption]
+            .compactMap { $0 }.joined(separator: ", "))
+    }
+
+    /// The provider's tile with the state as a dot on its corner.
+    private func tile(_ p: Palette, tone: Color) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            if let provider = card.provider {
+                BrandTile(provider: provider, size: 24)
+            } else {
+                RunMarkView(RunMark(card.glyph), color: tone, size: 11).frame(width: 24, height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6.5, style: .continuous).fill(p.groupFill))
+            }
+            Circle().fill(tone).frame(width: 9, height: 9)
+                .overlay(Circle().strokeBorder(p.cardSolid, lineWidth: 1.5))
+                .shadow(color: card.tone == .quiet || card.tone == .neutral ? .clear : tone.opacity(0.6), radius: 3)
+                .offset(x: 3, y: 3)
+        }
+        .frame(width: 28, height: 28, alignment: .topLeading)
+    }
+
+    private func outcome(_ p: Palette, tone: Color) -> some View {
+        RunMarkView(RunMark(card.glyph), color: card.glyph == .done ? p.ink.opacity(0.7) : tone, size: 9)
+            .frame(width: 20, height: 20)
+            .background(Circle().fill(tone.opacity(card.tone == .neutral || card.tone == .quiet ? 0.08 : 0.14)))
+            .frame(width: 28, height: 28)
+    }
+
+    @ViewBuilder private var meter: some View {
+        if !card.segments.isEmpty {
+            RunTaskMap(blocks: card.segments.map(RunMapBlock.init), height: 5, gap: 1, carets: false)
+        } else if let hero = card.hero {
+            CellMeter(state: card.tone == .warn ? .tight : .plenty, cells: Int((min(max(hero.fraction, 0), 1) * 5).rounded()), height: 5)
+        }
+    }
+
+    private func figure(_ p: Palette, tone: Color) -> some View {
+        let strong = card.tone == .alert || card.tone == .warn
+        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Text(card.hero?.number ?? "").font(.subheadline.weight(.bold).monospacedDigit())
+            Text(card.hero?.unit ?? "").font(.caption2.weight(.semibold).monospacedDigit()).opacity(0.7)
+        }
+        .foregroundStyle(strong ? tone : p.ink).lineLimit(1).fixedSize()
+    }
+
+    @ViewBuilder private func side(_ p: Palette, tone: Color) -> some View {
+        if let flag = card.compactFlag {
+            Text(flag).font(.caption.weight(.semibold)).foregroundStyle(tone).lineLimit(1)
+        } else if let hero = card.hero, let side = hero.side {
+            HStack(spacing: 3) {
+                if hero.hourglass { Hourglass(color: p.tone(.plenty).text, height: 8) }
+                Text(side).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(hero.hourglass ? p.muted : p.muted2).lineLimit(1)
             }
         }
     }

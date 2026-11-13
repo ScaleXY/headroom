@@ -104,3 +104,43 @@ import HeadroomPresent
         #expect(measured == drawn && measured > 0)
     }
 }
+
+/// The compact view: a line per run, each opening its card in place; heights measured as drawn.
+@MainActor @Suite struct RunsCompactTests {
+    let now = Demo.now
+
+    func regions(_ page: RunsPageModel, open: Set<String> = []) -> (height: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
+        let out = RenderOutput()
+        let measured = RunCompactRenderer.drawPage(page, open: open, origin: .zero, width: 360, theme: .dark, ctx: nil)
+        var drawn: CGFloat = 0
+        _ = renderImage(size: CGSize(width: 400, height: 1600), scale: 1) { ctx in
+            drawn = RunCompactRenderer.drawPage(page, open: open, origin: .zero, width: 360, theme: .dark, ctx: ctx, out: out)
+        }
+        return (measured, drawn, out.regions)
+    }
+
+    @Test func everyRunIsOneLineThatOpensItsCard() throws {
+        let page = RunsPresenter(now: now).page(Demo.runScenarios(now: now).first { $0.name == "mixed" }!.runs)
+        let lines = regions(page)
+        #expect(lines.height == lines.drawn)
+        let opens = lines.regions.filter { if case .openCompact = $0.action { true } else { false } }
+        #expect(opens.count == page.live.count + page.recent.count)
+        #expect(opens.allSatisfy { $0.rect.height == RunCompactRenderer.rowHeight })
+        // Far shorter than the cards.
+        #expect(lines.height < RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: .dark, ctx: nil) / 2)
+
+        // Opening one puts its card in the line's place, and its header closes it again.
+        let id = try #require(page.live.dropFirst().first?.id)
+        let opened = regions(page, open: [id])
+        #expect(opened.height == opened.drawn && opened.height > lines.height)
+        #expect(opened.regions.contains { $0.action == .openCompact(id) && $0.rect.height == 44 })
+    }
+
+    @Test func theTimeColumnSaysWhatHoldsARunUp() {
+        let page = RunsPresenter(now: now).page(Demo.runScenarios(now: now).first { $0.name == "mixed-all" }!.runs)
+        let flags = page.live.map(\.compactFlag)
+        #expect(flags.contains("asks"))
+        #expect(page.live.filter { $0.glyph == .running }.allSatisfy { $0.compactFlag == nil })
+        #expect(page.recent.allSatisfy { $0.compactFlag == nil })
+    }
+}

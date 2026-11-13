@@ -193,6 +193,15 @@ func renderRuns() -> Int {
                 .environment(\.colorScheme, dark ? .dark : .light)
             render(v, to: "mobile-runs-\(label)-\(dark ? "dark" : "light").png")
             count += 1
+            // The compact view, and with the second live run opened into its card.
+            for (suffix, opened) in [("", Set<String>()), ("-open", Set(page.live.dropFirst().prefix(1).map(\.id)))] {
+                let c = RunsSectionContent(page: page, showFinished: .constant(true), compact: .constant(true), opened: opened)
+                    .frame(width: 358).padding(16)
+                    .background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                render(c, to: "mobile-runs-\(label)-compact\(suffix)-\(dark ? "dark" : "light").png")
+                count += 1
+            }
         }
         // A tapped card lists every row its Mac synced (the long session's first 30 agents, here).
         if names {

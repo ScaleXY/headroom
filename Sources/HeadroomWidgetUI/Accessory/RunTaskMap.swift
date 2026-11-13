@@ -28,13 +28,17 @@ public struct RunTaskMap: View {
     /// The cells' height; the track adds its padding around them.
     public var height: CGFloat
     public var gap: CGFloat
+    /// Carets under must-haves; off where the map sits inside a line of text.
+    public var carets: Bool
 
-    public init(blocks: [RunMapBlock], height: CGFloat = 8, gap: CGFloat = 2) { self.blocks = blocks; self.height = height; self.gap = gap }
+    public init(blocks: [RunMapBlock], height: CGFloat = 8, gap: CGFloat = 2, carets: Bool = true) {
+        self.blocks = blocks; self.height = height; self.gap = gap; self.carets = carets
+    }
     @Environment(\.colorScheme) private var scheme
 
     var pad: CGFloat { max(1.5, height * 0.16) }
     /// Carets under must-haves need a little room below the track.
-    var caretRoom: CGFloat { blocks.contains(where: \.critical) ? 6 : 0 }
+    var caretRoom: CGFloat { carets && blocks.contains(where: \.critical) ? 6 : 0 }
 
     public var body: some View {
         let p = Palette(scheme)
@@ -79,7 +83,7 @@ public struct RunTaskMap: View {
                         layer.fill(Path(CGRect(x: box.minX, y: box.minY, width: max(box.width * fill, min(box.width, 2)), height: box.height)), with: gradient)
                     }
                 }
-                if b.critical {
+                if b.critical, carets {
                     var caret = Path()
                     caret.move(to: CGPoint(x: box.midX, y: trackH + 2)); caret.addLine(to: CGPoint(x: box.midX + 3, y: trackH + 6))
                     caret.addLine(to: CGPoint(x: box.midX - 3, y: trackH + 6)); caret.closeSubpath()

@@ -27,6 +27,10 @@ struct HitRegion {
         case moreRecent
         /// The empty Runs tab's "Connect your agents".
         case connectAgents
+        /// The Runs tab's view: 0 cards, 1 compact.
+        case runsLayout(Int)
+        /// In the compact view, open a run's full card in its line's place (or close it again).
+        case openCompact(String)
     }
 
     enum RunButton: Equatable { case openSession, copyResume }

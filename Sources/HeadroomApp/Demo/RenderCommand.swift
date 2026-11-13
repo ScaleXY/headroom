@@ -121,6 +121,17 @@ enum RenderCommand {
                     if let rep = PopoverPage.renderRuns(s, theme: theme, now: now) {
                         write(rep, to: outDir.appendingPathComponent("runs-\(s.name)-\(suffix).png")); written += 1
                     }
+                    if ["mixed", "mixed-all", "timeline", "input", "observed"].contains(s.name), let rep = PopoverPage.renderRuns(s, theme: theme, now: now, compact: true) {
+                        write(rep, to: outDir.appendingPathComponent("runs-\(s.name)-compact-\(suffix).png")); written += 1
+                    }
+                    // A line opened into its card.
+                    if s.name == "mixed" {
+                        var open = s
+                        open.compactOpen = Set(s.runs.filter { !$0.state.isTerminal }.dropFirst().prefix(1).map(\.id))
+                        if let rep = PopoverPage.renderRuns(open, theme: theme, now: now, compact: true) {
+                            write(rep, to: outDir.appendingPathComponent("runs-mixed-compact-open-\(suffix).png")); written += 1
+                        }
+                    }
                 }
                 if let rep = PopoverPage.renderRecentRuns(theme: theme, now: now) {
                     write(rep, to: outDir.appendingPathComponent("runs-recent-\(suffix).png")); written += 1
@@ -260,16 +271,27 @@ enum PopoverPage {
     }
 
     /// The Runs tab of the popover for one fixture.
-    static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date) -> NSBitmapImageRep? {
+    static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date, compact: Bool = false) -> NSBitmapImageRep? {
         let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale, pricing: demoPricing)
             .page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
         let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
-        let top = pad + PopoverChrome.headerHeight
-        let h = top + RunCardRenderer.drawPage(page, origin: .zero, width: cw, theme: theme, ctx: nil) + 2 + PopoverChrome.footerHeight + pad
+        // The tab's controls row, as the popover keeps it above the cards.
+        let top = pad + PopoverChrome.headerHeight + 36
+        func content(_ ctx: CGContext?, _ y: CGFloat) -> CGFloat {
+            compact ? RunCompactRenderer.drawPage(page, open: s.compactOpen, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+                : RunCardRenderer.drawPage(page, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+        }
+        let h = top + content(nil, 0) + 2 + PopoverChrome.footerHeight + pad
+        let live = page.live.count, needs = page.live.filter(\.needsInput).count
+        let summary = [live > 0 ? "\(live) live" : nil, needs > 0 ? "\(needs) need\(needs == 1 ? "s" : "") you" : nil,
+                       page.recent.isEmpty ? nil : "\(page.recent.count + page.moreRecent) finished today"].compactMap { $0 }.joined(separator: " · ")
         return renderImage(size: CGSize(width: w, height: h)) { ctx in
             PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
             PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: ["Pace", "Activity", "Runs"], selected: 2, theme: theme, ctx: ctx, out: nil)
-            let y = top + RunCardRenderer.drawPage(page, origin: CGPoint(x: pad, y: top), width: cw, theme: theme, ctx: ctx) + 2
+            if !page.isEmpty {
+                PopoverRootView.drawRunsControls(compact: compact, summary: summary, x: pad, y: pad + PopoverChrome.headerHeight, width: cw, theme: theme, ctx: ctx, out: nil)
+            }
+            let y = top + content(ctx, top) + 2
             PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: y, width: cw, theme: theme, ctx: ctx, out: nil)
         }
     }

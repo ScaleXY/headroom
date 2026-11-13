@@ -179,6 +179,12 @@ final class AppSettings {
 
     static let runQuietChoices: [TimeInterval] = [10 * 60, 15 * 60, 30 * 60, 60 * 60]
 
+    /// The Runs tab lists every run on one line instead of as cards. Off by default.
+    var runsCompact: Bool {
+        get { defaults.bool(forKey: "runsCompact") }
+        set { defaults.set(newValue, forKey: "runsCompact") }
+    }
+
     /// While a run is live, its progress (and a mark when one needs you) beside the meters. On by default.
     var showRunsInMenuBar: Bool {
         get { defaults.object(forKey: "showRunsInMenuBar") as? Bool ?? true }
