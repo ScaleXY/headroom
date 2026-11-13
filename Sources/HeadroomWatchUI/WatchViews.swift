@@ -180,6 +180,9 @@ struct WatchRunRow: View {
                     RunTaskMap(blocks: card.segments.map { RunMapBlock(weight: $0.weight, fill: $0.fill, hue: RunHue.of($0.tone)) }, height: 4, gap: 1.5)
                 } else if let progress {
                     RunProgressBar(done: progress.done, inFlight: progress.inFlight, height: 4)
+                } else if let hero = card.hero {
+                    // Agents counted with no plan: Pace's five cells, as far along as they've got.
+                    CellMeter(state: .plenty, cells: Int((min(max(hero.fraction, 0), 1) * 5).rounded()), height: 5)
                 }
             }
             if card.needsInput, let question {

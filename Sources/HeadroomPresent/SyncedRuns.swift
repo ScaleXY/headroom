@@ -268,13 +268,89 @@ extension RunsPresenter {
         }
         if d.tokens > 0 { figures.append("\(NumberFormat.tokens(d.tokens)) tokens") }
         let built = rows(d, expanded: expanded)
-        return RunCardModel(id: d.id, title: displayTitle(d, sayStart: sayStart), subtitle: subtitle(d), stateText: stateText(d), glyph: glyph,
+        var card = RunCardModel(id: d.id, title: displayTitle(d, sayStart: sayStart), subtitle: subtitle(d), stateText: stateText(d), glyph: glyph,
                             tone: tone, live: !d.state.isTerminal, declared: declared, needsInput: d.needsInput,
                             provider: TaskLimits.provider(named: d.harness), bar: declared ? d.progress : nil, headline: headline,
                             estimate: nil, figures: figures, warning: quiet ? nil : d.warning, rows: built.rows,
                             expandable: built.expandable, expanded: expanded && built.expandable,
                             segments: syncedSegments(d), counts: syncedCounts(d, quiet: quiet), elapsed: syncedElapsed(d, quiet: quiet),
                             question: syncedQuestion(d), timeline: quiet ? nil : syncedTimeline(d), receipt: syncedReceipt(d))
+        card.hero = syncedHero(d, quiet: quiet)
+        card.verdict = syncedVerdict(d, quiet: quiet, timeline: card.timeline != nil)
+        card.rowsTitle = !declared ? "Agents" : d.mirrored ? "Steps" : "Tasks"
+        return card
+    }
+
+    /// The hero as the Mac's card has it: the percent (or agents finished) and the time left as
+    /// a clock, else the time spent.
+    func syncedHero(_ d: RunDigest, quiet: Bool) -> RunHeroModel {
+        let declared = d.hasDeclaredTasks || d.mirrored
+        func clock(_ date: Date) -> String { TimeFormat.clock(date, calendar: calendar, locale: locale) }
+        var side: String?, caption: String?, hourglass = false
+        if d.state.isTerminal {
+            let s = d.receipt?.seconds ?? d.updatedAt.timeIntervalSince(d.startedAt)
+            side = Self.duration(s); caption = "start to finish"
+        } else if declared, !quiet, d.state == .running, !d.stale, let finish = d.limit?.finishAt ?? d.finishAt, finish > now {
+            let low = d.limit?.finishAt == nil ? d.finishLow : nil, high = d.limit?.finishAt == nil ? d.finishHigh : nil
+            side = "~" + TimeFormat.compact(finish.timeIntervalSince(now))
+            if let low, let high, clock(low) != clock(high) { caption = "done " + Self.clockRange(clock(low), clock(high)) } else { caption = "done ~" + clock(finish) }
+            hourglass = true
+        } else if let w = d.workingSeconds, w >= 60, !quiet {
+            side = Self.duration(w); caption = "working"
+        }
+        if declared {
+            let pct = headlinePercent(d)
+            return RunHeroModel(number: "\(pct)", unit: "%", label: syncedCounts(d, quiet: quiet) ?? "done", side: side, sideCaption: caption,
+                                hourglass: hourglass, fraction: Double(pct) / 100)
+        }
+        let (finished, total) = (d.counts.finished, d.counts.total)
+        let label = total == 0 ? "no agents yet" : "agent\(total == 1 ? "" : "s") finished" + (d.counts.running > 0 && !quiet && !d.state.isTerminal ? " · \(d.counts.running) running" : "")
+        return RunHeroModel(number: "\(finished)", unit: "/\(total)", label: label, side: side, sideCaption: caption, hourglass: hourglass,
+                            fraction: total > 0 ? Double(finished) / Double(total) : 0)
+    }
+
+    /// The sentence under the badge, from what the Mac shared: what's running when names are on.
+    func syncedVerdict(_ d: RunDigest, quiet: Bool, timeline: Bool) -> RunVerdictModel {
+        let figure = d.tokens > 0 ? "\(NumberFormat.tokens(d.tokens)) tokens" : nil
+        let noun = d.mirrored ? "steps" : "tasks"
+        let open = d.counts.total - d.counts.finished
+        var primary: String?
+        if d.abandoned {
+            primary = open > 0 ? "Given up with \(open) \(open == 1 ? "task" : "tasks") open." : "Given up."
+        } else if let seen = d.lastSeen, !d.state.isTerminal {
+            primary = "\(d.mac) stopped syncing \(TimeFormat.freshness(since: seen, now: now)) ago, so this may be out of date."
+        } else {
+            switch d.state {
+            case .running where d.stale: primary = "No activity for \(TimeFormat.compact(now.timeIntervalSince(d.updatedAt)))."
+            case .running:
+                let running = (d.rows ?? []).filter { $0.state == .running }
+                if let first = running.first {
+                    primary = "Working on \(first.title)" + (running.count > 1 ? " and \(running.count - 1) more." : ".")
+                } else if d.counts.running > 0 {
+                    primary = "\(d.counts.running) \(d.counts.running == 1 ? "task" : "tasks") running."
+                }
+            case .waiting:
+                switch d.waitReason ?? .dependency {
+                case .input: primary = nil
+                case .limit: primary = timeline ? nil : d.warning
+                case .dependency: primary = RunWords.waitingOnTask + "."
+                }
+            case .stopped: primary = "\(open) \(open == 1 ? "task" : "tasks") left. Pick it up on \(d.mac)."
+            case .done:
+                let opt = d.receipt?.optionalFailed ?? 0
+                primary = opt > 0 ? "Everything that counts is done; \(opt) optional \(opt == 1 ? "task" : "tasks") failed."
+                    : (d.hasDeclaredTasks || d.mirrored) ? "All \(d.counts.total) \(noun) done." : "Every agent finished."
+            case .partial, .failed:
+                primary = "\(d.counts.failed) \(d.counts.failed == 1 ? "task" : "tasks") failed."
+            }
+        }
+        var secondary: [String] = []
+        if !d.state.isTerminal {
+            if d.mirrored { secondary.append(RunWords.fromSessionPlan) }
+            if d.mustHaves.total > 0 { secondary.append("must-haves \(d.mustHaves.done) of \(d.mustHaves.total)") }
+        }
+        let s = secondary.joined(separator: " · ")
+        return RunVerdictModel(figure: figure, primary: primary, secondary: s.isEmpty ? nil : s.prefix(1).uppercased() + s.dropFirst())
     }
 
     public func displayTitle(_ d: RunDigest, sayStart: Bool = false) -> String {

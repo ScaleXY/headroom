@@ -19,52 +19,75 @@ public struct RunMapBlock: Codable, Hashable, Sendable {
     }
 }
 
-/// The task map. Finished work is solid blue, work under way blue up to how far it has got over a
-/// wash of the same blue, something to look at amber, something that needs you rose, and work not
-/// started the empty track.
+/// The task map in the cell meter's grammar (`CellMeter`): a recessed track, one cell per task as
+/// wide as its share, finished work lit with the tone's glow, work under way lit as far as it has
+/// got over a wash of its colour, something stuck amber, something that needs you rose, a failure
+/// hatched; a caret under each must-have, as the even-pace caret sits under the meter.
 public struct RunTaskMap: View {
     public var blocks: [RunMapBlock]
+    /// The cells' height; the track adds its padding around them.
     public var height: CGFloat
     public var gap: CGFloat
 
     public init(blocks: [RunMapBlock], height: CGFloat = 8, gap: CGFloat = 2) { self.blocks = blocks; self.height = height; self.gap = gap }
     @Environment(\.colorScheme) private var scheme
 
-    /// Ticks under must-haves need a little room below the blocks.
-    var tickRoom: CGFloat { blocks.contains(where: \.critical) ? 4 : 0 }
+    var pad: CGFloat { max(1.5, height * 0.16) }
+    /// Carets under must-haves need a little room below the track.
+    var caretRoom: CGFloat { blocks.contains(where: \.critical) ? 6 : 0 }
 
     public var body: some View {
-        let p = Palette(scheme), blue = p.tone(.plenty)
+        let p = Palette(scheme)
+        let pad = pad, height = height
         Canvas { ctx, size in
-            let frames = Self.layout(blocks.map(\.weight), width: size.width, gap: blocks.count > 16 ? max(1, gap - 0.5) : gap)
-            let radius = min(2.5, height / 2)
+            let trackH = height + pad * 2
+            let track = Path(roundedRect: CGRect(x: 0, y: 0, width: size.width, height: trackH), cornerRadius: trackH * 0.36, style: .continuous)
+            ctx.fill(track, with: .color(p.meterTrack))
+            ctx.stroke(track, with: .color(p.meterTrackBorder), lineWidth: 0.5)
+            let frames = Self.layout(blocks.map(\.weight), width: size.width - pad * 2, gap: blocks.count > 16 ? max(1, gap - 0.5) : gap)
+            let radius = min(height * 0.24, 4)
             for (b, f) in zip(blocks, frames) {
-                let box = CGRect(x: f.minX, y: 0, width: f.width, height: height)
-                let shape = Path(roundedRect: box, cornerRadius: radius, style: .continuous)
-                ctx.fill(shape, with: .color(p.meterTrack))
+                let box = CGRect(x: pad + f.minX, y: pad, width: f.width, height: height)
+                let shape = Path(roundedRect: box, cornerRadius: min(radius, box.width / 2), style: .continuous)
+                ctx.fill(shape, with: .color(p.meterEmpty))
                 let fill = min(max(b.fill, 0), 1)
-                let solid: GraphicsContext.Shading, wash: Color?
-                switch b.hue {
-                case .neutral, .progress:
-                    solid = .linearGradient(Gradient(colors: [blue.top, blue.bottom]), startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: height))
-                    wash = b.hue == .progress ? blue.bottom.opacity(p.dark ? 0.30 : 0.22) : nil
-                case .warn: solid = .color(p.amber); wash = p.amber.opacity(0.24)
-                case .alert: solid = .color(p.rose); wash = p.rose.opacity(0.24)
-                case .quiet: solid = .color(p.muted2); wash = nil
-                case .failed: solid = .color(p.ink.opacity(p.dark ? 0.55 : 0.5)); wash = nil
+                let tone: Tone? = switch b.hue {
+                case .neutral, .progress: p.tone(.plenty)
+                case .warn: p.tone(.tight)
+                case .alert: p.tone(.veryTight)
+                case .quiet, .failed: nil
                 }
-                ctx.drawLayer { layer in
-                    layer.clip(to: shape)
-                    if let wash, b.hue != .quiet { layer.fill(Path(box), with: .color(wash)) }
-                    if fill > 0 { layer.fill(Path(CGRect(x: box.minX, y: 0, width: max(box.width * fill, min(box.width, 2)), height: height)), with: solid) }
+                let gradient = GraphicsContext.Shading.linearGradient(Gradient(colors: [tone?.top ?? p.muted2, tone?.bottom ?? p.muted2]),
+                                                                      startPoint: CGPoint(x: 0, y: box.minY), endPoint: CGPoint(x: 0, y: box.maxY))
+                if b.hue == .failed {
+                    ctx.drawLayer { layer in
+                        layer.clip(to: shape)
+                        layer.fill(Path(box), with: .color(p.ink.opacity(p.dark ? 0.22 : 0.16)))
+                        var stripes = Path(), x = box.minX - box.height
+                        while x < box.maxX { stripes.move(to: CGPoint(x: x, y: box.maxY)); stripes.addLine(to: CGPoint(x: x + box.height, y: box.minY)); x += 3.5 }
+                        layer.stroke(stripes, with: .color(p.ink.opacity(p.dark ? 0.6 : 0.5)), lineWidth: 1)
+                    }
+                } else if fill >= 1 {
+                    ctx.drawLayer { layer in
+                        if let tone { layer.addFilter(.shadow(color: tone.glow, radius: height * 0.33)) }
+                        layer.fill(shape, with: gradient)
+                    }
+                } else if fill > 0 {
+                    ctx.drawLayer { layer in
+                        layer.clip(to: shape)
+                        if let tone { layer.fill(Path(box), with: .color(tone.bottom.opacity(p.dark ? 0.24 : 0.18))) }
+                        layer.fill(Path(CGRect(x: box.minX, y: box.minY, width: max(box.width * fill, min(box.width, 2)), height: box.height)), with: gradient)
+                    }
                 }
                 if b.critical {
-                    let tick = CGRect(x: box.midX - 2.5, y: height + 2, width: 5, height: 2)
-                    ctx.fill(Path(roundedRect: tick, cornerRadius: 1), with: .color(p.ink.opacity(p.dark ? 0.62 : 0.5)))
+                    var caret = Path()
+                    caret.move(to: CGPoint(x: box.midX, y: trackH + 2)); caret.addLine(to: CGPoint(x: box.midX + 3, y: trackH + 6))
+                    caret.addLine(to: CGPoint(x: box.midX - 3, y: trackH + 6)); caret.closeSubpath()
+                    ctx.fill(caret, with: .color(p.chartLabel))
                 }
             }
         }
-        .frame(height: height + tickRoom)
+        .frame(height: height + pad * 2 + caretRoom)
         .accessibilityHidden(true)
     }
 

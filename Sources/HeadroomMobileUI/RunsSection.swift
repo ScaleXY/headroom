@@ -86,32 +86,33 @@ public struct RunCardView: View {
     public var card: RunCardModel
     var toggle: (() -> Void)?
     @Environment(\.colorScheme) private var scheme
-    @ScaledMetric(relativeTo: .title) private var headlineSize: CGFloat = 26
-    @ScaledMetric(relativeTo: .body) private var tile: CGFloat = 24
+    /// The Pace card's hero size, so a run's percent reads like the allowance above it.
+    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 46
 
     public init(card: RunCardModel, toggle: (() -> Void)? = nil) { self.card = card; self.toggle = toggle }
 
     public var body: some View {
         let p = Palette(scheme)
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 12) {
             header(p)
-            if let q = card.question { RunQuestionBlock(question: q).padding(.top, 12) }
-            if card.live { liveFigures(p) } else if let receipt = card.receipt { RunReceiptView(receipt: receipt).padding(.top, 12) } else { finishedLine(p) }
-            if let timeline = card.timeline { RunTimelineView(timeline: timeline).padding(.top, 12) }
-            if let warning = card.warning { WarningBox(text: warning).padding(.top, 10) }
-            if !card.rows.isEmpty {
-                Rectangle().fill(p.separator).frame(height: 0.5).padding(.top, card.live ? 12 : 10).padding(.bottom, 4)
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(card.rows) { row in RunRowView(row: row, opens: card.expandable && !card.expanded && row.id == "~more", live: card.live) }
-                    if card.expandable, card.expanded {
-                        RunRowView(row: RunRowModel(id: "~fewer", kind: .more(0), glyph: .more, tone: .quiet, title: "Show fewer"), opens: true, closes: true, live: card.live)
-                    }
-                }
+            if let q = card.question { RunQuestionBlock(question: q) }
+            if card.live {
+                if let hero = card.hero { heroRow(hero, p) }
+                meter
+                verdict(p)
+                if let timeline = card.timeline { RunTimelineView(timeline: timeline) }
+            } else {
+                verdict(p)
+                if let receipt = card.receipt { RunReceiptView(receipt: receipt) }
             }
+            if let warning = card.warning, card.verdict?.primary != warning, card.timeline == nil { WarningBox(text: warning) }
+            if !card.rows.isEmpty { rows(p) }
         }
-        .padding(.horizontal, 14).padding(.top, 13).padding(.bottom, card.rows.isEmpty ? 13 : 8)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(background(p))
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(p.cardSolid))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(card.needsInput ? p.rose.opacity(0.45) : p.groupBorder, lineWidth: card.needsInput ? 1 : 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onTapGesture { if card.expandable { toggle?() } }
         .accessibilityElement(children: .combine)
@@ -119,237 +120,258 @@ public struct RunCardView: View {
         .accessibilityHint(card.expandable ? (card.expanded ? "Shows fewer tasks" : "Shows every task") : "")
     }
 
-    @ViewBuilder private func header(_ p: Palette) -> some View {
-        if !card.live, card.receipt != nil {
-            // A receipt card says how it ended beside the title when the subtitle still fits whole,
-            // else beneath it.
-            let capsule = RunStateCapsule(card.stateText, hue: RunHue(card.tone, glyph: card.glyph)).fixedSize()
-            ViewThatFits(in: .horizontal) {
-                headerRow(p, wholeSubtitle: true) { capsule }
-                VStack(alignment: .leading, spacing: 8) {
-                    headerRow(p, wholeSubtitle: false) { EmptyView() }
-                    capsule.padding(.leading, tile + 10)
-                }
+    /// The Pace card's header: the provider's tile, the title, a status dot with where and when,
+    /// and the state chip on the right.
+    private func header(_ p: Palette) -> some View {
+        let hue = RunHue(card.tone, glyph: card.glyph)
+        let chip = RunStateCapsule(card.stateText, hue: hue).fixedSize()
+        // The chip sits beside the title when both fit whole, else under it.
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                tile(hue, p)
+                titles(p, hue: hue, whole: true)
+                Spacer(minLength: 8)
+                chip
             }
-        } else {
-            headerRow(p, wholeSubtitle: false) { EmptyView() }
+            HStack(alignment: .top, spacing: 10) {
+                tile(hue, p)
+                VStack(alignment: .leading, spacing: 6) {
+                    titles(p, hue: hue, whole: false)
+                    chip
+                }
+                Spacer(minLength: 0)
+            }
         }
     }
 
-    private func headerRow(_ p: Palette, wholeSubtitle: Bool, @ViewBuilder trailing: () -> some View) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            if card.live, let provider = card.provider {
-                BrandTile(provider: provider, size: tile)
-            } else {
-                RunMarkView(RunMark(card.glyph), color: p.run(RunHue(card.tone, glyph: card.glyph)), size: 12).frame(width: tile, height: tile)
+    @ViewBuilder private func tile(_ hue: RunHue, _ p: Palette) -> some View {
+        if let provider = card.provider {
+            BrandTile(provider: provider, size: 26)
+        } else {
+            RunMarkView(RunMark(card.glyph), color: p.run(hue), size: 12)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(p.groupFill))
+        }
+    }
+
+    private func titles(_ p: Palette, hue: RunHue, whole: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(card.title).font(.subheadline.weight(.semibold)).foregroundStyle(p.ink).lineLimit(whole ? 1 : 2)
+                .fixedSize(horizontal: whole, vertical: !whole)
+            HStack(spacing: 5) {
+                Dot(color: card.live ? p.run(hue) : p.muted2, size: 6)
+                Text(card.subtitle).font(.caption).foregroundStyle(p.muted).lineLimit(1)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(card.title).font(card.live ? .subheadline.weight(.semibold) : .footnote.weight(.semibold))
-                    .foregroundStyle(card.live ? p.ink : p.ink.opacity(0.85)).lineLimit(2)
-                Text(card.subtitle).font(.caption).foregroundStyle(p.muted).lineLimit(1).fixedSize(horizontal: wholeSubtitle, vertical: false)
+        }
+    }
+
+    /// The Pace card's hero: the number at the hero size beside its label and, under it, the
+    /// hourglass and the clock time ("done ~10:26 AM · in ~26m").
+    private func heroRow(_ hero: RunHeroModel, _ p: Palette) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // "82%" in one piece, as the Pace card sets it; "7/9" agents with the total quieter.
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(hero.unit == "%" ? hero.number + "%" : hero.number).font(.system(size: heroSize, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(p.ink).contentTransition(.numericText())
+                if hero.unit != "%" {
+                    Text(hero.unit).font(.system(size: heroSize * 0.5, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted)
+                }
+            }
+            .fixedSize()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(hero.label).font(.subheadline.weight(.medium)).foregroundStyle(p.muted).lineLimit(1)
+                if let side = hero.side {
+                    HStack(spacing: 4) {
+                        if hero.hourglass { Hourglass(color: p.tone(.plenty).text, height: 11) }
+                        Text(hero.hourglass ? [hero.sideCaption, "in \(side)"].compactMap { $0 }.joined(separator: " · ") : [side, hero.sideCaption].compactMap { $0 }.joined(separator: " "))
+                            .font(.footnote.weight(.medium).monospacedDigit()).foregroundStyle(p.muted2)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                }
             }
             Spacer(minLength: 0)
-            trailing()
         }
     }
 
-    /// "1h 12m working · must-haves 1 of 2 · 20–35m left · 2.31M tokens".
-    private var figureLine: String? {
-        let parts = [card.elapsed].compactMap { $0 } + card.figures
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    @ViewBuilder private func liveFigures(_ p: Palette) -> some View {
-        let capsule = RunStateCapsule(card.stateText, hue: RunHue(card.tone, glyph: card.glyph))
-        VStack(alignment: .leading, spacing: 8) {
-            if card.declared {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: 8) { percent(p, estimate: true); Spacer(minLength: 4); capsule }
-                    HStack(alignment: .center, spacing: 8) { percent(p, estimate: false); Spacer(minLength: 4); capsule }
-                    VStack(alignment: .leading, spacing: 6) { percent(p, estimate: false); capsule }
-                }
-                if !card.segments.isEmpty {
-                    RunTaskMap(blocks: card.segments.map(RunMapBlock.init), height: 8).padding(.top, 1)
-                } else if let bar = card.bar {
-                    RunProgressBar(done: bar.done, inFlight: bar.inFlight)
-                }
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { Text(card.headline).font(.callout.weight(.semibold)).foregroundStyle(p.ink).lineLimit(1); Spacer(minLength: 4); capsule }
-                    VStack(alignment: .leading, spacing: 6) { Text(card.headline).font(.callout.weight(.semibold)).foregroundStyle(p.ink); capsule }
-                }
-            }
-            if let line = figureLine {
-                Text(line).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(p.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    /// One cell per task in the meter's grammar, or the five cells when there's no map.
+    @ViewBuilder private var meter: some View {
+        if !card.segments.isEmpty {
+            RunTaskMap(blocks: card.segments.map(RunMapBlock.init), height: 13, gap: 3)
+        } else if let hero = card.hero {
+            CellMeter(state: card.tone == .warn ? .tight : .plenty, cells: Int((min(max(hero.fraction, 0), 1) * 5).rounded()), height: 13)
         }
-        .padding(.top, 12)
     }
 
-    private func percent(_ p: Palette, estimate: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(card.headline).font(.system(size: headlineSize, weight: .bold).monospacedDigit()).foregroundStyle(p.ink).fixedSize()
-            Text(card.counts ?? "done").font(.footnote.weight(.semibold).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1).fixedSize()
-            if estimate, let e = card.estimate {
-                Text(e + " by tokens").font(.caption.weight(.medium)).foregroundStyle(p.muted2).fixedSize()
+    /// The Pace card's verdict: a sentence, then a quieter line (with the tokens).
+    @ViewBuilder private func verdict(_ p: Palette) -> some View {
+        let v = card.verdict
+        let quieter = [v?.secondary, v?.figure].compactMap { $0 }.joined(separator: " · ")
+        if v?.primary != nil || !quieter.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                if let primary = v?.primary {
+                    Text(primary).font(.subheadline.weight(.medium)).foregroundStyle(p.ink).fixedSize(horizontal: false, vertical: true)
+                }
+                if !quieter.isEmpty {
+                    Text(quieter).font(.footnote).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
-    private func finishedLine(_ p: Palette) -> some View {
-        let line = ([card.declared ? card.headline + " done" : card.headline] + [card.elapsed].compactMap { $0 } + card.figures).joined(separator: " · ")
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                Text(line).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
-                Spacer(minLength: 4)
-                RunStateCapsule(card.stateText, hue: RunHue(card.tone, glyph: card.glyph))
+    /// The tasks under a quiet header, as the Pace card's details sit under it.
+    private func rows(_ p: Palette) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if card.rows.contains(where: { $0.kind == .task }) {
+                Caps(card.rowsTitle, size: 9).padding(.bottom, 4)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(line).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(p.muted)
-                RunStateCapsule(card.stateText, hue: RunHue(card.tone, glyph: card.glyph))
+            ForEach(card.rows) { row in RunRowView(row: row, opens: card.expandable && !card.expanded && row.id == "~more", live: card.live) }
+            if card.expandable, card.expanded {
+                RunRowView(row: RunRowModel(id: "~fewer", kind: .more(0), glyph: .more, tone: .quiet, title: "Show fewer"), opens: true, closes: true, live: card.live)
             }
-        }
-        .padding(.top, 8)
-    }
-
-    @ViewBuilder private func background(_ p: Palette) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        if card.live {
-            ZStack {
-                shape.fill(p.cardSolid)
-                if let provider = card.provider {
-                    // The brand wash the Mac's card chrome gives a live run.
-                    shape.fill(RadialGradient(colors: [BrandColors.of(provider).base.opacity(p.dark ? 0.20 : 0.10), .clear],
-                                              center: .topLeading, startRadius: 0, endRadius: 260))
-                }
-                shape.strokeBorder(card.needsInput ? p.rose.opacity(0.45) : p.groupBorder, lineWidth: card.needsInput ? 1 : 0.5)
-            }
-        } else {
-            // Finished: recessed and without the wash, so live work stands out above it.
-            ZStack { shape.fill(p.groupFill); shape.strokeBorder(p.groupBorder, lineWidth: 0.5) }
         }
     }
 }
 
-/// What the run is asking, at the top of its card: the wording and the answers offered when the
-/// Mac shares them, otherwise where to answer.
+/// What the run is asking, at the top of its card, in the 5-hour panel's grammar: a rose wash, the
+/// asker beside an icon, the question, the answers offered; or where to answer when the Mac
+/// doesn't share the wording.
 struct RunQuestionBlock: View {
     var question: RunQuestionModel
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let p = Palette(scheme)
-        VStack(alignment: .leading, spacing: 6) {
-            if question.asker.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: "laptopcomputer").font(.footnote.weight(.semibold)).foregroundStyle(p.rose)
-                    Text(question.text).font(.footnote.weight(.semibold)).foregroundStyle(p.ink)
-                }
-            } else {
-                Text(question.asker).font(.caption.weight(.semibold)).foregroundStyle(p.rose).lineLimit(1)
-                Text(question.text).font(.subheadline).foregroundStyle(p.ink).lineLimit(8).fixedSize(horizontal: false, vertical: true)
-                if !question.options.isEmpty {
-                    FlowRow(spacing: 6) {
-                        ForEach(Array(question.options.enumerated()), id: \.offset) { _, o in
-                            Text(o).font(.caption.weight(.semibold)).foregroundStyle(p.ink.opacity(0.85)).lineLimit(1)
-                                .padding(.horizontal, 9).padding(.vertical, 4)
-                                .background(Capsule().fill(p.ink.opacity(p.dark ? 0.08 : 0.05)))
-                                .overlay(Capsule().strokeBorder(p.ink.opacity(0.14), lineWidth: 0.5))
-                        }
+        let p = Palette(scheme), t = p.tone(.veryTight)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: question.asker.isEmpty ? "laptopcomputer" : "exclamationmark")
+                    .font(.caption.weight(.heavy)).foregroundStyle(t.text)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6.5, style: .continuous).fill(t.text.opacity(0.18)))
+                Text(question.asker.isEmpty ? RunWords.needsInput : question.asker)
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(t.text).lineLimit(1)
+            }
+            Text(question.text).font(.subheadline.weight(.medium)).foregroundStyle(p.ink).lineLimit(8).fixedSize(horizontal: false, vertical: true)
+            if !question.options.isEmpty {
+                FlowRow(spacing: 6) {
+                    ForEach(Array(question.options.enumerated()), id: \.offset) { _, o in
+                        Text(o).font(.caption.weight(.semibold)).foregroundStyle(p.ink.opacity(0.88)).lineLimit(1)
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(p.chipFill))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(p.chipBorder, lineWidth: 0.5))
                     }
-                    .padding(.top, 2)
                 }
             }
         }
-        .padding(.horizontal, 11).padding(.vertical, 9)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.rose.opacity(p.dark ? 0.10 : 0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(p.rose.opacity(0.26), lineWidth: 0.5))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(t.text.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(t.text.opacity(0.26), lineWidth: 0.5))
     }
 }
 
-/// The run against its provider's 5-hour window: working, paused at the limit, working again
-/// after the reset, with the times beneath.
+/// The run against its provider's 5-hour window, in the 5-hour panel's grammar: what happens and
+/// when, the countdown on the right, the track (working, paused, working again) with its ticks as
+/// chart caps, and the forecast.
 struct RunTimelineView: View {
     var timeline: RunTimelineModel
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let p = Palette(scheme), blue = p.tone(.plenty)
-        VStack(alignment: .leading, spacing: 7) {
+        let p = Palette(scheme), blue = p.tone(.plenty), amber = p.tone(.tight)
+        let tick = { (label: String) in timeline.ticks.first { $0.label == label } }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Image(systemName: "pause.fill").font(.caption2.weight(.bold)).foregroundStyle(amber.text)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Pauses at the 5-hour limit").font(.subheadline.weight(.semibold)).foregroundStyle(amber.text)
+                    Text([tick("window empty").map { "empties \($0.time)" }, tick("resets").map { "resets \($0.time)" }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption.monospacedDigit()).foregroundStyle(p.muted)
+                }
+                Spacer()
+                if let done = tick("done") {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(done.time).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(amber.text)
+                        Caps("done", size: 8, color: amber.text.opacity(0.8))
+                    }
+                }
+            }
             Canvas { ctx, size in
-                let h: CGFloat = 8, y = (size.height - h) / 2
-                let track = Path(roundedRect: CGRect(x: 0, y: y, width: size.width, height: h), cornerRadius: h / 2)
+                let h: CGFloat = 6, y: CGFloat = 0
+                let track = Path(roundedRect: CGRect(x: 0, y: y, width: size.width, height: h), cornerRadius: 3)
                 ctx.fill(track, with: .color(p.meterTrack))
                 ctx.drawLayer { layer in
                     layer.clip(to: track)
-                    for s in timeline.spans {
+                    for s in timeline.spans where s.end > s.start {
                         let r = CGRect(x: size.width * s.start, y: y, width: size.width * (s.end - s.start), height: h)
                         switch s.kind {
                         case .working:
                             layer.fill(Path(r), with: .linearGradient(Gradient(colors: [blue.top, blue.bottom]), startPoint: CGPoint(x: 0, y: y),
                                                                       endPoint: CGPoint(x: 0, y: y + h)))
                         case .paused:
-                            layer.fill(Path(r), with: .color(p.amber.opacity(0.22)))
-                            var stripes = Path()
-                            var x = r.minX - h
-                            while x < r.maxX { stripes.move(to: CGPoint(x: x, y: y + h)); stripes.addLine(to: CGPoint(x: x + h, y: y)); x += 4.5 }
-                            layer.clip(to: Path(r))
-                            layer.stroke(stripes, with: .color(p.amber.opacity(0.75)), lineWidth: 1.4)
+                            layer.fill(Path(r), with: .color(amber.text.opacity(0.2)))
+                            var stripes = Path(), x = r.minX - h
+                            while x < r.maxX { stripes.move(to: CGPoint(x: x, y: y + h)); stripes.addLine(to: CGPoint(x: x + h, y: y)); x += 3.5 }
+                            var inner = layer
+                            inner.clip(to: Path(r))
+                            inner.stroke(stripes, with: .color(amber.text.opacity(0.7)), lineWidth: 1)
                         }
                     }
                 }
-                for t in timeline.ticks where t.at > 0.001 && t.at < 0.999 {
-                    let x = size.width * t.at
-                    ctx.fill(Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)), with: .color(p.ink.opacity(0.55)))
+                for t in timeline.ticks {
+                    let x = min(max(size.width * t.at, 0.5), size.width - 0.5)
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: h + 1.5, width: 1, height: 3)), with: .color(t.strong ? amber.text.opacity(0.8) : p.muted2))
                 }
             }
-            .frame(height: 14)
-            HStack(alignment: .top, spacing: 4) {
-                ForEach(Array(timeline.ticks.enumerated()), id: \.offset) { i, t in
-                    if i > 0 { Spacer(minLength: 2) }
-                    VStack(alignment: i == 0 ? .leading : i == timeline.ticks.count - 1 ? .trailing : .center, spacing: 1) {
-                        Text(t.label).font(.caption2).foregroundStyle(p.muted).lineLimit(1)
-                        Text(t.time).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(t.strong ? p.ink : p.ink.opacity(0.75)).lineLimit(1)
-                    }
-                    .fixedSize()
+            .frame(height: 10)
+            HStack {
+                ForEach(Array(timeline.ticks.sorted { $0.at < $1.at }.enumerated()), id: \.offset) { i, t in
+                    if i > 0 { Spacer(minLength: 4) }
+                    Caps(t.label, size: 8, color: t.strong ? amber.text.opacity(0.9) : nil).fixedSize()
                 }
             }
             if let note = timeline.note {
-                Text(note).font(.caption).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Dot(color: amber.text, size: 6)
+                    Text(note).font(.footnote.weight(.medium)).foregroundStyle(p.ink.opacity(0.86)).fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(amber.text.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(amber.text.opacity(0.26), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
     }
 }
 
-/// A finished run's receipt: how long, how much, how it went, and where the time went.
+/// A finished run's figures as stat tiles (how long, tokens with their cost, tasks), then where
+/// the time went.
 struct RunReceiptView: View {
     var receipt: RunReceiptModel
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let p = Palette(scheme)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                stat(receipt.duration, "start to finish", p)
-                stat(receipt.tokens, receipt.cost.map { "tokens · \($0)" } ?? "tokens", p)
-                stat(receipt.tasks, receipt.tasksNote, p)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                tile("Took", receipt.duration, nil, p)
+                tile("Tokens", receipt.tokens, receipt.cost?.replacingOccurrences(of: "about ", with: "~"), p)
+                tile("Tasks", receipt.tasks, nil, p)
             }
             if receipt.time.total > 0 { RunTimeSplitView(time: receipt.time) }
-            if let foot = receipt.footnote {
-                Text(foot).font(.caption).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
-    private func stat(_ value: String, _ caption: String, _ p: Palette) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.headline.monospacedDigit()).foregroundStyle(p.ink).lineLimit(1).minimumScaleFactor(0.8)
-            Text(caption).font(.caption2).foregroundStyle(p.muted).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+    private func tile(_ label: String, _ value: String, _ suffix: String?, _ p: Palette) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption2.weight(.medium)).foregroundStyle(p.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value).font(.subheadline.weight(.bold).monospacedDigit()).foregroundStyle(p.ink).lineLimit(1).minimumScaleFactor(0.8)
+                if let suffix { Text(suffix).font(.caption2.monospacedDigit()).foregroundStyle(p.ink.opacity(0.45)).lineLimit(1) }
+            }
         }
+        .padding(.horizontal, 9).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(p.chipFill))
     }
 }
 
@@ -386,32 +408,36 @@ struct RunTimeSplitView: View {
     }
 }
 
-/// Lays its children out left to right, wrapping onto new lines.
+/// Lays its children out left to right, wrapping onto new lines. Measuring and placing break the
+/// lines at the same width, so the height it reports is the height it draws.
 struct FlowRow: Layout {
     var spacing: CGFloat = 6
     var lineSpacing: CGFloat = 5
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
+    /// Each child's origin and the total size, for children laid out within `width`.
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (origins: [CGPoint], size: CGSize) {
+        var origins: [CGPoint] = []
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
         for s in subviews {
-            let size = s.sizeThatFits(.unspecified)
+            let size = s.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
             if x > 0, x + size.width > width { y += line + lineSpacing; x = 0; line = 0 }
+            origins.append(CGPoint(x: x, y: y))
             x += size.width + spacing
             line = max(line, size.height)
             widest = max(widest, x - spacing)
         }
-        return CGSize(width: min(widest, width), height: y + line)
+        return (origins, CGSize(width: width.isFinite ? min(widest, width) : widest, height: y + line))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .infinity).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
-        for s in subviews {
-            let size = s.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX { y += line + lineSpacing; x = bounds.minX; line = 0 }
-            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            line = max(line, size.height)
+        let laid = arrange(subviews, width: proposal.width ?? bounds.width)
+        for (s, o) in zip(subviews, laid.origins) {
+            s.place(at: CGPoint(x: bounds.minX + o.x, y: bounds.minY + o.y),
+                    proposal: ProposedViewSize(width: proposal.width.map { min($0, bounds.width) }, height: nil))
         }
     }
 }

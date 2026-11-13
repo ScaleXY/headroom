@@ -42,7 +42,10 @@ final class WatchServices {
         // The build setting arrives as the string "YES"/"NO", which `as? Bool` never matches.
         let cloudKit = (Bundle.main.object(forInfoDictionaryKey: "HeadroomCloudKit") as? NSString)?.boolValue ?? false
         var live: (any SyncReading)?
-        if cloudKit, let container = try? SyncContainer.make(.appGroup(FeedFile.appGroup), cloudKit: true) {
+        // An unsigned build has no App Group, and SwiftData traps (rather than throws) without
+        // one: open the live store only when the group's container is really there.
+        let grouped = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: FeedFile.appGroup) != nil
+        if cloudKit, grouped, let container = try? SyncContainer.make(.appGroup(FeedFile.appGroup), cloudKit: true) {
             live = SyncStore(container: container)
         }
         model = WatchModel(live: live)

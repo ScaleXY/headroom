@@ -275,8 +275,13 @@ public struct RunActivityLockScreen: View {
     @Environment(\.calendar) private var calendar
     @Environment(\.locale) private var locale
 
+    /// Laid out as the 5-hour session's Live Activity is: the tile and title, the big figure top
+    /// right with its caps (the finish time, else the percent), the map with the figure beside it,
+    /// a status line (the question, else the state) with the counts on the right, then when it
+    /// was updated.
     public var body: some View {
         let p = Palette(scheme), copy = Copy(now: now, calendar: calendar, locale: locale)
+        let finish = state.finishAt.flatMap { $0 > now && state.live ? copy.when($0) : nil }
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 if let provider = state.provider { BrandTile(provider: provider, size: 22) } else { RunMarkView(state.mark, color: p.run(state.hue), size: 16) }
@@ -285,26 +290,38 @@ public struct RunActivityLockScreen: View {
                     Text(state.subtitle).font(.system(size: 11, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                Text(state.figure).font(.system(size: 24, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
-            }
-            if let q = state.question { RunActivityQuestion(text: q, size: 12) }
-            RunActivityProgress(state: state, height: 8)
-            // The state always reads in full; the finish gives way to it.
-            HStack(spacing: 8) {
-                RunStateCapsule(state.stateText, hue: state.hue, compact: true).layoutPriority(1)
-                Spacer(minLength: 4)
-                if let finish = state.finishText(copy) {
-                    Text("Done \(finish)").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(finish ?? state.figure).font(.system(size: 24, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(state.hue == .alert || state.hue == .warn ? p.run(state.hue) : p.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Caps(finish != nil ? "done by" : state.blocks == nil && state.done == nil ? "finished" : "done", size: 8)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                RunActivityProgress(state: state, height: 11)
+                if finish != nil {
+                    Text(state.figure).font(.system(size: 15, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
+                        .frame(width: 48, alignment: .trailing)
+                }
+            }
+            HStack(spacing: 6) {
+                if let q = state.question {
+                    RunActivityQuestion(text: q, size: 12)
+                } else {
+                    RunMarkView(state.mark, color: p.run(state.hue), size: 10)
+                    Text(state.stateText).font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(state.hue == .neutral || state.hue == .quiet ? p.muted : p.run(state.hue)).lineLimit(1)
+                }
+                Spacer(minLength: 4)
                 if let detail = state.detail {
-                    Text(detail).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
+                    Text(detail).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
                 }
-                Spacer(minLength: 4)
-                RunUpdatedText(updatedAt: state.updatedAt, now: now).font(.system(size: 10, weight: .medium)).foregroundStyle(p.muted2)
-                    .lineLimit(1).fixedSize()
             }
+            HStack(spacing: 0) {
+                RunUpdatedText(updatedAt: state.updatedAt, now: now)
+                Text(" · " + state.subtitle).lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .medium)).foregroundStyle(p.muted2)
         }
         .padding(14)
     }
