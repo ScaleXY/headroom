@@ -353,6 +353,7 @@ public actor TaskObserver {
             if var a = state.attempts[agent] {
                 if works {
                     if a.out.run == nil { a.startedAt = min(a.startedAt, at) }
+                    ActivityTrail.note(&a.trail, &a.trailFrom, from: a.lastAt, to: at)
                     a.lastAt = max(a.lastAt, at)
                 }
                 a.tokens += tokens
@@ -368,6 +369,7 @@ public actor TaskObserver {
             // After its turn ended, only a reply of its own counts as activity.
             if works, line.assistant || s.stoppedAt == nil {
                 s.startedAt = s.lastAt == 0 ? at : min(s.startedAt, at)
+                ActivityTrail.note(&s.trail, &s.trailFrom, from: s.lastAt, to: at)
                 s.lastAt = max(s.lastAt, at)
             }
             if s.project == nil, let cwd = line.cwd { s.project = Bytes.lastPathComponent(cwd) }
@@ -625,6 +627,7 @@ public actor TaskObserver {
         guard at > 0, let a = state.attempts[key], a.kind == .agent, a.endedAt == nil, let tu = a.toolUseID, let sp = state.spawns[tu],
               sp.tool == .agent, sp.resultAt == nil, sp.spawner == "session:" + a.session,
               var s = state.sessions[a.session], s.stoppedAt == nil, at > s.lastAt else { return }
+        ActivityTrail.note(&s.trail, &s.trailFrom, from: s.lastAt, to: at)
         s.lastAt = at
         state.sessions[a.session] = s
         touchSession(a.session)
@@ -672,7 +675,10 @@ public actor TaskObserver {
         default: works = true
         }
         // Bookkeeping lines after a turn's end don't reopen it.
-        if at > 0, works, s.stoppedAt == nil || { if case .started = event { true } else { false } }() { s.lastAt = max(s.lastAt, at) }
+        if at > 0, works, s.stoppedAt == nil || { if case .started = event { true } else { false } }() {
+            ActivityTrail.note(&s.trail, &s.trailFrom, from: s.lastAt, to: at)
+            s.lastAt = max(s.lastAt, at)
+        }
         /// The person's next message answers an async question.
         func answerAsync() {
             if let q = s.question, q.answeredAt == nil, state.pendingCalls[q.id]?.kind == .asyncQuestion, at > q.at {
@@ -895,6 +901,8 @@ public actor TaskObserver {
                 if a.question != nil { a.question = nil } else if let cid = child?.id { state.sessions[cid]?.question = nil }
             }
             let ending = fx.end != nil && (a.out.endedAt != fx.end || a.out.outcome != fx.outcome)
+            for t in a.trail ?? [] where t > (a.out.activityAt ?? -1) && t < fx.last { event(t, run, .activity(attempt: key, at: nil, tokens: nil)) }
+            a.trail = nil; a.trailFrom = nil
             let moved = fx.last > (a.out.activityAt ?? -1) || fx.tokens != (a.out.tokens ?? 0)
             // An answer is written at once: it clears the wait.
             if moved || answeredAt != nil, ending || answeredAt != nil || wall - (a.out.wall ?? 0) >= Self.activityInterval {
@@ -963,6 +971,8 @@ public actor TaskObserver {
                     s.out.plan = planKey
                 }
             }
+            for t in s.trail ?? [] where t > (s.out.activityAt ?? -1) && t < s.lastAt { event(t, sid, .activity(attempt: key, at: nil, tokens: nil)) }
+            s.trail = nil; s.trailFrom = nil
             let moved = s.lastAt > (s.out.activityAt ?? -1) || s.tokens != (s.out.tokens ?? 0)
             let stopped = s.stoppedAt != nil
             if moved, stopped != s.outStopped || wall - (s.out.wall ?? 0) >= Self.activityInterval {

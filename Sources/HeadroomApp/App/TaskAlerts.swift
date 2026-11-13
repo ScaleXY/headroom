@@ -73,10 +73,13 @@ struct TaskAlerts {
                 let node = r.nodes.first { $0.id == id }
                 alert(.criticalFailed, "task.critical.\(r.id).\(id).\(stamp)", RunWords.alertCriticalFailed(name), node?.title ?? id)
             }
-            if m.stale, !was.stale {
+            // A session's own plan list is tracked for every session that keeps one: only the ones
+            // with real work behind them say when they go quiet, stop or finish.
+            let watched = Self.worthWatching(r)
+            if m.stale, !was.stale, watched {
                 alert(.stale, "task.stale.\(r.id).\(stamp)", RunWords.alertQuiet(name), "No agent activity for \(Self.span(quietAfter)).")
             }
-            if m.stopped, !was.stopped, !r.abandoned {
+            if m.stopped, !was.stopped, !r.abandoned, watched {
                 let again = lastStopped[r.id].map { now.timeIntervalSince($0) < Self.againWindow } ?? false
                 if !again {
                     lastStopped[r.id] = now
@@ -84,7 +87,7 @@ struct TaskAlerts {
                     alert(.stopped, "task.stopped.\(r.id).\(stamp)", RunWords.alertStopped(name), "\(done) of \(count) done.")
                 }
             }
-            if m.finished, !was.finished, !r.abandoned {
+            if m.finished, !was.finished, !r.abandoned, watched {
                 let again = lastFinished[r.id].map { now.timeIntervalSince($0.at) < Self.againWindow && $0.state == r.state } ?? false
                 if !again {
                     lastFinished[r.id] = (now, r.state)
@@ -105,6 +108,15 @@ struct TaskAlerts {
         Mark(input: r.needsInput || (!r.state.isTerminal && r.nodes.contains { $0.state == .waiting && $0.waitReason == .input }),
              stopped: r.state == .stopped, stale: r.stale, finished: r.state.isTerminal,
              failedCritical: Set(r.nodes.filter { $0.importance == .critical && $0.state == .failed }.map(\.id)))
+    }
+
+    /// Working time that makes a plan read off the harness worth a "finished" or "stopped" alert.
+    static let mirroredMinimumWork: TimeInterval = 15 * 60
+
+    /// A run the agent planned (or that spawned agents) always is; a session's own plan list only
+    /// once it has had a quarter of an hour of work.
+    static func worthWatching(_ r: TaskRun) -> Bool {
+        !r.mirrored || r.time.working >= mirroredMinimumWork || r.nodes.contains { $0.attempts.count > 0 }
     }
 
     /// What the run is asking, in its own words when known.

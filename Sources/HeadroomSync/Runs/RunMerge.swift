@@ -134,6 +134,10 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
 
     /// Notes what `runs` say now and returns the alerts due. A switch that's off still uses up
     /// the episode, so turning it on later never replays old news.
+    /// As on the Mac: a session's own plan list says it stopped or finished only once it has had a
+    /// quarter of an hour of work; a plan the agent declared always does.
+    static func worthWatching(_ r: RunDigest) -> Bool { !r.mirrored || (r.workingSeconds ?? 0) >= 15 * 60 }
+
     public mutating func observe(_ runs: [RunDigest], now: Date, needsInput: Bool, finished notifyFinished: Bool,
                                  stopped notifyStopped: Bool = false) -> Decision {
         var out = Decision()
@@ -165,12 +169,12 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
                     guard reopened.remove(r.id) != nil, now.timeIntervalSince(last) >= Self.finishSpacing else { continue }
                 }
                 finished[r.id] = now
-                if primed, notifyFinished, fresh { out.due.append(Alert(kind: .finished, run: r)) }
+                if primed, notifyFinished, fresh, Self.worthWatching(r) { out.due.append(Alert(kind: .finished, run: r)) }
             } else {
                 if finished[r.id] != nil { reopened.insert(r.id) }
                 if r.stoppedWithWorkLeft {
                     stillStopped.insert(r.id)
-                    if stopped.insert(r.id).inserted, primed, notifyStopped, now.timeIntervalSince(r.updatedAt) < Self.finishFreshness {
+                    if stopped.insert(r.id).inserted, primed, notifyStopped, Self.worthWatching(r), now.timeIntervalSince(r.updatedAt) < Self.finishFreshness {
                         out.due.append(Alert(kind: .stopped, run: r))
                     }
                 }

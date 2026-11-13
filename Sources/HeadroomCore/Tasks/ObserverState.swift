@@ -115,6 +115,9 @@ struct SessionRec: Codable, Sendable {
     var dir: String?
     var startedAt: Double
     var lastAt: Double
+    /// Activity times not yet written, and where sampling counts from (`ActivityTrail`).
+    var trail: [Double]?
+    var trailFrom: Double?
     var tokens: Int64 = 0
     /// The turn ended and nothing has happened since.
     var stoppedAt: Double?
@@ -162,6 +165,9 @@ struct AttemptRec: Codable, Sendable {
     var provider: String?
     var startedAt: Double
     var lastAt: Double
+    /// Activity times not yet written, and where sampling counts from (`ActivityTrail`).
+    var trail: [Double]?
+    var trailFrom: Double?
     var tokens: Int64 = 0
     var endedAt: Double?
     var outcome: TaskAttemptOutcome?
@@ -199,4 +205,30 @@ struct SpawnRec: Codable, Sendable {
     var outcome: TaskAttemptOutcome?
     /// When its result came back. An `Agent` call without one is still running in the foreground.
     var resultAt: Double?
+}
+
+/// When work happened between two writes. Activity is written at most every 30 s of wall time,
+/// with the latest time only, so a catch-up scan (launch, after sleep) would see hours of work as
+/// one moment and the fold would count no working time. The trail keeps the transcript's own
+/// times instead: the end of each stretch before a gap, the start of the next, and one time every
+/// `step` within a stretch. Written as plain activity before the latest time.
+enum ActivityTrail {
+    static let step: Double = 240
+    static let cap = 2000
+
+    static func note(_ trail: inout [Double]?, _ anchor: inout Double?, from last: Double, to at: Double) {
+        guard last > 0, at > last else { return }
+        var t = trail ?? []
+        let base = anchor ?? last
+        if at - last > step {
+            // A gap: the stretch before it ended at `last`, a new one starts at `at`.
+            if t.last != last { t.append(last) }
+            t.append(at)
+        } else if at - (t.last ?? base) >= step {
+            t.append(at)
+        }
+        if anchor == nil { anchor = base }
+        if t.count > cap { t.removeFirst(t.count - cap) }
+        trail = t
+    }
 }

@@ -123,6 +123,24 @@ final class TaskHome: @unchecked Sendable {
         #expect(a.map(\.kind) == [.needsInput] && a[0].body == "Retry queue is waiting for your answer.")
     }
 
+    @Test func aSessionsOwnPlanAlertsOnlyWithRealWork() {
+        func mirrored(_ state: TaskRunState, working: TimeInterval) -> TaskRun {
+            var r = run(state)
+            r.mirrored = true
+            r.time = TaskTimeSplit(working: working)
+            return r
+        }
+        var alerts = TaskAlerts()
+        _ = alerts.evaluate([mirrored(.running, working: 120)], now: now) { _ in true }
+        // A two-minute session that ticked off its plan list is no news.
+        #expect(alerts.evaluate([mirrored(.done, working: 120)], now: now) { _ in true }.isEmpty)
+        var longer = TaskAlerts()
+        _ = longer.evaluate([mirrored(.running, working: 20 * 60)], now: now) { _ in true }
+        #expect(longer.evaluate([mirrored(.stopped, working: 20 * 60)], now: now) { _ in true }.map(\.kind) == [.stopped])
+        // A question is always news.
+        #expect(alerts.evaluate([mirrored(.waiting, working: 60)].map { var r = $0; r.waitReason = .input; return r }, now: now) { _ in true }.map(\.kind) == [.needsInput])
+    }
+
     @Test func oldRunsNeverNotify() {
         var alerts = TaskAlerts()
         _ = alerts.evaluate([], now: now) { _ in true }

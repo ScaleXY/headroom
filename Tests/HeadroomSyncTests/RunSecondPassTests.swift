@@ -233,6 +233,21 @@ private struct FirstPassDevice: Decodable {
         return d
     }
 
+    @Test func aSessionsOwnPlanAlertsOnlyWithRealWork() {
+        func mirrored(_ state: TaskRunState, working: Double) -> RunDigest {
+            var d = digest("m", state)
+            d.mirrored = true
+            d.workingSeconds = working
+            return d
+        }
+        var ledger = RunAlertLedger()
+        _ = ledger.observe([mirrored(.running, working: 120)], now: now, needsInput: true, finished: true)
+        #expect(ledger.observe([mirrored(.done, working: 120)], now: now, needsInput: true, finished: true).due.isEmpty)
+        var longer = RunAlertLedger()
+        _ = longer.observe([mirrored(.running, working: 1200)], now: now, needsInput: true, finished: true)
+        #expect(longer.observe([mirrored(.done, working: 1200)], now: now, needsInput: true, finished: true).due.map(\.kind) == [.finished])
+    }
+
     @Test func aQuestionIsHeldWhileYouAreAtTheMac() {
         var ledger = RunAlertLedger()
         _ = ledger.observe([digest("a", .running)], now: now, needsInput: true, finished: true)

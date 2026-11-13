@@ -213,6 +213,19 @@ extension Array where Element == TaskEvent {
         #expect(run.state == .failed || run.state == .partial)
     }
 
+    @Test func aCatchUpScanStillCountsWorkingTime() async throws {
+        let h = try ObserverHome()
+        // Forty minutes of work, a twenty-minute gap, then five more, all read in one scan.
+        var lines = [Fx.assistant(0, "s20", id: "m0", [Fx.agentCall("tu1", "Job", prompt: "p")]),
+                     Fx.user(1, "s20", Fx.toolResult("tu1", "launched"), result: ["status": "async_launched", "agentId": "a1"])]
+        for (i, s) in stride(from: 60.0, through: 2400, by: 60).enumerated() { lines.append(Fx.assistant(s, "s20", id: "w\(i)", tokens: 10, [Fx.text("…")])) }
+        for (i, s) in stride(from: 3600.0, through: 3900, by: 60).enumerated() { lines.append(Fx.assistant(s, "s20", id: "v\(i)", tokens: 10, [Fx.text("…")])) }
+        try h.write("s20.jsonl", lines)
+        _ = await h.observer().scan(since: Fx.t0)
+        let run = try #require(h.fold("s20"))
+        #expect(run.time.working >= 44 * 60 && run.time.working <= 47 * 60, "working \(run.time.working / 60)m")
+    }
+
     @Test func tokensAreCountedOncePerMessage() async throws {
         let h = try ObserverHome()
         // One message written as three lines (thinking, text, tool use), each repeating the usage.
