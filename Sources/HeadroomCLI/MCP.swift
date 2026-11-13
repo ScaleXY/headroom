@@ -4,7 +4,7 @@ import HeadroomKit
 /// `headroom mcp`: a stdio Model Context Protocol server. Newline-delimited JSON-RPC 2.0 on
 /// standard input and output (`initialize`, `notifications/initialized`, `ping`, `tools/list`,
 /// `tools/call`). Tools read the allowance and the task runs, and declare and update tasks with
-/// the same operations as `headroom task`.
+/// the same operations, checks and answers as `headroom task`.
 struct MCPServer {
     var ctx: TaskContext
     var snapshotURL: URL
@@ -38,7 +38,9 @@ struct MCPServer {
                 "protocolVersion": asked.flatMap { Self.protocolVersions.contains($0) ? $0 : nil } ?? Self.protocolVersions[1],
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "headroom", "version": HeadroomCLI.version],
-                "instructions": "Headroom shows the user how much Claude and Codex allowance is left and what long agent runs are doing. Declare a plan with plan_tasks, put each task's tag in the description of the agent you spawn for it, and report progress with update_task.",
+                "instructions": "Headroom shows the user how much Claude and Codex allowance is left and what long agent runs are doing. "
+                    + "For work with 3 or more steps, read task_guide once, declare a plan with plan_tasks, put each task's tag in the description of the agent you spawn for it, "
+                    + "and report with update_task. task_status shows your run after a context compaction.",
             ])
         case "ping":
             return result(id, [:])
@@ -57,9 +59,12 @@ struct MCPServer {
 
     // MARK: Tools
 
+    static let runDescription = "Run id. Omit it to use $HEADROOM_RUN, else the session this server was started in, resolved on every call "
+        + "(following `headroom task adopt`). After /clear or a resume that session can be stale: pass the run id explicitly (task_status shows it)."
+
     static var taskProperties: [String: Any] { [
-        "id": ["type": "string", "description": "Path id such as api/tests; may start with RUN:"],
-        "title": ["type": "string"],
+        "id": ["type": "string", "description": "Path id such as api/tests; may start with RUN: (from a [hr:RUN:PATH] tag)"],
+        "title": ["type": "string", "description": "Up to 120 characters"],
         "effort": ["type": ["string", "number"], "description": "xs, s, m, l, xl (1, 2, 4, 8, 16) or a positive number; relative to siblings"],
         "importance": ["type": "string", "enum": ["critical", "normal", "optional"]],
         "steps": ["type": "integer", "minimum": 1, "description": "Total steps"],
@@ -68,28 +73,43 @@ struct MCPServer {
     static var tools: [[String: Any]] { [
         ["name": "get_headroom", "description": "Weekly Claude and Codex allowance left, time to renewal, the 5-hour session and blocks, from Headroom.app's snapshot.",
          "inputSchema": ["type": "object", "properties": [String: Any]()], "annotations": ["readOnlyHint": true]],
-        ["name": "get_tasks", "description": "Task runs as a tree with states, progress (done, in flight, estimate), must-haves, ETA and tokens.",
+        ["name": "get_tasks", "description": "Task runs as a tree with states, progress (done, in flight, estimate), must-haves, ETA and tokens. For your own run, task_status is shorter.",
          "inputSchema": ["type": "object", "properties": ["run": ["type": "string", "description": "Only this run"], "all": ["type": "boolean", "description": "Every run from the last 7 days, not just active ones"]]],
          "annotations": ["readOnlyHint": true]],
-        ["name": "plan_tasks", "description": "Declare many tasks at once. Returns each task's tag, [hr:RUN:PATH], to put in the description of the agent spawned for it.",
+        ["name": "task_status", "description": "Your run as a compact tree: one line per task with its id, state, steps, and age or note. Use it to find your place after a context compaction.",
+         "inputSchema": ["type": "object", "properties": ["run": ["type": "string", "description": runDescription], "titles": ["type": "boolean", "description": "Add each task's title"]]],
+         "annotations": ["readOnlyHint": true]],
+        ["name": "task_guide", "description": "How to report progress: whether to plan, how to tag delegated agents, and what each outcome means. Read it once before long multi-step work.",
+         "inputSchema": ["type": "object", "properties": ["run": ["type": "string", "description": runDescription]]], "annotations": ["readOnlyHint": true]],
+        ["name": "plan_tasks", "description": "Declare the run's tasks at once. Returns each task's tag, [hr:RUN:PATH], to put in the description of the agent spawned for it. Ids must be unique.",
          "inputSchema": ["type": "object", "required": ["tasks"], "properties": [
-             "run": ["type": "string", "description": "Run id; defaults to this session"],
+             "run": ["type": "string", "description": runDescription],
              "title": ["type": "string", "description": "Title for the run"],
+             "project": ["type": "string", "description": "The project's folder name"],
              "tasks": ["type": "array", "description": "Tasks; each may have children (ids relative to the parent)",
                        "items": ["type": "object", "required": ["id"], "properties": taskProperties.merging(["children": ["type": "array", "items": ["type": "object"]]]) { a, _ in a }]],
          ]]],
-        ["name": "update_task", "description": "Add, start, report progress on, wait on, or finish one task.",
-         "inputSchema": ["type": "object", "required": ["id", "action"], "properties": taskProperties.merging([
+        ["name": "update_task", "description": "Add, start, report progress on, wait on, or close tasks. start, done, fail, skip and cancel take several ids. "
+            + "Returns the run's percent and what is still open. Once a plan exists only add creates tasks; a task with open children closes only with force.",
+         "inputSchema": ["type": "object", "required": ["action"], "properties": taskProperties.merging([
              "action": ["type": "string", "enum": TaskOps.actions],
-             "run": ["type": "string"],
-             "step": ["type": ["integer", "string"], "description": "Steps done, or K/N"],
-             "fraction": ["type": "number", "minimum": 0, "maximum": 1],
-             "note": ["type": "string"],
-             "for": ["type": "string", "enum": ["input", "dependency", "limit"], "description": "What a wait is for"],
-             "evidence": ["type": "string", "description": "What shows a task is done"],
-             "reason": ["type": "string", "description": "Why a task failed, was skipped or cancelled"],
+             "ids": ["type": "array", "items": ["type": "string"], "description": "Several ids at once, instead of id"],
+             "run": ["type": "string", "description": runDescription],
+             "step": ["type": ["integer", "string"], "description": "progress: steps done, K/N"],
+             "fraction": ["type": "number", "minimum": 0, "maximum": 1, "description": "progress: how far, 0 to 1"],
+             "note": ["type": "string", "description": "progress, wait: up to 400 characters"],
+             "for": ["type": "string", "enum": ["input", "dependency", "limit"], "description": "wait: what it waits for"],
+             "options": ["type": "array", "items": ["type": "string"], "description": "wait: answers the user can pick"],
+             "evidence": ["type": "string", "description": "done: what shows it is done"],
+             "reason": ["type": "string", "description": "fail (required), skip, cancel: why"],
+             "force": ["type": "boolean", "description": "done, fail, skip, cancel: also close open tasks under it the same way"],
          ]) { a, _ in a }]],
     ] }
+
+    /// The run for a call: the argument, else the environment and any adoption, read now.
+    func run(_ args: [String: Any]) -> String? {
+        RunResolver.resolve(flag: args["run"] as? String, environment: ctx.environment, home: ctx.home)
+    }
 
     func call(_ name: String, _ args: [String: Any]) -> (String, Bool) {
         let now = ctx.now()
@@ -99,38 +119,62 @@ struct MCPServer {
             return (HeadroomCLI.jsonOutput(s, now: now), false)
         case "get_tasks":
             let only = (args["run"] as? String).flatMap(TaskRunID.sanitize)
-            var loaded = TaskStore(home: ctx.home).load(now: now, all: args["all"] as? Bool == true || only != nil)
-            if let only { loaded.runs = loaded.runs.filter { $0.id == only } }
-            let feed = TasksFeed(generatedAt: now, writerPID: 0, runs: loaded.runs)
+            let store = TaskStore(home: ctx.home)
+            let runs = only.map { store.run($0, now: now).map { [$0] } ?? [] } ?? store.load(now: now, all: args["all"] as? Bool == true).runs
+            let feed = TasksFeed(generatedAt: now, writerPID: 0, runs: runs)
             return ((try? TasksFile.encoder(pretty: true).encode(feed)).map { String(decoding: $0, as: UTF8.self) } ?? "{}", false)
+        case "task_status":
+            guard let run = run(args) else { return (RunResolver.missing, true) }
+            guard let r = TaskFold.fold(TaskJournal.read(run: run, home: ctx.home), now: now).first else {
+                return ("run \(run): nothing reported yet. For work with 3 or more steps, declare a plan (task_guide explains how).", false)
+            }
+            return (TaskEcho.status(r, now: now, titles: args["titles"] as? Bool == true).joined(separator: "\n"), false)
+        case "task_guide":
+            return (TaskCommand.guide(run: run(args)), false)
         case "plan_tasks":
-            guard let run = RunResolver.resolve(flag: args["run"] as? String, environment: ctx.environment) else { return (RunResolver.missing, true) }
+            guard let run = run(args) else { return (RunResolver.missing, true) }
             do {
-                let p = try TaskOps.plan(["tasks": args["tasks"] ?? []], now: now)
+                let p = try TaskOps.plan(["tasks": args["tasks"] ?? []])
                 guard !p.tasks.isEmpty else { return ("No tasks given.", true) }
+                let before = TaskJournal.read(run: run, home: ctx.home)
                 let events = p.tasks.map { TaskEvent(at: now, run: run, source: .agent, op: .add($0)) }
-                try ctx.append(TaskOps.withMeta(events, run: run, title: args["title"] as? String, project: args["project"] as? String, ctx: ctx))
-                return ((["Declared \(p.tasks.count) tasks in run \(run):"] + p.tasks.map { "\(TaskRef(run: run, path: $0.id).tag)  \($0.title ?? $0.id)" }).joined(separator: "\n"), false)
+                let written = TaskOps.withMeta(events, run: run, title: TaskText.title(args["title"] as? String), project: TaskText.title(args["project"] as? String),
+                                               ctx: ctx, existing: before, place: true)
+                try ctx.append(written)
+                var lines = ["Declared \(p.tasks.count) tasks in run \(run):"] + p.tasks.map { "\(TaskRef(run: run, path: $0.id).tag)  \($0.title ?? $0.id)" }
+                lines += p.warnings.map { "note: " + $0 }
+                if let r = TaskFold.fold(before + written, now: now).first, let room = TaskEcho.room(r, ctx: ctx) { lines.append(room) }
+                return (lines.joined(separator: "\n"), false)
             } catch let f as TaskOps.Failure {
                 return (f.message, true)
             } catch {
                 return ("Could not write the journal: \(error.localizedDescription)", true)
             }
         default:
-            guard let id = args["id"] as? String, let action = args["action"] as? String else { return ("update_task needs id and action", true) }
-            guard let (run, path) = RunResolver.resolve(flag: args["run"] as? String, id: id, environment: ctx.environment) else { return (RunResolver.missing, true) }
-            var options: [String: String] = [:]
-            for k in ["title", "effort", "importance", "steps", "step", "fraction", "note", "for", "evidence", "reason"] {
-                if let v = TaskOps.string(args[k]) { options[k] = v }
+            guard let action = args["action"] as? String, TaskOps.actions.contains(action) else {
+                return ("update_task needs action: one of \(TaskOps.actions.joined(separator: ", "))", true)
             }
+            let ids = (args["ids"] as? [Any])?.compactMap(TaskOps.string) ?? (args["id"].flatMap(TaskOps.string).map { [$0] } ?? [])
+            guard !ids.isEmpty else { return ("update_task needs id (or ids)", true) }
+            let allowed = TaskOps.options[action] ?? []
+            // The same per-action options as the command line: nothing silently dropped.
+            let given = ["title", "effort", "importance", "steps", "step", "fraction", "note", "for", "evidence", "reason", "force", "options"]
+                .filter { args[$0] != nil && !(args[$0] is NSNull) }
+            if let stray = given.first(where: { !allowed.contains($0 == "options" ? "option" : $0) }) {
+                let takes = allowed.map { $0 == "option" ? "options" : $0 }
+                return ("\(action) doesn't use \(stray); \(action) takes \(takes.isEmpty ? "no options" : takes.joined(separator: ", ")) (and run)", true)
+            }
+            var options: [String: String] = [:]
+            for k in allowed where k != "force" && k != "option" { if let v = TaskOps.string(args[k]) { options[k] = v } }
+            let q = TaskOps.Request(action: action, ids: ids, options: options, answers: (args["options"] as? [Any])?.compactMap(TaskOps.string) ?? [],
+                                    force: args["force"] as? Bool == true, run: args["run"] as? String)
             do {
-                let events = try TaskOps.events(action: action, run: run, path: path, options: options, now: now)
-                try ctx.append(TaskOps.withMeta(events, run: run, title: nil, project: nil, ctx: ctx))
-                return (action == "add" ? TaskRef(run: run, path: path).tag : "ok", false)
-            } catch let f as TaskOps.Failure {
-                return (f.message, true)
+                let out = try TaskOps.apply(q, ctx: ctx)
+                var lines = out.lines
+                if !out.tags.isEmpty, !lines.isEmpty { lines[0] = out.tags.joined(separator: " ") + " " + lines[0] }
+                return (lines.joined(separator: "\n"), false)
             } catch {
-                return ("Could not write the journal: \(error.localizedDescription)", true)
+                return (error.message, true)
             }
         }
     }

@@ -2,18 +2,20 @@ import Foundation
 import HeadroomKit
 
 /// `headroom task hook`: turns a harness hook payload on standard input into task events.
-/// Always exits 0 and prints nothing, except the blocking JSON an enforcing Stop hook sends.
-/// Unknown events and missing or odd fields are ignored, never an error.
+/// Always exits 0 and prints nothing, except the blocking JSON an enforcing Stop hook sends and
+/// the context a SessionStart hook hands back. Unknown events and missing or odd fields are
+/// ignored, never an error. Every call records the harness's heartbeat.
 ///
 /// Claude Code payloads (code.claude.com/docs/en/hooks): every event has `session_id`,
 /// `transcript_path`, `cwd`, `hook_event_name`; `Notification` adds `notification_type`, `message`,
 /// `title`; `SubagentStart` adds `agent_id`, `agent_type`; `SubagentStop` adds those plus
 /// `agent_transcript_path`, `stop_hook_active`, `last_assistant_message`; `Stop` adds
-/// `stop_hook_active`, `background_tasks`; `SessionEnd` adds `reason`. Codex sends the same names
-/// (plus `turn_id`, `model`) and has `PermissionRequest` where Claude Code has `Notification`.
+/// `stop_hook_active`, `background_tasks`; `SessionStart` adds `source` (`startup`, `resume`,
+/// `clear`, `compact`); `SessionEnd` adds `reason`. Codex sends the same names (plus `turn_id`,
+/// `model`) and has `PermissionRequest` where Claude Code has `Notification`.
 enum HookCommand {
     /// Notification types that mean a person has to act.
-    static let inputNotifications: Set<String> = ["permission_prompt", "idle_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]
+    static let inputNotifications = Set(HookInstaller.inputNotifications)
 
     /// Claude Code names subagent transcripts `agent-<agentId>.jsonl`; the observer keys attempts
     /// `agent:<agentId>`, so the hook does too.
@@ -21,23 +23,31 @@ enum HookCommand {
 
     static func run(_ args: [String], ctx: TaskContext) -> Int32 {
         let ok = HeadroomCLI.Exit.ok.rawValue
-        let a = try? Args(args, valued: ["--harness"], flags: ["--enforce"])
-        guard ctx.input.isPiped, let payload = (try? JSONSerialization.jsonObject(with: ctx.input.readAll())) as? [String: Any],
+        let a = try? Args(args, valued: ["--harness", "--run"], flags: ["--enforce"])
+        guard let data = ctx.input.readPiped(timeout: 2000), let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let name = payload["hook_event_name"] as? String else { return ok }
-        let session = (payload["session_id"] as? String).flatMap(TaskRunID.sanitize)
-        guard let run = session ?? RunResolver.resolve(flag: nil, environment: ctx.environment) else { return ok }
         let now = ctx.now()
+        HookInstaller.recordHeartbeat(AgentHarness(rawValue: a?["--harness"] ?? "") ?? .claudeCode, at: now, store: ctx.home)
+        // The same order as every `headroom task` command, so both name the same run.
+        guard let run = RunResolver.resolve(flag: a?["--run"], environment: ctx.environment, session: payload["session_id"] as? String, home: ctx.home) else { return ok }
+        if name == "SessionStart" {
+            if let text = sessionStart(payload, run: run, ctx: ctx, now: now) {
+                let out: [String: Any] = ["hookSpecificOutput": ["hookEventName": "SessionStart", "additionalContext": text]]
+                if let json = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys, .withoutEscapingSlashes]) { ctx.output(String(decoding: json, as: UTF8.self)) }
+            }
+            return ok
+        }
         let agent = (payload["agent_id"] as? String).flatMap { $0.isEmpty ? nil : agentKey($0) }
         let agentType = (payload["agent_type"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        let exists = TaskJournal.Stream.allCases.contains { FileManager.default.fileExists(atPath: TaskJournal.url(run: run, stream: $0, home: ctx.home).path) }
+        let exists = RunResolver.exists(run, home: ctx.home)
         var ops: [TaskEvent.Op] = []
         var blocking: String?
         switch name {
         case "Notification":
             guard let type = payload["notification_type"] as? String, inputNotifications.contains(type) else { return ok }
-            ops = [.wait(task: nil, attempt: agent, reason: .input, note: (payload["message"] as? String).map { String($0.prefix(160)) } ?? type)]
+            ops = [.wait(task: nil, attempt: agent, reason: .input, note: TaskText.clean(payload["message"] as? String, limit: 160) ?? type)]
         case "PermissionRequest":
-            ops = [.wait(task: nil, attempt: agent, reason: .input, note: (payload["tool_name"] as? String).map { "permission for \($0)" } ?? "permission")]
+            ops = [.wait(task: nil, attempt: agent, reason: .input, note: TaskText.clean(payload["tool_name"] as? String, limit: 80).map { "permission for \($0)" } ?? "permission")]
         case "UserPromptSubmit":
             ops = [.resume]
         case "SubagentStart":
@@ -49,8 +59,10 @@ enum HookCommand {
             guard let agent, agentType != nil else { return ok }
             ops = [.attemptEnd(attempt: agent, outcome: .ok)]
         case "Stop":
-            if a?.has("--enforce") == true, payload["stop_hook_active"] as? Bool != true, exists {
-                blocking = enforcement(run: run, ctx: ctx, now: now)
+            // Work still running in the background (agents, shells) is a fine reason to stop.
+            let background = (payload["background_tasks"] as? [Any]).map { !$0.isEmpty } ?? false
+            if a?.has("--enforce") == true, payload["stop_hook_active"] as? Bool != true, exists, !background {
+                blocking = enforcement(TaskJournal.read(run: run, home: ctx.home), now: now)
             }
             ops = [.stop(blocked: blocking != nil)]
         case "SessionEnd":
@@ -62,9 +74,17 @@ enum HookCommand {
         let creates = ops.contains { if case .attempt = $0 { true } else { false } }
         guard exists || creates else { return ok }
         var events = ops.map { TaskEvent(at: now, run: run, source: .hook, op: $0) }
+        let cwd = (payload["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let host = RunResolver.host(environment: ctx.environment)
         if !exists {
-            let project = (payload["cwd"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent }
-            events.insert(TaskEvent(at: now, run: run, source: .hook, op: .meta(title: nil, project: project, harness: a?["--harness"] ?? "claude-code")), at: 0)
+            events.insert(TaskEvent(at: now, run: run, source: .hook, op: .meta(title: nil, project: cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
+                                                                                 harness: a?["--harness"] ?? "claude-code", host: host, cwd: cwd)), at: 0)
+        } else if host != nil || cwd != nil {
+            let journal = (try? Data(contentsOf: TaskJournal.url(run: run, stream: .journal, home: ctx.home))).map(TaskJournal.decode) ?? []
+            let last = TaskOps.lastPlace(journal)
+            if (host != nil && host != last.host) || (cwd != nil && cwd != last.cwd) {
+                events.insert(TaskEvent(at: now, run: run, source: .hook, op: .meta(title: nil, project: nil, harness: nil, host: host ?? last.host, cwd: cwd ?? last.cwd)), at: 0)
+            }
         }
         try? ctx.append(events)
         if let reason = blocking {
@@ -75,49 +95,77 @@ enum HookCommand {
     }
 
     /// The reason to send the agent back, when declared tasks are still running with nobody on
-    /// them. Never twice in a row: not when the run's last event is a block already.
-    static func enforcement(run: String, ctx: TaskContext, now: Date) -> String? {
-        let events = TaskJournal.read(run: run, home: ctx.home)
-        let last = events.enumerated().max { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }?.element
-        if let last, case .stop(true) = last.op { return nil }
+    /// them. Never twice in a row (not when the run's last event is a block already), and a task
+    /// reported on since the last block, in the same turn, has been answered for.
+    static func enforcement(_ events: [TaskEvent], now: Date) -> String? {
+        let ordered = events.enumerated().sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }.map(\.element)
+        func isBlock(_ e: TaskEvent) -> Bool { if case .stop(true) = e.op { true } else { false } }
+        if let last = ordered.last, isBlock(last) { return nil }
+        let block = ordered.last(where: isBlock)?.at
+        let resume = ordered.last { $0.op == .resume }?.at
+        let answeredAfter = block.flatMap { b in (resume.map { $0 <= b } ?? true) ? b : nil }
         guard let r = TaskFold.fold(events, now: now).first else { return nil }
-        let open = r.nodes.filter { $0.declared && $0.leaf && $0.state == .running && $0.attempts.active == 0 }
+        let open = r.nodes.filter { n in
+            n.declared && n.leaf && n.state == .running && n.attempts.active == 0
+                && !(answeredAfter.map { since in (n.lastActivityAt ?? .distantPast) > since } ?? false)
+        }
         guard !open.isEmpty else { return nil }
         let ids = open.prefix(8).map(\.id).joined(separator: ", ") + (open.count > 8 ? " and \(open.count - 8) more" : "")
         return "Headroom: these tasks are still marked running: \(ids). Give each an outcome before stopping: "
-            + "`headroom task done ID --evidence …`, `fail ID --reason …`, `skip ID`, `cancel ID`, or `wait ID --for input` if you need the user."
+            + "`headroom task done ID --evidence …`, `fail ID --reason …`, `skip ID` or `cancel ID` (several ids per call are fine). "
+            + "If one is still being worked on in the background (a subagent or a command you started), say so instead and stop: "
+            + "`headroom task progress ID --note \"running in the background\"`. If you need the user: `headroom task wait ID --for input --note …`."
+    }
+
+    /// After a compaction, resume or /clear: the run's tree for the agent, or, for a new session
+    /// with no plan, a pointer to an unfinished run in the same folder it could adopt.
+    static func sessionStart(_ payload: [String: Any], run: String, ctx: TaskContext, now: Date) -> String? {
+        guard let source = payload["source"] as? String, ["compact", "resume", "clear"].contains(source) else { return nil }
+        let events = TaskJournal.read(run: run, home: ctx.home)
+        if TaskOps.hasPlan(events), let r = TaskFold.fold(events, now: now).first {
+            return (["Headroom: this session reports progress on run \(run) with `headroom task`. Where it stands:"]
+                    + TaskEcho.status(r, now: now, titles: false)
+                    + ["Keep reporting as you go (start, progress, done …) and give every task an outcome before you stop. `headroom task status` shows this again."])
+                .joined(separator: "\n")
+        }
+        guard source != "compact", let cwd = payload["cwd"] as? String, !cwd.isEmpty, let (other, open) = earlierRun(cwd: cwd, excluding: run, ctx: ctx, now: now) else { return nil }
+        return "Headroom: run \(other) in this folder still has open tasks (\(open.prefix(4).joined(separator: ", "))\(open.count > 4 ? " …" : "")). "
+            + "If this session continues that work, run `headroom task adopt \(other)` and keep reporting into it; otherwise ignore this."
+    }
+
+    /// The most recent unfinished run with a plan whose metadata names `cwd`, from the last 12 hours.
+    static func earlierRun(cwd: String, excluding run: String, ctx: TaskContext, now: Date) -> (String, [String])? {
+        var best: (id: String, open: [String], at: Date)?
+        for id in TaskJournal.runs(home: ctx.home, modifiedSince: now.addingTimeInterval(-12 * 3600)) where id != run {
+            guard let data = try? Data(contentsOf: TaskJournal.url(run: id, stream: .journal, home: ctx.home)) else { continue }
+            let events = TaskJournal.decode(data)
+            guard TaskOps.lastPlace(events).cwd == cwd, TaskOps.hasPlan(events), let r = TaskFold.fold(events, now: now).first, !r.state.isTerminal else { continue }
+            let open = TaskEcho.open(r).map(\.id)
+            if !open.isEmpty, best.map({ r.updatedAt > $0.at }) ?? true { best = (id, open, r.updatedAt) }
+        }
+        return best.map { ($0.id, $0.open) }
     }
 }
 
-/// `headroom hooks install|uninstall|status`: edits Claude Code's settings JSON (or Codex's
-/// `hooks.json`, same layout) to run `headroom task hook`. Keeps every other key and hook, backs
-/// the file up beside itself first, and writes atomically.
+/// `headroom hooks install|uninstall|status`: the CLI face of `HookInstaller` and
+/// `AgentInstructions`, which the app's Settings call too.
 enum HooksCommand {
-    struct Target {
-        var url: URL
-        var codex: Bool
-    }
-
-    /// Events and matchers per harness.
-    static func events(codex: Bool) -> [(event: String, matcher: String?)] {
-        if codex {
-            return [("PermissionRequest", nil), ("UserPromptSubmit", nil), ("SubagentStart", nil), ("SubagentStop", nil), ("Stop", nil), ("SessionEnd", nil)]
-        }
-        return [("Notification", HookCommand.inputNotifications.sorted().joined(separator: "|")), ("UserPromptSubmit", nil),
-                ("SubagentStart", nil), ("SubagentStop", nil), ("Stop", nil), ("SessionEnd", nil)]
-    }
-
     static let help = """
-    usage: headroom hooks install|uninstall|status [--settings PATH] [--project] [--codex] [--enforce]
+    usage: headroom hooks install|uninstall|status [--codex] [--enforce] [--instructions] [--settings PATH] [--project]
 
-    install    adds hooks that run `headroom task hook` on Notification, UserPromptSubmit,
-               SubagentStart, SubagentStop, Stop and SessionEnd to ~/.claude/settings.json
-               (--project: ./.claude/settings.json). --enforce makes Stop send the agent back,
-               once, when tasks it declared are still running with no agent on them.
-    --codex    Codex instead: ~/.codex/hooks.json (--project: ./.codex/hooks.json), with
-               PermissionRequest for Notification. Codex asks you to trust new hooks in /hooks.
-    uninstall  removes only the entries that run `headroom task hook`.
-    status     shows what is installed.
+    install         adds hooks that run `headroom task hook` on Notification, UserPromptSubmit,
+                    SubagentStart, SubagentStop, Stop, SessionEnd and SessionStart to
+                    ~/.claude/settings.json ($CLAUDE_CONFIG_DIR; --project: ./.claude/settings.json),
+                    and lets `headroom task …` run without a permission prompt. --enforce makes
+                    Stop send the agent back, once, when tasks it declared are still running with
+                    nothing working on them.
+    --codex         Codex instead: ~/.codex/hooks.json ($CODEX_HOME), with PermissionRequest for
+                    Notification. Codex asks you to trust new hooks in /hooks.
+    --instructions  also adds (or removes) a few lines asking the agent to run `headroom task guide`
+                    to ~/.claude/CLAUDE.md (Codex: ~/.codex/AGENTS.md).
+    uninstall       removes only Headroom's entries.
+    status          shows what is installed and when a hook last ran.
+    Files are backed up beside themselves before the first change and written through symlinks.
     """
 
     static func run(_ args: [String], ctx: TaskContext, executable: String? = nil) -> Int32 {
@@ -126,169 +174,81 @@ enum HooksCommand {
             return HeadroomCLI.Exit.ok.rawValue
         }
         let a: Args
-        do { a = try Args(args, valued: ["--settings"], flags: ["--project", "--codex", "--enforce"]) } catch {
+        do { a = try Args(args, valued: ["--settings"], flags: ["--project", "--codex", "--enforce", "--instructions", "--help", "-h"]) } catch {
             ctx.error("headroom hooks: \(error.message)")
             return HeadroomCLI.Exit.usage.rawValue
+        }
+        if a.has("--help") || a.has("-h") {
+            ctx.output(help)
+            return HeadroomCLI.Exit.ok.rawValue
         }
         guard a.positional.count == 1, let verb = a.positional.first, ["install", "uninstall", "status"].contains(verb) else {
             ctx.output(help)
             return HeadroomCLI.Exit.usage.rawValue
         }
-        let home = URL(fileURLWithPath: ctx.environment["HOME"] ?? NSHomeDirectory(), isDirectory: true)
-        let cwd = URL(fileURLWithPath: ctx.environment["PWD"] ?? FileManager.default.currentDirectoryPath, isDirectory: true)
-        let codex = a.has("--codex")
+        let env = ctx.environment
+        let userHome = URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory(), isDirectory: true)
+        let cwd = URL(fileURLWithPath: env["PWD"] ?? FileManager.default.currentDirectoryPath, isDirectory: true)
+        let harness: AgentHarness = a.has("--codex") ? .codex : .claudeCode
         let url = a["--settings"].map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }
-            ?? (a.has("--project") ? cwd : home).appendingPathComponent(codex ? ".codex/hooks.json" : ".claude/settings.json")
-        let command = hookCommand(binary: executable ?? stableBinary(home: home), enforce: a.has("--enforce"), codex: codex)
-
-        var root: [String: Any] = [:]
-        let original = FileManager.default.contents(atPath: url.path)
-        if let original, !original.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x09 || $0 == 0x0D }) {
-            guard let obj = (try? JSONSerialization.jsonObject(with: original)) as? [String: Any] else {
-                ctx.error("headroom hooks: \(url.path) isn't a JSON object; left it alone")
-                return HeadroomCLI.Exit.failure.rawValue
-            }
-            root = obj
-        }
+            ?? HookInstaller.settingsURL(harness, userHome: userHome, environment: env, project: a.has("--project") ? cwd : nil)
+        let flag = harness == .codex ? " --codex" : ""
         switch verb {
         case "status":
-            ctx.output(status(root, url: url, codex: codex))
+            ctx.output(status(harness, settings: url, userHome: userHome, ctx: ctx, flag: flag))
             return HeadroomCLI.Exit.ok.rawValue
         case "install":
-            var hooks = removingOurs(root["hooks"] as? [String: Any] ?? [:])
-            // Appending to something that isn't a list would replace what the user wrote.
-            if let odd = events(codex: codex).map(\.0).first(where: { hooks[$0] != nil && !(hooks[$0] is [Any]) }) {
-                ctx.error("headroom hooks: hooks.\(odd) in \(url.path) isn't a list; left the file alone")
+            let binary = executable ?? HookInstaller.defaultBinary(userHome: userHome) ?? ownPath()
+            do {
+                ctx.output(try HookInstaller.install(harness, enforce: a.has("--enforce"), binary: binary, settings: url))
+                if a.has("--instructions") { ctx.output(try AgentInstructions.add(harness, userHome: userHome, environment: env)) }
+            } catch {
+                ctx.error("headroom hooks: \(error.message)")
                 return HeadroomCLI.Exit.failure.rawValue
             }
-            for (event, matcher) in events(codex: codex) {
-                var group: [String: Any] = ["hooks": [["type": "command", "command": command, "timeout": 10] as [String: Any]]]
-                if let matcher { group["matcher"] = matcher }
-                hooks[event] = (hooks[event] as? [Any] ?? []) + [group]
-            }
-            root["hooks"] = hooks
+            ctx.output(ctx.style.dim("  runs: \(HookInstaller.hookCommand(binary: binary, enforce: a.has("--enforce"), harness: harness))"))
+            if harness == .codex { ctx.output(ctx.style.dim("  Codex runs new hooks only once you trust them: open /hooks in Codex.")) }
         default:
-            guard let hooks = root["hooks"] as? [String: Any] else {
-                ctx.output("No Headroom hooks in \(url.path).")
-                return HeadroomCLI.Exit.ok.rawValue
+            do {
+                ctx.output(try HookInstaller.uninstall(harness, settings: url))
+                if a.has("--instructions") { ctx.output(try AgentInstructions.remove(harness, userHome: userHome, environment: env)) }
+            } catch {
+                ctx.error("headroom hooks: \(error.message)")
+                return HeadroomCLI.Exit.failure.rawValue
             }
-            let left = removingOurs(hooks)
-            root["hooks"] = left.isEmpty && !hooks.isEmpty ? nil : left
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else {
-            ctx.error("headroom hooks: could not encode the settings")
-            return HeadroomCLI.Exit.failure.rawValue
-        }
-        let before = original.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        if let before, NSDictionary(dictionary: before).isEqual(to: root) {
-            ctx.output(verb == "install" ? "Headroom hooks already installed in \(url.path)." : "No Headroom hooks in \(url.path).")
-            return HeadroomCLI.Exit.ok.rawValue
-        }
-        // The backup is the file as it was before Headroom touched it: a later reinstall or
-        // uninstall must not replace it with a copy that already has our hooks.
-        let ours = (before?["hooks"] as? [String: Any]).map { !NSDictionary(dictionary: $0).isEqual(to: removingOurs($0)) } ?? false
-        let backup = ours ? nil : original
-        do {
-            try write(data + Data("\n".utf8), to: url, backup: backup)
-        } catch {
-            ctx.error("headroom hooks: could not write \(url.path): \(error.localizedDescription)")
-            return HeadroomCLI.Exit.failure.rawValue
-        }
-        if verb == "install" {
-            ctx.output("Installed Headroom hooks in \(url.path)\(backup == nil ? "" : " (backup: \(url.lastPathComponent).headroom-backup)").")
-            ctx.output(ctx.style.dim("  runs: \(command)"))
-            if codex { ctx.output(ctx.style.dim("  Codex runs new hooks only once you trust them: open /hooks in Codex.")) }
-        } else {
-            ctx.output("Removed Headroom hooks from \(url.path).")
         }
         return HeadroomCLI.Exit.ok.rawValue
     }
 
-    /// `~/.local/bin/headroom` or `/opt/homebrew/bin/headroom` when present (they survive app
-    /// updates), else wherever this binary really lives.
-    static func stableBinary(home: URL) -> String {
-        for p in [home.appendingPathComponent(".local/bin/headroom").path, "/opt/homebrew/bin/headroom"] where FileManager.default.isExecutableFile(atPath: p) {
-            return p
-        }
+    /// Wherever this binary really lives.
+    static func ownPath() -> String {
         let me = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments.first ?? "headroom")
         return me.resolvingSymlinksInPath().path
     }
 
-    static func hookCommand(binary: String, enforce: Bool, codex: Bool) -> String {
-        let safe = binary.allSatisfy { $0.isLetter || $0.isNumber || "/._-+@".contains($0) }
-        let quoted = safe ? binary : "'" + binary.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        return quoted + " task hook" + (enforce ? " --enforce" : "") + (codex ? " --harness codex" : "")
-    }
-
-    /// Whether a hook command runs `headroom task hook`, from any path.
-    static func isOurs(_ command: String) -> Bool {
-        let c = command.trimmingCharacters(in: .whitespaces)
-        var bin: Substring, rest: Substring
-        if let q = c.first, q == "'" || q == "\"", let close = c.dropFirst().firstIndex(of: q) {
-            bin = c[c.index(after: c.startIndex)..<close]
-            rest = c[c.index(after: close)...]
+    static func status(_ harness: AgentHarness, settings url: URL, userHome: URL, ctx: TaskContext, flag: String) -> String {
+        let s = HookInstaller.status(harness, settings: url, store: ctx.home)
+        var lines = ["\(harness.displayName) hooks in \(url.path):"]
+        guard let commands = HookInstaller.installedCommands(harness, settings: url) else {
+            return (lines + ["  The file isn't JSON Headroom can read; fix it, then run `headroom hooks install\(flag)`."]).joined(separator: "\n")
+        }
+        for (event, command) in commands {
+            lines.append("  " + (command.map { "✓ \(event.padding(toLength: 18, withPad: " ", startingAt: 0)) \($0)" } ?? "✗ \(event.padding(toLength: 18, withPad: " ", startingAt: 0)) not installed"))
+        }
+        let beat = s.lastEventAt.map { "last hook event \(TimeFormat.compact(max(0, ctx.now().timeIntervalSince($0)))) ago" } ?? "no hook has run yet"
+        if s.installed {
+            lines.append("All \(s.totalEvents) installed · \(beat).")
+        } else if s.installedEvents == 0 {
+            lines.append("Not installed: run `headroom hooks install\(flag)`.")
         } else {
-            let sp = c.firstIndex(of: " ") ?? c.endIndex
-            bin = c[..<sp]
-            rest = c[sp...]
+            lines.append("\(s.installedEvents) of \(s.totalEvents) installed: run `headroom hooks install\(flag)` again · \(beat).")
         }
-        let words = rest.split(separator: " ")
-        return (bin == "headroom" || bin.hasSuffix("/headroom")) && words.count >= 2 && words[0] == "task" && words[1] == "hook"
-    }
-
-    /// The hooks object without our handlers, dropping groups and events left empty by that.
-    static func removingOurs(_ hooks: [String: Any]) -> [String: Any] {
-        var out = hooks
-        for (event, value) in hooks {
-            guard let groups = value as? [Any] else { continue }
-            var kept: [Any] = []
-            for g in groups {
-                guard var group = g as? [String: Any], let handlers = group["hooks"] as? [Any] else { kept.append(g); continue }
-                let left = handlers.filter { h in !(((h as? [String: Any])?["command"] as? String).map(isOurs) ?? false) }
-                if left.count == handlers.count { kept.append(g); continue }
-                if left.isEmpty { continue }
-                group["hooks"] = left
-                kept.append(group)
-            }
-            if kept.isEmpty && !groups.isEmpty { out[event] = nil } else { out[event] = kept }
+        if s.enforcing { lines.append("Stop sends unfinished tasks back (--enforce).") }
+        if harness == .claudeCode, s.installedEvents > 0 {
+            lines.append(s.allowsReports ? "`headroom task …` runs without a permission prompt." : "`headroom task …` may ask for permission: run `headroom hooks install` again to allow it.")
         }
-        return out
-    }
-
-    static func status(_ root: [String: Any], url: URL, codex: Bool) -> String {
-        let hooks = root["hooks"] as? [String: Any] ?? [:]
-        var lines = ["Headroom hooks in \(url.path):"]
-        var installed = 0
-        for (event, _) in events(codex: codex) {
-            let commands = (hooks[event] as? [Any] ?? []).compactMap { $0 as? [String: Any] }.flatMap { ($0["hooks"] as? [Any] ?? []).compactMap { ($0 as? [String: Any])?["command"] as? String } }
-            if let ours = commands.first(where: isOurs) {
-                installed += 1
-                lines.append("  ✓ \(event.padding(toLength: 18, withPad: " ", startingAt: 0)) \(ours)")
-            } else {
-                lines.append("  ✗ \(event.padding(toLength: 18, withPad: " ", startingAt: 0)) not installed")
-            }
-        }
-        let total = events(codex: codex).count
-        lines.append(installed == total ? "All \(total) installed." : installed == 0 ? "Not installed: run `headroom hooks install\(codex ? " --codex" : "")`." : "\(installed) of \(total) installed: run `headroom hooks install\(codex ? " --codex" : "")` again.")
+        let i = AgentInstructions.status(harness, userHome: userHome, environment: ctx.environment)
+        lines.append(i.present ? "Agent instructions: in \(i.path)." : "Agent instructions: not in \(i.path); `headroom hooks install\(flag) --instructions` adds them.")
         return lines.joined(separator: "\n")
-    }
-
-    /// Backup first, then a temporary file renamed over the original, keeping its permissions.
-    static func write(_ data: Data, to url: URL, backup: Data?) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let mode = (try? fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) ?? 0o644
-        if let backup {
-            let b = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".headroom-backup")
-            try backup.write(to: b, options: .atomic)
-            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: b.path)
-        }
-        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).headroom-\(getpid())")
-        try data.write(to: tmp)
-        try fm.setAttributes([.posixPermissions: mode], ofItemAtPath: tmp.path)
-        guard rename(tmp.path, url.path) == 0 else {
-            try? fm.removeItem(at: tmp)
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
     }
 }

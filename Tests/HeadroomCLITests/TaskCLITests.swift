@@ -54,7 +54,12 @@ final class Lines: @unchecked Sendable {
             env.removeValue(forKey: ["a": "HEADROOM_RUN", "b": "CLAUDE_CODE_SESSION_ID", "c": "CODEX_THREAD_ID", "d": "T3CODE_THREAD_ID"][expected]!)
         }
         #expect(h.run(["task", "start", "x"], env: [:]).0 == 64)
-        // The id's RUN: prefix beats the environment, and --run beats both.
+        // The id's RUN: prefix beats the environment, and --run beats both. The prefix must name
+        // a run that exists (or the current one): `fix:auth` is a typo for `fix/auth`, not a new run.
+        #expect(h.run(["task", "start", "pre:api/x"], env: ["HEADROOM_RUN": "a"]).0 == 64)
+        #expect(h.events("pre").isEmpty)
+        #expect(h.run(["task", "start", "seed", "--run", "pre"]).0 == 0)
+        #expect(h.run(["task", "start", "a:own"], env: ["HEADROOM_RUN": "a"]).0 == 0)
         #expect(h.run(["task", "start", "pre:api/x"], env: ["HEADROOM_RUN": "a"]).0 == 0)
         #expect(h.events("pre").contains { $0.op == .start(task: "api/x") })
         #expect(h.run(["task", "start", "pre:api/y", "--run", "flag"], env: ["HEADROOM_RUN": "a"]).0 == 0)
@@ -68,7 +73,9 @@ final class Lines: @unchecked Sendable {
     @Test func everySingleTaskCommand() throws {
         let h = Home()
         let (code, tag) = h.run(["task", "add", "api/tests", "--title", "API tests", "--effort", "l", "--importance", "critical", "--steps", "5"])
-        #expect(code == 0 && tag == "[hr:r1:api/tests]")
+        #expect(code == 0 && tag.hasPrefix("[hr:r1:api/tests] added · run 0%"))
+        #expect(h.run(["task", "add", "q", "--title", "Q", "--quiet"]).1 == "[hr:r1:q]")
+        #expect(h.run(["task", "cancel", "q", "--quiet"]).1.isEmpty)
         #expect(h.run(["task", "add", "docs", "--title", "Docs", "--effort", "1.5", "--importance", "optional"]).0 == 0)
         #expect(h.run(["task", "add", "a", "--title", "A"]).0 == 0)
         #expect(h.run(["task", "add", "b", "--title", "B"]).0 == 0)
@@ -101,13 +108,27 @@ final class Lines: @unchecked Sendable {
         for args in [["task", "add", "x"], ["task", "add", "x y", "--title", "T"], ["task", "add", "x", "--title", "T", "--effort", "huge"],
                      ["task", "add", "x", "--title", "T", "--importance", "vital"], ["task", "add", "x", "--title", "T", "--steps", "0"],
                      ["task", "progress", "x", "--step", "a/b"], ["task", "progress", "x", "--fraction", "1.5"], ["task", "wait", "x"],
-                     ["task", "wait", "x", "--for", "coffee"], ["task", "fail", "x"], ["task", "start"], ["task", "start", "a", "b"],
-                     ["task", "done", "x", "--bogus"], ["task", "frobnicate"], ["task", "note", "--title"]] {
+                     ["task", "wait", "x", "--for", "coffee"], ["task", "fail", "x"], ["task", "start"], ["task", "progress", "a", "b"],
+                     ["task", "done", "x", "--bogus"], ["task", "frobnicate"], ["task", "note", "--title"],
+                     // Flags meant for another action are refused, not dropped.
+                     ["task", "start", "x", "--note", "n"], ["task", "done", "x", "--reason", "r"], ["task", "progress", "x", "--evidence", "e"],
+                     ["task", "start", "x", "--force"], ["task", "done", "x", "--quiet=yes"],
+                     ["task", "progress", "x", "--step", "5/4"], ["task", "progress", "x", "--step", "3"], ["task", "add", "x", "--title", "\n\t "],
+                     ["task", "status", "x"], ["task", "plan", "x"], ["task", "adopt"]] {
             #expect(h.run(args).0 == 64, "\(args)")
         }
         #expect(h.events().isEmpty)
         #expect(h.run(["task", "--help"]).1.contains("headroom task plan"))
+        // Each action has its own help.
+        for action in TaskOps.actions + ["plan", "status", "adopt"] {
+            let (code, out) = h.run(["task", action, "--help"])
+            #expect(code == 0 && out.contains("usage: headroom task \(action)"), "\(action)")
+        }
+        #expect(h.run(["task", "done", "-h"]).1.contains("--force"))
         #expect(h.run(["task", "add", "x", "--title", "--help"]).0 == 0) // free text isn't a help flag
+        // --flag=value works like --flag value.
+        #expect(h.run(["task", "progress", "x", "--note=half way", "--fraction=0.5"]).0 == 0)
+        #expect(h.fold()?.node("x").note == "half way")
     }
 
     @Test func aProjectGivenAsAPathIsStoredAsItsFolderName() throws {
@@ -140,11 +161,18 @@ final class Lines: @unchecked Sendable {
         #expect(h.run(["task", "plan", "--file", "/nonexistent/plan.json"]).0 == 64)
     }
 
-    @Test func guideNamesTheRun() {
+    @Test func guideNamesTheRun() throws {
         let h = Home()
         let (code, out) = h.run(["task", "guide"])
         #expect(code == 0 && out.contains("headroom task plan") && out.contains("[hr:r1:api/tests]") && out.contains("r1 (from your environment"))
         #expect(h.run(["task", "guide"], env: [:]).1.contains("[hr:RUN:api/tests]"))
+        // It opens by asking which you are, before anything about planning.
+        let which = try #require(out.range(of: "which are you"))
+        let plan = try #require(out.range(of: "headroom task plan"))
+        #expect(which.lowerBound < plan.lowerBound)
+        for phrase in ["Don't declare a plan", "under 3 steps", "derived", "close the task yourself", "skip", "cancel", "never started", "headroom task status"] {
+            #expect(out.contains(phrase), "\(phrase)")
+        }
     }
 }
 
@@ -257,7 +285,7 @@ final class Lines: @unchecked Sendable {
         let h = Home()
         #expect(hook(h, #"{"session_id": "abc123", "transcript_path": "/x.jsonl", "cwd": "/Users/me/shop", "hook_event_name": "SubagentStart", "agent_id": "agent-def456", "agent_type": "Explore"}"#) == (0, ""))
         var events = h.events("abc123")
-        #expect(events.first?.op == .meta(title: nil, project: "shop", harness: "claude-code"))
+        #expect(events.first?.op == .meta(title: nil, project: "shop", harness: "claude-code", host: nil, cwd: "/Users/me/shop"))
         #expect(events.last?.op == .attempt(.init(key: "agent:def456", kind: .agent, agentType: "Explore")))
         #expect(events.allSatisfy { $0.source == .hook })
         #expect(hook(h, #"{"session_id": "abc123", "hook_event_name": "SubagentStop", "stop_hook_active": false, "agent_id": "def456", "agent_type": "Explore", "agent_transcript_path": "/a/subagents/agent-def456.jsonl", "last_assistant_message": "done", "background_tasks": []}"#).0 == 0)
@@ -325,11 +353,24 @@ final class Lines: @unchecked Sendable {
         #expect(h.events("s1").last?.op == .stop(blocked: true))
         // Never twice in a row, whatever the harness says.
         #expect(hook(h, stop, ["--enforce"]) == (0, ""))
-        // After the agent acts it may block again, but not while the harness's own guard is set.
-        h.run(["task", "progress", "api", "--note", "still going"], env: env)
+        // The message offers an answer for work still running in the background.
+        #expect(obj["reason"]?.contains("running in the background") == true)
+        // Reporting on the task answers the block for this turn; the harness's own guard holds too.
+        h.now = h.now.addingTimeInterval(60)
+        h.run(["task", "progress", "api", "--note", "running in the background"], env: env)
         #expect(hook(h, #"{"session_id": "s1", "hook_event_name": "Stop", "stop_hook_active": true}"#, ["--enforce"]) == (0, ""))
-        h.run(["task", "progress", "api", "--note", "again"], env: env)
+        #expect(hook(h, stop, ["--enforce"]) == (0, ""))
+        // A new turn that ends with it still running: sent back again.
+        h.now = h.now.addingTimeInterval(60)
+        _ = hook(h, #"{"session_id": "s1", "hook_event_name": "UserPromptSubmit"}"#)
+        h.now = h.now.addingTimeInterval(60)
         #expect(hook(h, stop, ["--enforce"]).1.contains("block"))
+        // Not while the harness says work is still running in the background.
+        h.now = h.now.addingTimeInterval(60)
+        _ = hook(h, #"{"session_id": "s1", "hook_event_name": "UserPromptSubmit"}"#)
+        h.now = h.now.addingTimeInterval(60)
+        #expect(hook(h, #"{"session_id": "s1", "hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": [{"id": "b1", "type": "agent"}]}"#, ["--enforce"]) == (0, ""))
+        #expect(h.events("s1").last?.op == .stop(blocked: false))
         // A task with an agent on it is fine.
         h.run(["task", "done", "api"], env: env)
         h.run(["task", "start", "docs"], env: env)
@@ -366,9 +407,13 @@ final class Lines: @unchecked Sendable {
         #expect(code == 0 && out.contains("Installed Headroom hooks"))
         #expect(String(decoding: try Data(contentsOf: url.deletingLastPathComponent().appendingPathComponent("settings.json.headroom-backup")), as: UTF8.self) == original)
         let root = try json(url)
-        #expect(root["model"] as? String == "opus" && (root["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls)"])
+        #expect(root["model"] as? String == "opus" && (root["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls)", "Bash(headroom task:*)"])
         let hk = try #require(root["hooks"] as? [String: Any])
-        #expect(Set(hk.keys) == ["Stop", "PreToolUse", "Notification", "UserPromptSubmit", "SubagentStart", "SubagentStop", "SessionEnd"])
+        #expect(Set(hk.keys) == ["Stop", "PreToolUse", "Notification", "UserPromptSubmit", "SubagentStart", "SubagentStop", "SessionEnd", "SessionStart"])
+        #expect(((hk["SessionStart"] as? [[String: Any]])?.first?["matcher"] as? String) == "resume|clear|compact")
+        // The user's keys keep their order and the file its two-space indentation.
+        let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+        #expect(text.hasPrefix("{\n  \"model\": \"opus\",\n  \"permissions\": {"))
         let stop = try #require(hk["Stop"] as? [[String: Any]])
         #expect(stop.count == 2 && ((stop[0]["hooks"] as? [[String: Any]])?.first?["command"] as? String) == "say done")
         #expect(((stop[1]["hooks"] as? [[String: Any]])?.first?["command"] as? String) == "/Users/me/.local/bin/headroom task hook")
@@ -384,7 +429,8 @@ final class Lines: @unchecked Sendable {
         let stops = try #require(enforced["Stop"] as? [[String: Any]])
         #expect(stops.count == 2 && ((stops[1]["hooks"] as? [[String: Any]])?.first?["command"] as? String) == "/Users/me/.local/bin/headroom task hook --enforce")
         let (_, status) = hooks(h, ["status", "--settings", url.path])
-        #expect(status.contains("All 6 installed.") && status.contains("✓ SubagentStart"))
+        #expect(status.contains("All 7 installed") && status.contains("✓ SubagentStart") && status.contains("no hook has run yet"))
+        #expect(status.contains("--enforce") && status.contains("without a permission prompt"))
         // Uninstall leaves the user's hooks and keys exactly.
         #expect(hooks(h, ["uninstall", "--settings", url.path]).1.contains("Removed"))
         let after = try json(url)
@@ -420,9 +466,10 @@ final class Lines: @unchecked Sendable {
         #expect(hooks(h, ["install", "--codex"]).0 == 0)
         let codex = try json(h.url.appendingPathComponent(".codex/hooks.json"))
         let ck = try #require(codex["hooks"] as? [String: Any])
-        #expect(Set(ck.keys) == ["PermissionRequest", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "SessionEnd"])
+        #expect(Set(ck.keys) == ["PermissionRequest", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "SessionEnd", "SessionStart"])
         #expect(((ck["Stop"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String == "/Users/me/.local/bin/headroom task hook --harness codex")
-        #expect(hooks(h, ["status", "--codex"]).1.contains("All 6 installed."))
+        #expect(codex["permissions"] == nil)
+        #expect(hooks(h, ["status", "--codex"]).1.contains("All 7 installed"))
         // Default Claude path under HOME, and --project under PWD.
         #expect(hooks(h, ["install"]).0 == 0)
         #expect(FileManager.default.fileExists(atPath: h.url.appendingPathComponent(".claude/settings.json").path))
@@ -436,12 +483,12 @@ final class Lines: @unchecked Sendable {
     }
 
     @Test func recognisesOnlyOurCommands() {
-        #expect(HooksCommand.isOurs("/opt/homebrew/bin/headroom task hook"))
-        #expect(HooksCommand.isOurs("headroom task hook --enforce"))
-        #expect(HooksCommand.isOurs("'/a b/headroom' task hook"))
-        #expect(!HooksCommand.isOurs("headroom tasks"))
-        #expect(!HooksCommand.isOurs("/x/not-headroom task hook"))
-        #expect(!HooksCommand.isOurs("echo headroom task hook"))
+        #expect(HookInstaller.isOurs("/opt/homebrew/bin/headroom task hook"))
+        #expect(HookInstaller.isOurs("headroom task hook --enforce"))
+        #expect(HookInstaller.isOurs("'/a b/headroom' task hook"))
+        #expect(!HookInstaller.isOurs("headroom tasks"))
+        #expect(!HookInstaller.isOurs("/x/not-headroom task hook"))
+        #expect(!HookInstaller.isOurs("echo headroom task hook"))
     }
 
     @Test func dispatchThroughTheCLI() throws {
@@ -449,7 +496,7 @@ final class Lines: @unchecked Sendable {
         let url = try settings(h, "{}")
         let (code, out) = h.run(["hooks", "install", "--settings", url.path], env: ["HOME": h.url.path])
         #expect(code == 0 && out.contains("task hook"))
-        #expect(h.run(["hooks", "status", "--settings", url.path]).1.contains("All 6 installed."))
+        #expect(h.run(["hooks", "status", "--settings", url.path]).1.contains("All 7 installed"))
     }
 }
 
@@ -488,7 +535,7 @@ final class Lines: @unchecked Sendable {
         #expect((initResult["capabilities"] as? [String: Any])?["tools"] != nil)
         #expect(replies[1]["id"] as? String == "p" && (replies[1]["result"] as? [String: Any])?.isEmpty == true)
         let tools = try #require((replies[2]["result"] as? [String: Any])?["tools"] as? [[String: Any]])
-        #expect(tools.compactMap { $0["name"] as? String } == ["get_headroom", "get_tasks", "plan_tasks", "update_task"])
+        #expect(tools.compactMap { $0["name"] as? String } == ["get_headroom", "get_tasks", "task_status", "task_guide", "plan_tasks", "update_task"])
         #expect(tools.allSatisfy { ($0["inputSchema"] as? [String: Any])?["type"] as? String == "object" })
         #expect((replies[3]["error"] as? [String: Any])?["code"] as? Int == -32700)
         #expect((replies[4]["error"] as? [String: Any])?["code"] as? Int == -32601)
@@ -512,17 +559,35 @@ final class Lines: @unchecked Sendable {
             call(7, "update_task", ["id": "docs", "action": "wait"]),
             call(8, "get_tasks", [:]),
             call(9, "update_task", ["id": "other:x", "action": "start"]),
+            call(10, "update_task", ["id": "api/tset", "action": "start"]),
+            call(11, "update_task", ["id": "new", "action": "add"]),
+            call(12, "update_task", ["id": "api/tests", "action": "start", "note": "dropped?"]),
+            call(13, "update_task", ["ids": ["api/tests", "extra"], "action": "done", "evidence": "all green"]),
+            call(14, "task_status", [:]),
+            call(15, "task_guide", [:]),
+            call(16, "update_task", ["id": "api", "action": "skip"]),
         ])
         #expect(!isError(replies[0]) && text(replies[0]).contains("\"schema\""))
         #expect(text(replies[1]).contains("[hr:m1:api/tests]") && !isError(replies[1]))
-        #expect(text(replies[2]) == "ok" && text(replies[3]) == "ok")
-        #expect(text(replies[4]) == "[hr:m1:extra]")
+        // Every write answers with the run's percent and what is open.
+        #expect(text(replies[2]).hasPrefix("api/tests 1/3 · run ") && text(replies[2]).contains("open: api/tests"))
+        #expect(text(replies[3]).hasPrefix("✓ docs done · run "))
+        #expect(text(replies[4]).hasPrefix("[hr:m1:extra] added · run "))
         #expect(isError(replies[5]) && isError(replies[6]))
         let feed = try TasksFile.decoder().decode(TasksFeed.self, from: Data(text(replies[7]).utf8))
         let run = try #require(feed.run("m1"))
         #expect(run.title == "Via MCP")
         #expect(run.node("api/tests").steps == TaskSteps(done: 1, total: 3) && run.node("docs").state == .done && run.node("extra").effort == 2)
-        #expect(h.events("other").contains { $0.op == .start(task: "x") })
+        // The same checks as the command line: no run from a typo, no task from a typo, no
+        // untitled new task, no option the action doesn't use.
+        #expect(isError(replies[8]) && h.events("other").isEmpty)
+        #expect(isError(replies[9]) && text(replies[9]).contains("Did you mean api/tests?"))
+        #expect(isError(replies[10]) && text(replies[10]).contains("--title"))
+        #expect(isError(replies[11]) && text(replies[11]).contains("start doesn't use note"))
+        #expect(!isError(replies[12]) && text(replies[12]).hasPrefix("✓ api/tests, extra done"))
+        #expect(text(replies[13]).hasPrefix("run m1 \"Via MCP\"") && text(replies[13]).contains("\napi ") && text(replies[13]).contains("\nextra "))
+        #expect(text(replies[14]).contains("which are you"))
+        #expect(!isError(replies[15]) && text(replies[15]).hasPrefix("⊘ api skipped")) // its children are all closed
         // No run id anywhere.
         let none = session(h, [call(1, "update_task", ["id": "x", "action": "start"])], env: [:])
         #expect(isError(none[0]))

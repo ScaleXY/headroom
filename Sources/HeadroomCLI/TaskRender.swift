@@ -13,7 +13,7 @@ enum TaskRender {
         for (i, r) in runs.enumerated() {
             if i > 0 { lines.append("") }
             lines.append(header(r, style: style, now: now))
-            let width = min(36, (r.nodes.map { $0.depth * 2 + $0.title.count }.max() ?? 0))
+            let width = min(36, (r.nodes.map { $0.depth * 2 + TaskText.display($0.title, limit: TaskText.titleLimit).count }.max() ?? 0))
             for n in r.nodes { lines.append(line(n, style: style, now: now, width: width, declared: r.hasDeclaredTasks)) }
             if let earlier = r.finishedEarlier, earlier > 0 { lines.append("  " + style.dim("+ \(earlier) finished earlier")) }
         }
@@ -36,16 +36,16 @@ enum TaskRender {
         }
         if r.tokens > 0 { parts.append("\(NumberFormat.tokens(r.tokens)) tokens") }
         // A bare session id says nothing: the project, then a short id.
-        let name = r.agentTitle ?? r.project ?? String(r.id.prefix(8))
+        let name = TaskText.display(r.agentTitle ?? r.project ?? String(r.id.prefix(8)), limit: TaskText.titleLimit)
         var head = "\(style.paint(g, hex)) \(style.bold(name))  " + (observed ? "" : "\(bar(r.progress, width: 20, style: style))  ") + parts.joined(separator: " · ")
         var detail = [stateWord(r)]
         if r.stale { detail.append("no activity for \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt)))") }
         detail.append("updated \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt))) ago")
         if r.scopeChanges > 0 { detail.append("scope +\(r.scopeChanges)") }
-        if let p = r.project { detail.append(p) }
-        if let h = r.harness { detail.append(h) }
+        if let p = r.project { detail.append(TaskText.display(p, limit: 60)) }
+        if let h = r.harness { detail.append(TaskText.display(h, limit: 40)) }
         head += "\n  " + style.dim(detail.joined(separator: " · "))
-        if let w = r.warning { head += "\n  " + style.paint("⚠ " + w, Style.amber) }
+        if let w = r.warning { head += "\n  " + style.paint("⚠ " + TaskText.display(w), Style.amber) }
         return head
     }
 
@@ -53,7 +53,8 @@ enum TaskRender {
         let (g, hex) = glyph(n.state, reason: n.waitReason)
         let indent = String(repeating: "  ", count: n.depth + 1)
         let quiet = !n.counted || n.state == .skipped || n.state == .cancelled
-        let padded = n.title.count + n.depth * 2 >= width ? n.title : n.title.padding(toLength: width - n.depth * 2, withPad: " ", startingAt: 0)
+        let title = TaskText.display(n.title, limit: TaskText.titleLimit)
+        let padded = title.count + n.depth * 2 >= width ? title : title.padding(toLength: width - n.depth * 2, withPad: " ", startingAt: 0)
         var out = indent + style.paint(g, hex) + " " + (quiet ? style.dim(padded) : padded)
         out += "  " + bar(n.progress, width: 10, style: style) + " " + percent(n.progress, style: style).leftPad(4)
         var detail: [String] = []
@@ -62,9 +63,9 @@ enum TaskRender {
         switch n.state {
         case .waiting:
             detail.append(style.paint(n.waitReason == .input ? "needs input" : "waiting on \(n.waitReason?.rawValue ?? "dependency")", Style.amber))
-            if let w = n.waitNote { detail.append(w) }
+            if let w = n.waitNote { detail.append(TaskText.display(w)) }
         case .failed:
-            if let f = n.failure { detail.append(style.paint(f, Style.rose)) }
+            if let f = n.failure { detail.append(style.paint(TaskText.display(f), Style.rose)) }
         case .parked:
             detail.append("parked")
         default:
@@ -76,7 +77,7 @@ enum TaskRender {
         if n.attempts.retries > 0 { detail.append("retried \(n.attempts.retries)×") }
         if n.attempts.active > 1 { detail.append("\(n.attempts.active) agents") }
         if n.tokens > 0 { detail.append(NumberFormat.tokens(n.tokens)) }
-        if let note = n.note, n.state != .waiting, n.state != .failed { detail.append(note) }
+        if let note = n.note, n.state != .waiting, n.state != .failed { detail.append(TaskText.display(note)) }
         if !detail.isEmpty { out += "  " + style.dim("· ") + detail.joined(separator: style.dim(" · ")) }
         return out
     }
@@ -131,7 +132,7 @@ enum TaskRender {
 
     /// One line for `wait --run`: title, state, percent.
     static func summary(_ r: TaskRun, style: Style) -> String {
-        "\(r.title) · \(stateWord(r)) · \(Int((r.progress.done * 100).rounded(.down)))%"
+        "\(TaskText.display(r.title, limit: TaskText.titleLimit)) · \(stateWord(r)) · \(Int((r.progress.done * 100).rounded(.down)))%"
     }
 
     /// The status line's run segment: percent done, running count, and a marker when it needs you.

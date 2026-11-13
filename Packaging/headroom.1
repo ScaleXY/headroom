@@ -37,17 +37,22 @@ headroom \- weekly Claude and Codex allowance left, against the time left until 
 .RB [ \-\-watch ]
 .br
 .B headroom task
-.IR plan | add | start | progress | wait | done | fail | skip | cancel | guide | hook
-.RI [ id ]
+.IR plan | add | start | progress | wait | done | fail | skip | cancel
+.RI [ id ...]
+.RI [ options ]
+.br
+.B headroom task
+.IR status | guide | adopt | hook
 .RI [ options ]
 .br
 .B headroom hooks
 .IR install | uninstall | status
+.RB [ \-\-codex ]
+.RB [ \-\-enforce ]
+.RB [ \-\-instructions ]
 .RB [ \-\-settings
 .IR path ]
 .RB [ \-\-project ]
-.RB [ \-\-codex ]
-.RB [ \-\-enforce ]
 .br
 .B headroom mcp
 .SH DESCRIPTION
@@ -65,7 +70,21 @@ It also tracks long agent runs: an agent declares a tree of tasks with
 .BR "headroom task" ,
 hooks and the app record what the harness and its subagents do, and
 .B headroom tasks
-shows each run's state, progress and forecast.
+shows each run's state, progress and forecast. Each report an agent makes prints one line
+back (at most three): what changed, the run's percent, what is still open, a task that has
+gone 20 minutes without a report, and the room left in the 5-hour window when the app knows
+it.
+.B \-\-quiet
+prints nothing (for
+.BR add ,
+just the tag). Agent text is stripped of control characters and capped: titles at 120
+characters, notes, evidence and reasons at 400. Flags take
+.B \-\-flag value
+or
+.BR \-\-flag=value ,
+and
+.B "headroom task \fIaction\fP \-\-help"
+explains one action.
 .SH COMMANDS
 .TP
 .B headroom
@@ -146,7 +165,16 @@ Declares many tasks from a JSON tree on standard input or
 .B \-\-file
 and prints each task's tag,
 .BI [hr: run : path ] ,
-for the agent spawned for it. Child ids are relative to their parent:
+for the agent spawned for it. Child ids are relative to their parent and must be unique;
+unknown keys are reported and ignored. It refuses to wait on a terminal or on a pipe
+nobody writes to. Task keys are
+.BR id ,
+.BR title ,
+.BR effort ,
+.BR importance ,
+.B steps
+and
+.BR children :
 .RS
 .nf
 {"title": "Refactor auth", "tasks": [{"id": "api", "title": "API",
@@ -156,7 +184,7 @@ for the agent spawned for it. Child ids are relative to their parent:
 .RE
 .TP
 .B task add \fIid\fP \-\-title \fItext\fP
-Declares or updates one task.
+Declares a task, or updates one (a known task needs no title).
 .B \-\-effort
 is xs, s, m, l, xl (1, 2, 4, 8, 16) or a number, compared only among siblings;
 .B \-\-importance
@@ -167,18 +195,26 @@ is the number of steps. Ids are paths:
 is a child of
 .IR api .
 .TP
-.B task start|done|fail|skip|cancel \fIid\fP
-Marks a task.
+.B task start|done|fail|skip|cancel \fIid\fP ...
+Marks one or more tasks.
 .B done
 takes
 .BR \-\-evidence ,
 .B fail
 needs
-.BR \-\-reason .
+.BR \-\-reason ,
+.B skip
+and
+.B cancel
+take one. A task with open tasks under it is refused unless
+.BR \-\-force ,
+which closes them the same way.
 .TP
 .B task progress \fIid\fP
 .B \-\-step
-.IR k [/ n ],
+.IR k / n
+.RI ( k
+alone once the total is known; never more than it),
 .B \-\-fraction
 .IR f ,
 .B \-\-note
@@ -186,36 +222,76 @@ needs
 .TP
 .B task wait \fIid\fP \-\-for input|dependency|limit
 Marks a task as blocked, with an optional
-.BR \-\-note .
+.B \-\-note
+and the answers a person can pick
+.RB ( \-\-option ,
+repeated).
+.TP
+.B task status
+The caller's run, and only it, as a compact tree for an agent: the run id, its percent,
+then one line per task with its id, state, steps, and age or note. Finished groups are one
+line.
+.B \-\-titles
+adds titles.
 .TP
 .B task guide
-Short instructions an agent can follow.
+Short instructions an agent can follow: whether it is the orchestrator or working on a
+tagged task, when to plan, how to delegate, and what each outcome means.
+.TP
+.B task adopt \fIrun\fP
+Makes this harness session report into an earlier run, after a resume or
+.B /clear
+gave it a new session id. Commands and hooks then use that run.
 .TP
 .B task hook
 Reads a Claude Code or Codex hook payload on standard input and records it: permission and
 idle notifications as waiting for input, prompts as resumed, subagents starting and
-stopping, the agent stopping and the session ending. Always exits 0. With
+stopping, the agent stopping and the session ending, plus the session's host app and
+folder. Each call notes when the harness's hooks last ran. After a compaction, resume or
+.BR /clear ,
+SessionStart hands the run's tree back to the agent. Always exits 0. With
 .B \-\-enforce
 on Stop, it sends the agent back once when tasks it declared are still running with no
-agent on them.
+agent on them, unless the harness reports work still running in the background.
 .TP
 .B hooks install|uninstall|status
 Adds, removes or shows the hooks that run
 .B headroom task hook
 in
 .I ~/.claude/settings.json
-.RB ( \-\-project :
+(or
+.IR $CLAUDE_CONFIG_DIR/settings.json ;
+.BR \-\-project :
 .IR ./.claude/settings.json ;
 .BR \-\-settings
-.IR path ).
+.IR path ),
+and a permission rule,
+.BR "Bash(headroom task:*)" ,
+so reports don't prompt.
 .B \-\-codex
 uses Codex's
 .I ~/.codex/hooks.json
+(or
+.IR $CODEX_HOME/hooks.json )
 instead; Codex runs new hooks once you trust them in its
 .B /hooks
-view. Install keeps every other setting and hook and writes a
+view.
+.B \-\-instructions
+also adds or removes a few lines, between
+.B <!\-\- headroom:begin \-\->
+and
+.BR "<!\-\- headroom:end \-\->" ,
+asking the agent to run
+.B headroom task guide
+in
+.I ~/.claude/CLAUDE.md
+or
+.IR ~/.codex/AGENTS.md .
+Install keeps every other setting, hook and key order, writes only when something changes,
+follows symlinks, and writes a
 .I .headroom-backup
-beside the file first; uninstall removes only Headroom's entries.
+beside the file first; uninstall removes only Headroom's entries. Status shows when a hook
+last ran.
 .TP
 .B mcp
 Optional. A stdio Model Context Protocol server with the tools
@@ -223,11 +299,18 @@ Optional. A stdio Model Context Protocol server with the tools
 (the allowance),
 .B get_tasks
 (task runs),
+.B task_status
+and
+.B task_guide
+(as above), and
 .B plan_tasks
 and
 .B update_task
-(the same operations as
+(the same operations, checks and answers as
 .BR "headroom task" ).
+Without a
+.B run
+argument a tool uses the session the server started in, resolved on every call.
 Add it with:
 .B claude mcp add \-\-scope user headroom \-\- ~/.local/bin/headroom mcp
 .SH EXIT STATUS
@@ -250,7 +333,8 @@ A file could not be written or read
 No snapshot exists yet (open Headroom.app).
 .TP
 .B 64
-Usage error.
+Usage error, including a task id that isn't in a run with a plan (the message names the
+closest ones).
 .SH ENVIRONMENT
 .TP
 .B NO_COLOR
@@ -260,11 +344,25 @@ Disables colors.
 Reads the snapshot and task files from this directory instead.
 .TP
 .BR HEADROOM_RUN ", " CLAUDE_CODE_SESSION_ID ", " CODEX_THREAD_ID ", " T3CODE_THREAD_ID
-The run id for task commands, in this order, when neither
+The run id for task commands and hooks, in this order, when neither
 .B \-\-run
 nor a
 .IB run :
-prefix on the task id gives one.
+prefix on the task id gives one. A hook's payload
+.B session_id
+comes after
+.B HEADROOM_RUN
+and before the others. A session that ran
+.B task adopt
+uses the run it adopted.
+.TP
+.BR CLAUDE_CONFIG_DIR ", " CODEX_HOME
+Where
+.B hooks
+finds Claude Code's and Codex's settings and instructions files.
+.TP
+.BR __CFBundleIdentifier ", " TERM_PROGRAM
+The app a session runs in, recorded on the run (never synced).
 .SH FILES
 .I ~/Library/Application Support/Headroom/snapshot.json
 .br
@@ -276,6 +374,12 @@ prefix on the task id gives one.
 .br
 .I ~/Library/Application Support/Headroom/tasks/observed/<run>.jsonl
 (events the app reads from harness transcripts)
+.br
+.I ~/Library/Application Support/Headroom/tasks/aliases/<session>
+(the run a session adopted)
+.br
+.I ~/Library/Application Support/Headroom/tasks/hook-heartbeat.json
+(when each harness's hooks last ran)
 .SH EXAMPLES
 .nf
 headroom
@@ -283,6 +387,9 @@ headroom statusline \-\-format tmux
 headroom wait \-\-provider claude && claude \-p "continue the refactor"
 headroom task plan \-\-file plan.json
 headroom task progress api/tests \-\-step 2/4
+headroom task done api/schema api/tests \-\-evidence "12 tests pass"
+headroom task status
+headroom hooks install \-\-enforce \-\-instructions
 headroom tasks \-\-watch
 headroom wait \-\-run "$CLAUDE_CODE_SESSION_ID" \-\-until attention
 .fi
