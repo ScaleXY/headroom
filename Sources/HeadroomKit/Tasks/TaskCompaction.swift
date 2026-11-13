@@ -35,6 +35,75 @@ public enum TaskCompaction {
     }
 }
 
+extension TaskCompaction {
+    /// Lines of a run's observed file (by index) whose activity can go without changing its fold.
+    ///
+    /// The fold reads an `attempt.activity` of an open attempt only for times and running totals:
+    /// last activity and token totals (maxima), working stretches (activity within
+    /// `TaskFold.workingGap` joins up), session tokens (handed out when anything else happens) and
+    /// waits cleared by the first activity after them. So within a stretch of one attempt's
+    /// activity with nothing between but other attempts' activity, a line can go when its
+    /// neighbours are within the gap of each other: the first and last stay, every other kind of
+    /// event, the end of a wait's grace and an attempt's first activity break the stretch, and
+    /// nothing goes from the last `TaskFold.recentLookback` plus an hour, which the recent token
+    /// rate reads sample by sample.
+    static func droppableActivity(journal: [TaskEvent], observed: [TaskEvent?]) -> Set<Int> {
+        struct Item { var event: TaskEvent; var line: Int?; var offset: Int }
+        // Fold order: by time, ties in file order with the journal first.
+        var items = journal.enumerated().map { Item(event: $0.element, line: nil, offset: $0.offset) }
+        for (i, e) in observed.enumerated() { if let e { items.append(Item(event: e, line: i, offset: journal.count + i)) } }
+        items.sort { ($0.event.at, $0.offset) < ($1.event.at, $1.offset) }
+        guard let last = items.last?.event.at else { return [] }
+        let cutoff = last.addingTimeInterval(-(TaskFold.recentLookback + 3600))
+
+        var drop: Set<Int> = []
+        var stretch: [String: [Item]] = [:]
+        var known: Set<String> = []
+        var endedAt: [String: Date] = [:]
+        var deadlines: [Date] = []
+        func settle() {
+            for seq in stretch.values where seq.count > 2 {
+                var kept = seq[0].event.at
+                for i in 1..<(seq.count - 1) {
+                    let next = seq[i + 1].event.at
+                    if let line = seq[i].line, next < cutoff, next.timeIntervalSince(kept) <= TaskFold.workingGap {
+                        drop.insert(line)
+                    } else {
+                        kept = seq[i].event.at
+                    }
+                }
+            }
+            stretch = [:]
+        }
+        for it in items {
+            let e = it.event
+            if case .activity(let key, .none, _) = e.op, known.contains(key), endedAt[key] == nil, !deadlines.contains(where: { e.at >= $0 }) {
+                stretch[key, default: []].append(it)
+                continue
+            }
+            settle()
+            deadlines.removeAll { e.at >= $0 }
+            switch e.op {
+            case .attempt(let s):
+                if let end = endedAt[s.key], e.at > end { endedAt[s.key] = nil }
+                known.insert(s.key)
+            case .activity(let key, _, _):
+                known.insert(key)
+            case .attemptEnd(let key, _):
+                if known.contains(key) { endedAt[key] = e.at }
+            case .end, .abandon:
+                for k in known where endedAt[k] == nil { endedAt[k] = e.at }
+            case .wait:
+                if e.source == .agent || e.source == .user { deadlines.append(e.at.addingTimeInterval(TaskFold.waitGrace)) }
+            default:
+                break
+            }
+        }
+        settle()
+        return drop
+    }
+}
+
 extension TaskRun {
     /// The title the agent gave the run; nil while it's only the run's id (a session UUID) or blank.
     public var agentTitle: String? {

@@ -18,8 +18,21 @@ struct TL {
         at(s, .attempt(.init(key: key, kind: kind, agentType: "general-purpose", tag: tag, parentKey: parent, title: title)), .harness)
     }
 
-    func fold(_ now: TimeInterval, stale: TimeInterval = TaskFold.defaultStaleAfter, tpu: Double? = nil) -> TaskRun {
-        TaskFold.fold(events, now: TL.t(now), staleAfter: stale, tokensPerEffortUnit: tpu).first { $0.id == run }!
+    /// The orchestrator's session, then its activity every `every` seconds over `from…to`.
+    mutating func session(_ from: TimeInterval, _ to: TimeInterval, every: TimeInterval = 60, key: String = "session:1", tokens: ((TimeInterval) -> Int64)? = nil) {
+        if !events.contains(where: { if case .attempt(let a) = $0.op { a.key == key } else { false } }) {
+            at(from, .attempt(.init(key: key, kind: .session)), .harness)
+        }
+        var s = from
+        while s <= to {
+            at(s, .activity(attempt: key, at: nil, tokens: tokens?(s)), .harness)
+            s += every
+        }
+    }
+
+    func fold(_ now: TimeInterval, stale: TimeInterval = TaskFold.defaultStaleAfter, tpu: Double? = nil,
+              abandon: TimeInterval = TaskFold.defaultAbandonAfter) -> TaskRun {
+        TaskFold.fold(events, now: TL.t(now), staleAfter: stale, tokensPerEffortUnit: tpu, abandonAfter: abandon).first { $0.id == run }!
     }
 }
 
@@ -258,11 +271,17 @@ extension TaskRun {
         // Finished work ignores a later idle notification.
         tl.at(16, .wait(task: nil, attempt: nil, reason: .input, note: "idle"), .hook)
         #expect(tl.fold(17).state == .done)
-        // The agent working again clears a stop.
+        // An agent's report after the stop (a background agent's) doesn't clear it; the
+        // orchestrator working again, or a person, does.
         var s = TL()
         s.add(0, "a"); s.at(1, .start(task: "a")); s.at(2, .stop(blocked: false), .hook)
         s.at(3, .progress(task: "a", step: 1, total: 3, fraction: nil, note: nil))
-        #expect(s.fold(4).state == .running)
+        #expect(s.fold(4).state == .stopped)
+        var o = s
+        o.session(4, 4)
+        #expect(o.fold(5).state == .running)
+        s.at(4, .progress(task: "a", step: 2, total: nil, fraction: nil, note: nil), .user)
+        #expect(s.fold(5).state == .running)
         s.at(5, .end, .hook)
         #expect(s.fold(6).state == .stopped)
     }
@@ -480,8 +499,9 @@ struct SplitMix: RandomNumberGenerator {
         bare.attempt(0, "agent:1", title: "one"); bare.attempt(0, "agent:2", title: "two")
         bare.at(5, .attemptEnd(attempt: "agent:1", outcome: .ok), .harness)
         let b = bare.fold(6)
-        #expect(b.node("~agent-1").counted && b.node("~agent-1").state == .done)
-        #expect(b.progress.done == 0.5 && b.state == .running)
+        #expect(b.node("~agent-1").counted && b.node("~agent-1").state == .done && !b.node("~agent-1").confirmed)
+        // An agent ending isn't a confirmed outcome: it counts in the estimate, not in done.
+        #expect(b.progress.estimate == 0.5 && b.progress.done == 0 && b.state == .running)
     }
 
     @Test func aLateTagMovesTheAttempt() {
@@ -520,48 +540,99 @@ struct SplitMix: RandomNumberGenerator {
         #expect(r.node("a").state == .running && r.node("a").attempts.retries == 1)
     }
 
-    @Test func sessionEndClosesOpenAttempts() {
+    @Test func sessionEndInterruptsOpenAttempts() {
         var tl = TL()
-        tl.add(0, "a")
-        tl.attempt(1, "k", tag: "a")
+        tl.add(0, "a"); tl.add(0, "b")
+        tl.attempt(1, "k1", tag: "a"); tl.attempt(1, "k2", tag: "b")
         tl.at(2, .end, .hook)
         let r = tl.fold(3)
-        #expect(r.node("a").attempts.active == 0 && r.node("a").state == .done && !r.node("a").confirmed)
+        // Quitting mid-task isn't finishing: both are cut short, and the run stopped with work left.
+        #expect(r.node("a").attempts.active == 0 && r.node("a").attempts.last?.outcome == .interrupted)
+        #expect(r.node("a").state == .parked && !r.node("a").confirmed && r.node("b").state == .parked)
+        #expect(r.state == .stopped && r.progress.done == 0 && r.progress.estimate < 1)
+        // The same with no plan: two agents mid-task and the session ends.
+        var bare = TL()
+        bare.session(0, 0)
+        bare.attempt(1, "agent:1", parent: "session:1"); bare.attempt(1, "agent:2", parent: "session:1")
+        bare.at(2, .end, .hook)
+        let b = bare.fold(3)
+        #expect(b.state == .stopped && b.progress.estimate == 0)
+        // An attempt ended as interrupted reads the same.
+        var i = TL()
+        i.add(0, "a"); i.attempt(1, "k", tag: "a"); i.at(2, .attemptEnd(attempt: "k", outcome: .interrupted), .harness)
+        #expect(i.fold(3).node("a").state == .parked && i.fold(3).progress.estimate == 0)
     }
 }
 
 @Suite struct TaskForecastTests {
-    @Test func etaFromTheRecentRate() {
+    @Test func etaFromTheRecentRateOfWorkingTime() throws {
         var tl = TL()
         for id in ["a", "b", "c", "d"] { tl.add(0, id) }
+        tl.session(0, 1200)
         tl.at(600, .done(task: "a", evidence: nil))
         #expect(tl.fold(900).etaSeconds == nil) // one leaf done
         tl.at(1200, .done(task: "b", evidence: nil))
-        // Half done in 20 minutes: the other half takes 20 more.
-        #expect(near(tl.fold(1200).etaSeconds ?? -1, 1200, 1e-6))
-        // Past 45 minutes only the window counts: c and d finish between 60 and 90 minutes.
+        // Half done in 20 minutes of work: the other half takes 20 more, somewhere in 10-40.
+        var r = tl.fold(1200)
+        #expect(near(r.etaSeconds ?? -1, 1200, 1e-6))
+        #expect(near(r.etaLowSeconds ?? -1, 600, 1e-6) && near(r.etaHighSeconds ?? -1, 2400, 1e-6))
+        // Half an hour idle, then work again: c and d close and four tasks join.
+        tl.session(3000, 5400)
         tl.at(3600, .done(task: "c", evidence: nil))
         tl.add(3600, "e"); tl.add(3600, "f"); tl.add(3600, "g"); tl.add(3600, "h")
         tl.at(5400, .done(task: "d", evidence: nil))
-        let r = tl.fold(5400)
-        // Done was 0.5 at 45 minutes ago and is 0.5 now (4 of 8): no gain in the window, so the
-        // whole-run rate, 0.5 over 5400 s.
-        #expect(near(r.etaSeconds ?? -1, 0.5 / (0.5 / 5400), 1e-6))
+        r = tl.fold(5400)
+        #expect(near(r.time.working, 3600, 1e-6) && near(r.time.idle, 1800, 1e-6) && near(r.time.total, 5400, 1e-6))
+        // The last 45 minutes of working time saw b, c and d close (3 of 8): 0.375 per 2700 s,
+        // with half left. The idle half hour isn't in it.
+        #expect(near(r.etaSeconds ?? -1, 0.5 / (0.375 / 2700), 1e-6))
         #expect(r.scopeChanges == 4)
+        let low = try #require(r.etaLowSeconds), mid = try #require(r.etaSeconds), high = try #require(r.etaHighSeconds)
+        #expect(low <= mid && mid <= high)
     }
 
-    @Test func etaUsesTheWindowWhenItMoves() {
+    @Test func idleTimeDoesntSlowTheForecast() {
         var tl = TL()
         for id in ["a", "b", "c", "d"] { tl.add(0, id) }
-        tl.at(60, .start(task: "a"))
-        tl.at(7200, .done(task: "a", evidence: nil))
-        tl.at(7200 + 900, .done(task: "b", evidence: nil))
-        let r = tl.fold(7200 + 1800)
-        // done(now) 0.5, done(45 min ago) 0: 0.5 / 2700 s.
-        #expect(near(r.etaSeconds ?? -1, 0.5 / (0.5 / 2700), 1e-6))
+        tl.session(0, 1800)
+        tl.at(900, .done(task: "a", evidence: nil))
+        tl.at(1800, .done(task: "b", evidence: nil))
+        tl.session(5400, 6300) // an hour away, then 15 minutes more
+        let r = tl.fold(6300)
+        // Half done in 45 minutes of work: 45 more, not the wall clock's 105.
+        #expect(near(r.etaSeconds ?? -1, 2700, 1e-6))
         var all = tl
-        all.at(9000, .done(task: "c", evidence: nil)); all.at(9000, .done(task: "d", evidence: nil))
-        #expect(all.fold(9001).etaSeconds == nil) // finished
+        all.at(6300, .done(task: "c", evidence: nil)); all.at(6300, .done(task: "d", evidence: nil))
+        #expect(all.fold(6301).etaSeconds == nil) // finished
+    }
+
+    @Test func noForecastUnlessRunning() {
+        var tl = TL()
+        for id in ["a", "b", "c", "d"] { tl.add(0, id) }
+        tl.session(0, 1200)
+        tl.at(600, .done(task: "a", evidence: nil)); tl.at(1200, .done(task: "b", evidence: nil))
+        #expect(tl.fold(1200).etaSeconds != nil)
+        var stopped = tl
+        stopped.at(1201, .stop(blocked: false), .hook)
+        let s = stopped.fold(1300)
+        #expect(s.state == .stopped && s.etaSeconds == nil && s.etaLowSeconds == nil && s.etaHighSeconds == nil)
+        var waiting = tl
+        waiting.at(1201, .wait(task: nil, attempt: nil, reason: .input, note: "Which database?"), .hook)
+        #expect(waiting.fold(1300).state == .waiting && waiting.fold(1300).etaSeconds == nil)
+        // The forecast doesn't grow while the run sits: an hour later it says the same.
+        #expect(tl.fold(1200).etaSeconds == tl.fold(1200 + 3600).etaSeconds)
+    }
+
+    @Test func theRangeNarrowsAsTasksClose() throws {
+        var tl = TL()
+        for i in 0..<20 { tl.add(0, "t\(i)") }
+        tl.session(0, 6000)
+        for i in 0..<10 { tl.at(Double(i + 1) * 600, .done(task: "t\(i)", evidence: nil)) }
+        let r = tl.fold(6000)
+        let eta = try #require(r.etaSeconds)
+        // Ten closed: 1.25 either way.
+        let low = try #require(r.etaLowSeconds), high = try #require(r.etaHighSeconds)
+        #expect(near(low, eta / 1.25, 1e-6) && near(high, eta * 1.25, 1e-6))
     }
 
     @Test func tokensPerEffortUnitIsTheMedian() {

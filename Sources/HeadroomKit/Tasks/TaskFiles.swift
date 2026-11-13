@@ -30,21 +30,60 @@ public enum TaskJournal {
         return data
     }
 
+    /// An observed file is compacted each time it grows past another multiple of this.
+    public static let compactEvery = 512 * 1024
+
     /// Appends each event to its run's file as a single `write` on an `O_APPEND` descriptor, so
-    /// concurrent writers never interleave within a line.
+    /// concurrent writers never interleave within a line. An observed file that grows past another
+    /// `compactEvery` bytes is compacted (`compactObserved`).
     public static func append(_ events: [TaskEvent], stream: Stream, home: URL) throws {
         let dir = directory(stream, home: home)
         try makeDirectory(directory(home: home))
         try makeDirectory(dir)
+        var grown: Set<String> = []
         for e in events {
             guard TaskRunID.sanitize(e.run) == e.run else { throw BadRunID(run: e.run) }
             let bytes = try line(e)
             let fd = open(url(run: e.run, stream: stream, home: home).path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
             guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             defer { close(fd) }
+            var st = stat()
+            let before = fstat(fd, &st) == 0 ? Int(st.st_size) : 0
             let written = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
             guard written == bytes.count else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            if stream == .observed, (before + written) / compactEvery > before / compactEvery { grown.insert(e.run) }
         }
+        for run in grown.sorted() { compactObserved(run: run, home: home) }
+    }
+
+    /// Rewrites a run's observed file without the activity lines that change nothing the fold
+    /// reports: within a stretch of one attempt's activity (other attempts' activity aside, nothing
+    /// else in between), a line whose neighbours are within `TaskFold.workingGap` of each other,
+    /// older than `TaskFold.recentLookback` plus an hour before the run's last event. Folding before
+    /// and after gives the same runs. Written beside and renamed over, so readers see one or the
+    /// other. The observer is the file's only writer. Returns how many lines went.
+    @discardableResult
+    public static func compactObserved(run: String, home: URL) -> Int {
+        let file = url(run: run, stream: .observed, home: home)
+        guard let data = try? Data(contentsOf: file) else { return 0 }
+        let lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
+        let d = decoder()
+        let observed = lines.map { try? d.decode(TaskEvent.self, from: Data($0)) }
+        let journal = (try? Data(contentsOf: url(run: run, stream: .journal, home: home))).map(decode) ?? []
+        let drop = TaskCompaction.droppableActivity(journal: journal, observed: observed)
+        guard !drop.isEmpty else { return 0 }
+        var out = Data(capacity: data.count)
+        for (i, l) in lines.enumerated() where !drop.contains(i) {
+            out.append(contentsOf: l)
+            if i < lines.count - 1 { out.append(0x0A) }
+        }
+        let tmp = file.deletingLastPathComponent().appendingPathComponent(".\(run).jsonl.compact-\(getpid())")
+        guard FileManager.default.createFile(atPath: tmp.path, contents: out, attributes: [.posixPermissions: 0o600]),
+              rename(tmp.path, file.path) == 0 else {
+            try? FileManager.default.removeItem(at: tmp)
+            return 0
+        }
+        return drop.count
     }
 
     static func makeDirectory(_ url: URL) throws {

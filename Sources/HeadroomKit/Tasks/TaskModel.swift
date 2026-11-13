@@ -70,11 +70,12 @@ public enum TaskWaitReason: String, LenientStringEnum, CaseIterable, Comparable 
     var urgency: Int { switch self { case .input: 0; case .limit: 1; case .dependency: 2 } }
 }
 
-/// What a node is doing. Leaves use planned through cancelled; `partial` and `parked` only come
-/// from children.
+/// What a node is doing. Leaves use planned through cancelled, and `parked` when their work was
+/// cut short; `partial` only comes from children.
 public enum TaskState: String, LenientStringEnum, CaseIterable {
     case planned, running, waiting
-    /// Some children finished, others haven't started, and nothing is running.
+    /// Begun and left with work to do, nothing running: some children finished and others haven't
+    /// started, or (a leaf) its agent was cut short or the orchestrator doing it is gone.
     case parked
     case done
     /// Every child finished but a normal child failed or was cancelled.
@@ -239,7 +240,10 @@ public struct TaskPlanItem: Codable, Sendable, Hashable {
 }
 
 /// Three shares of a node, each 0…1: finished work, work under way, and the best guess of how
-/// far along it really is (`done` ≤ `estimate`).
+/// far along it really is (`done` ≤ `estimate`). `done` counts tasks closed with a confirmed
+/// outcome and the steps or fraction agents reported; `estimate` adds tasks inferred done (their
+/// agent ended without a word) and partial credit for running ones. A run that isn't finished
+/// stays below 1 in both.
 public struct TaskProgress: Codable, Sendable, Hashable {
     public var done: Double
     public var inFlight: Double
