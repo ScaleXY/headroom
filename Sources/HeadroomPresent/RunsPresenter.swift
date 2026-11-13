@@ -158,6 +158,44 @@ public struct RunRowModel: Sendable, Hashable, Identifiable {
     public var toggles: Bool { if case .finished = kind { true } else { false } }
 }
 
+/// The card's hero, as Pace has it: a big number with a raised unit and a label under it; on
+/// the right a countdown or a duration with its caption.
+public struct RunHeroModel: Sendable, Hashable {
+    /// "62", or "7" agents.
+    public var number: String
+    /// "%", or "/9".
+    public var unit: String
+    /// "5 of 10 tasks · 3 running", "agents finished".
+    public var label: String
+    /// "~25m" left, "1h 6m" working, "1h 42m" start to finish.
+    public var side: String?
+    public var sideCaption: String?
+    /// The side figure is time left (drawn with the hourglass, as Pace's renewal).
+    public var hourglass: Bool
+    /// How far along, 0…1, for a meter when there's no task map to draw.
+    public var fraction: Double
+
+    public init(number: String, unit: String, label: String, side: String? = nil, sideCaption: String? = nil, hourglass: Bool = false, fraction: Double = 0) {
+        self.number = number; self.unit = unit; self.label = label; self.side = side; self.sideCaption = sideCaption; self.hourglass = hourglass
+        self.fraction = fraction
+    }
+}
+
+/// Under the meter: the state badge with a figure on its right, then a plain sentence and a
+/// quieter one, as Pace's verdict.
+public struct RunVerdictModel: Sendable, Hashable {
+    /// "2.31M tokens".
+    public var figure: String?
+    /// "Working on Rewrite the routes and 2 more."
+    public var primary: String?
+    /// "Must-haves 2 of 3 · done around 2:40–3:00 PM at this rate."
+    public var secondary: String?
+
+    public init(figure: String? = nil, primary: String? = nil, secondary: String? = nil) {
+        self.figure = figure; self.primary = primary; self.secondary = secondary
+    }
+}
+
 /// A labelled line in an opened row.
 public struct RunDetailLine: Sendable, Hashable {
     public var label: String
@@ -206,6 +244,11 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     /// Finished runs only.
     public var receipt: RunReceiptModel?
     public var actions: RunActionSet
+    /// The hero and verdict, for surfaces drawn in the Pace card's grammar.
+    public var hero: RunHeroModel?
+    public var verdict: RunVerdictModel?
+    /// The rows' header: "Tasks", "Steps" for a session's own plan, "Agents" with nothing declared.
+    public var rowsTitle = "Tasks"
 
     public init(id: String, title: String, subtitle: String, stateText: String, glyph: RunGlyph, tone: RunTone, live: Bool, declared: Bool,
                 needsInput: Bool = false, provider: Provider? = nil, bar: TaskProgress? = nil, headline: String, estimate: String? = nil,
@@ -218,6 +261,7 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
         self.expandable = expandable; self.expanded = expanded
         self.segments = segments; self.counts = counts; self.elapsed = elapsed; self.question = question
         self.timeline = timeline; self.receipt = receipt; self.actions = actions
+        self.hero = nil; self.verdict = nil
     }
 }
 
@@ -371,13 +415,111 @@ public struct RunsPresenter: Sendable {
         let built = rows(r, expanded: expanded, opened: opened)
         let expandable = built.finished > 0 || built.pressing > Self.rowCap
         let timeline = finished ? nil : self.timeline(r)
-        return RunCardModel(id: r.id, title: displayTitle(r, sayStart: sayStart), subtitle: subtitle(r), stateText: stateText(r), glyph: glyph,
+        var card = RunCardModel(id: r.id, title: displayTitle(r, sayStart: sayStart), subtitle: subtitle(r), stateText: stateText(r), glyph: glyph,
                             tone: tone, live: !finished, declared: declared, needsInput: r.needsInput,
                             provider: TaskLimits.provider(named: r.harness), bar: declared ? r.progress : nil, headline: headline,
                             estimate: nil, figures: figures, warning: timeline == nil ? r.warning : nil, rows: built.rows,
                             expandable: expandable, expanded: expanded && expandable,
                             segments: segments, counts: counts, elapsed: elapsed(r), question: r.needsInput ? question(r) : nil,
                             timeline: timeline, receipt: finished ? receipt(r) : nil, actions: Self.actions(r))
+        card.hero = hero(r)
+        card.verdict = verdict(r, timeline: timeline != nil)
+        card.rowsTitle = !declared ? "Agents" : r.mirrored ? "Steps" : "Tasks"
+        return card
+    }
+
+    // MARK: Hero and verdict
+
+    func hero(_ r: TaskRun) -> RunHeroModel {
+        let finished = Self.isFinished(r)
+        var side: String?, caption: String?, hourglass = false
+        func clock(_ d: Date) -> String { TimeFormat.clock(d, calendar: calendar, locale: locale) }
+        if finished {
+            side = Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)); caption = "start to finish"
+        } else if !r.hasDeclaredTasks {
+            // Nobody knows how many more agents will come: no forecast, only the time spent.
+            if r.time.working >= 60 { side = Self.duration(r.time.working); caption = "working" }
+        } else if let o = r.limitOutlook, let finish = o.finishAt, o.pauseAt != nil, finish > now, r.state == .running, !r.stale {
+            // The window will pause it: the time left counts the pause.
+            side = "~" + TimeFormat.compact(finish.timeIntervalSince(now)); caption = "done ~\(clock(finish))"; hourglass = true
+        } else if r.state == .running, !r.stale, let lo = r.etaLowSeconds, let hi = r.etaHighSeconds, hi >= lo {
+            let a = now.addingTimeInterval(Self.roundDown5(lo)), b = now.addingTimeInterval(Self.roundUp5(hi))
+            side = "~" + TimeFormat.compact((lo + hi) / 2)
+            caption = clock(a) == clock(b) ? "done ~\(clock(a))" : "done \(Self.clockRange(clock(a), clock(b)))"
+            hourglass = true
+        } else if r.state == .running, !r.stale, let eta = r.etaSeconds {
+            side = "~" + TimeFormat.compact(eta); caption = "done ~\(clock(now.addingTimeInterval(eta)))"; hourglass = true
+        } else if r.time.working >= 60 {
+            side = Self.duration(r.time.working); caption = "working"
+        }
+        if r.hasDeclaredTasks {
+            return RunHeroModel(number: "\(shownPercent(r))", unit: "%", label: counts(r, live: !finished).map { $0 } ?? "done",
+                                side: side, sideCaption: caption, hourglass: hourglass, fraction: Double(shownPercent(r)) / 100)
+        }
+        let (done, total) = agentCounts(r)
+        let running = r.nodes.filter { $0.state == .running }.count
+        let label = total == 0 ? "no agents yet" : "agent\(total == 1 ? "" : "s") finished" + (running > 0 && !finished ? " · \(running) running" : "")
+        return RunHeroModel(number: "\(done)", unit: "/\(total)", label: label, side: side, sideCaption: caption, hourglass: hourglass,
+                            fraction: total > 0 ? Double(done) / Double(total) : 0)
+    }
+
+    /// "10:15–10:35 AM": one meridiem when both share it.
+    static func clockRange(_ a: String, _ b: String) -> String {
+        for suffix in [" AM", " PM"] where a.hasSuffix(suffix) && b.hasSuffix(suffix) { return String(a.dropLast(suffix.count)) + "–" + b }
+        return a + "–" + b
+    }
+
+    /// What's happening, in a sentence; then the figures that matter for it.
+    func verdict(_ r: TaskRun, timeline: Bool) -> RunVerdictModel {
+        let figure = r.tokens > 0 ? "\(NumberFormat.tokens(r.tokens)) tokens" : nil
+        let leaves = r.nodes.filter { $0.leaf && ($0.counted || !r.hasDeclaredTasks) }
+        let open = leaves.filter { !$0.state.isTerminal }.count
+        var primary: String?
+        var secondary: [String] = []
+        func working(_ nodes: [TaskNode]) -> String? {
+            guard let first = nodes.first else { return nil }
+            return "Working on \(first.title)" + (nodes.count > 1 ? " and \(nodes.count - 1) more." : ".")
+        }
+        if r.abandoned {
+            primary = open > 0 ? "Given up with \(open) \(open == 1 ? "task" : "tasks") open." : "Given up."
+        } else {
+            switch r.state {
+            case .running where r.stale:
+                primary = "No activity for \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt))). It may be waiting on something outside Headroom's view."
+            case .running:
+                primary = working(leaves.filter { $0.state == .running })
+            case .waiting:
+                switch r.waitReason ?? .dependency {
+                case .input: primary = nil
+                case .limit: primary = timeline ? nil : r.warning ?? RunWords.waitingOnLimit(r.warning) + "."
+                case .dependency: primary = RunWords.waitingOnTask + "."
+                }
+            case .stopped:
+                primary = "\(open) \(open == 1 ? "task" : "tasks") left. Open the session to pick it up, or mark the run abandoned."
+            case .done:
+                let optionalFailed = r.nodes.filter { $0.leaf && $0.importance == .optional && ($0.state == .failed || $0.state == .partial) }
+                if let first = optionalFailed.first {
+                    primary = "Everything that counts is done; \(first.title), which was optional, failed."
+                } else {
+                    primary = r.hasDeclaredTasks ? (leaves.count == 1 ? "Done." : "All \(leaves.count) \(r.mirrored ? "steps" : "tasks") done.") : "Every agent finished."
+                }
+            case .partial, .failed:
+                let lost = leaves.filter { $0.state == .failed || $0.state == .partial }
+                if let first = lost.first {
+                    primary = "\(first.title) failed" + (lost.count > 1 ? ", and \(lost.count - 1) more." : ".")
+                } else {
+                    primary = RunWords.partial + "."
+                }
+            }
+        }
+        if !Self.isFinished(r) {
+            if r.mirrored { secondary.append(RunWords.fromSessionPlan) }
+            if r.mustHaves.total > 0 { secondary.append("must-haves \(r.mustHaves.done) of \(r.mustHaves.total)") }
+        } else if let foot = receipt(r).footnote {
+            secondary.append(foot)
+        }
+        let s = secondary.joined(separator: " · ")
+        return RunVerdictModel(figure: figure, primary: primary, secondary: s.isEmpty ? nil : s.prefix(1).uppercased() + s.dropFirst())
     }
 
     /// The agent's title; else the project folder; else what ran it. Never the session id.

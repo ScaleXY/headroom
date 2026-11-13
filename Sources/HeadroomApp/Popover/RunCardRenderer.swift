@@ -88,154 +88,128 @@ enum RunCardRenderer {
             if out != nil { _ = pass(m, origin: origin, width: width, theme: theme, ctx: nil, out: out) }
             return h
         }
-        let rect = CGRect(x: origin.x, y: origin.y, width: width, height: h)
-        if m.live {
-            CardChrome.draw(rect, provider: m.provider, theme: theme, ctx: ctx)
-        } else {
-            // Finished: recessed and without the brand wash, so live work stands out above it.
-            let shape = rounded(rect, 18)
-            ctx.fill(shape, theme.groupFill)
-            ctx.innerStroke(shape, theme.groupBorder, width: 0.5)
-        }
+        // Every card wears the app's chrome and its provider's wash, as Pace and Past weeks do. A
+        // finished run is told apart by its smaller header, not by a different surface.
+        CardChrome.draw(CGRect(x: origin.x, y: origin.y, width: width, height: h), provider: m.provider, theme: theme, ctx: ctx)
         _ = pass(m, origin: origin, width: width, theme: theme, ctx: ctx, out: out)
         return h
     }
 
     private static func pass(_ m: RunCardModel, origin: CGPoint, width: CGFloat, theme t: Theme, ctx: CGContext?, out: RenderOutput?) -> CGFloat {
         let x0 = origin.x + padX, w = width - padX * 2
-        var y = origin.y + (m.live ? padTop : 11)
+        var y = origin.y + padTop
         let tone = color(m.tone, t, glyph: m.glyph)
 
-        // Header: tile (or the state glyph on a finished card), title, then the chevron and "···".
-        let headH: CGFloat = 20
-        let tx = x0 + (m.live && m.provider != nil ? 28 : 20)
+        // 1. Header. Live: Pace's 28pt tile and 15pt title, the subtitle beside the tile. Finished:
+        //    Past weeks' 20pt tile and 14pt title with the state as a chip, the subtitle beneath.
+        let tileSize: CGFloat = m.live ? 28 : 20
+        let headMid = y + tileSize / 2
         var right = x0 + w
         var menu: CGRect?
         if m.actions.any {
-            menu = CGRect(x: right - menuSize + 4, y: y + 10 - menuSize / 2, width: menuSize, height: menuSize)
-            right -= menuSize - 4 + 6
+            let r = CGRect(x: right - menuWidth, y: headMid - 11, width: menuWidth, height: 22)
+            menu = r
+            right = r.minX - 8
         }
-        let chevronX = right - 4
-        if m.expandable { right -= 8 + 10 }
-        if let ctx {
-            if m.live, let p = m.provider {
-                BrandMark.drawTile(p, in: CGRect(x: x0, y: y, width: 20, height: 20), ctx: ctx)
-            } else {
-                drawGlyph(m.glyph, color: tone, center: CGPoint(x: x0 + 6, y: y + 10), size: 11, ctx: ctx)
-            }
-            if m.expandable { drawChevron(up: m.expanded, center: CGPoint(x: chevronX, y: y + 10), color: t.muted, ctx: ctx) }
-            if let menu { drawMenuButton(menu, theme: t, ctx: ctx) }
-            fit(m.title, F.sf(m.live ? 14 : 13, 650), m.live ? t.ink : t.ink.fade(0.85), width: right - tx, kern: -0.07)
-                .draw(x: tx, capCenter: y + 10, in: ctx)
-        }
-        y += headH + 3
-
-        // Subtitle; a live card adds its working time, a finished one its state on the right.
-        let capsule = stateCapsule(m, theme: t)
+        let tx = x0 + tileSize + (m.live ? 9 : 8)
         if m.live {
             if let ctx {
-                let elapsed = m.elapsed.map { Text(" · " + $0, F.sf(11.5, 600, tabular: true), t.ink.fade(0.66)) }
-                // Working time beats "updated 2m ago": that part goes first when both don't fit.
-                let room = x0 + w - tx - (elapsed?.width ?? 0)
-                var subtitle = m.subtitle
-                if elapsed != nil, Text(subtitle, F.sf(11.5, 500), t.muted).width > room, let cut = subtitle.range(of: " · ", options: .backwards) {
-                    subtitle = String(subtitle[..<cut.lowerBound])
-                }
-                let sub = fit(subtitle, F.sf(11.5, 500), t.muted, width: room)
-                sub.draw(x: tx, capCenter: y + 6, in: ctx)
-                elapsed?.draw(x: tx + sub.width, capCenter: y + 6, in: ctx)
+                drawTile(m, rect: CGRect(x: x0, y: y, width: tileSize, height: tileSize), tone: tone, theme: t, ctx: ctx)
+                fit(m.title, F.sf(15, 650), t.ink, width: right - tx, kern: -0.075).draw(x: tx, capCenter: y + 7.5, in: ctx)
+                fit(m.subtitle, F.sf(11.5, 500), t.muted, width: right - tx).draw(x: tx, capCenter: y + 22, in: ctx)
             }
-            y += 13
+            y += tileSize
         } else {
-            y += 2
+            let chip = Chip(m.stateText, tone: tone, theme: t)
+            let chipRight = right
+            right -= chip.width + 8
             if let ctx {
-                capsule.draw(right: x0 + w, mid: y + 6, ctx)
-                fit(m.subtitle, F.sf(11.5, 500), t.muted, width: x0 + w - capsule.width - 10 - tx).draw(x: tx, capCenter: y + 6, in: ctx)
+                drawTile(m, rect: CGRect(x: x0, y: y, width: tileSize, height: tileSize), tone: tone, theme: t, ctx: ctx)
+                fit(m.title, F.sf(14, 650), t.ink, width: right - tx, kern: -0.07).draw(x: tx, capCenter: headMid, in: ctx)
+                chip.draw(right: chipRight, mid: headMid, ctx: ctx)
             }
-            y += 14
+            y += tileSize + 5
+            if let ctx { fit(m.subtitle, F.sf(11.5, 500), t.muted, width: x0 + w - tx).draw(x: tx, capCenter: y + 6, in: ctx) }
+            y += 12
         }
+        if let menu, let ctx { drawMenuChip(menu, theme: t, ctx: ctx) }
         if m.expandable {
-            out?.add(CGRect(x: origin.x, y: origin.y, width: width, height: y - origin.y + 4),
+            out?.add(CGRect(x: origin.x, y: origin.y, width: (menu?.minX ?? origin.x + width) - origin.x - 4, height: y - origin.y + 6),
                      tooltip: m.expanded ? "Show fewer tasks" : "Show every task", action: .toggleRun(m.id))
         }
         if let menu { out?.add(menu.insetBy(dx: -3, dy: -3), tooltip: "More", action: .runMenu(m.id)) }
 
         if m.live {
-            // What it's asking leads the card.
+            // 2. What it's asking leads the card.
             if let q = m.question {
                 y += 12
                 y += drawQuestion(q, id: m.id, actions: m.actions, x: x0, y: y, w: w, theme: t, ctx: ctx, out: out)
             }
+            // 3. Hero: the percent (or agents finished) and the time left or spent.
+            if let hero = m.hero {
+                y += 15
+                if let ctx { drawHero(hero, x: x0, y: y, w: w, theme: t, ctx: ctx) }
+                y += heroHeight
+            }
+            // 4. The meter: one cell per task when there's a map, Pace's five cells otherwise.
+            y += 14
+            let track = CGRect(x: x0, y: y, width: w, height: MeterRenderer.height)
+            if !m.segments.isEmpty {
+                if let ctx { drawMap(m.segments, rect: track, theme: t, ctx: ctx) }
+                y += MeterRenderer.height
+                if m.segments.contains(where: \.critical) {
+                    if let ctx { drawMustHaves(m.segments, track: track, top: y + 4, theme: t, ctx: ctx) }
+                    y += 4 + 15
+                }
+            } else if let hero = m.hero {
+                let cells = Int((min(max(hero.fraction, 0), 1) * 5).rounded())
+                if let ctx { MeterRenderer.draw(MeterModel(state: m.tone == .warn ? .tight : .plenty, cells: cells, opacity: 1), rect: track, theme: t, ctx: ctx) }
+                y += MeterRenderer.height
+            }
+            // 5. Verdict: the state, its figure, and what's going on in a sentence.
             y += 12
-            if m.declared {
-                if let ctx {
-                    capsule.draw(right: x0 + w, mid: y + 11, ctx)
-                    let big = Text(m.headline, F.sf(24, 700, tabular: true), t.ink, kern: -0.7)
-                    let b = y + 19
-                    big.draw(x: x0 - 0.5, baseline: b, in: ctx)
-                    let ex = x0 + big.width + 7
-                    let room = x0 + w - capsule.width - 10 - ex
-                    // The counts give way to the state: shortened first, then left out.
-                    let options = m.counts.map { c in [c, String(c.split(separator: "·").first ?? "").trimmingCharacters(in: .whitespaces)] } ?? ["done"]
-                    if let c = options.map({ Text($0, F.sf(12.5, 600, tabular: true), t.muted) }).first(where: { $0.width <= room }) {
-                        c.draw(x: ex, baseline: b, in: ctx)
-                    }
-                }
-                y += 24 + 7
-                if !m.segments.isEmpty {
-                    if let ctx { drawMap(m.segments, rect: CGRect(x: x0, y: y, width: w, height: 8), theme: t, ctx: ctx) }
-                    y += 8 + (m.segments.contains(where: \.critical) ? 4 : 0)
-                } else {
-                    if let bar = m.bar, let ctx { drawBar(bar, rect: CGRect(x: x0, y: y, width: w, height: 7), theme: t, ctx: ctx) }
-                    y += 7
-                }
-            } else {
-                if let ctx {
-                    capsule.draw(right: x0 + w, mid: y + 9, ctx)
-                    fit(m.headline, F.sf(15, 650), t.ink, width: w - capsule.width - 10, kern: -0.15).draw(x: x0, capCenter: y + 9, in: ctx)
-                }
-                y += 18
-            }
-            if !m.figures.isEmpty {
-                y += 8
-                if let ctx { fit(m.figures.joined(separator: " · "), F.sf(11.5, 500, tabular: true), t.muted, width: w).draw(x: x0, capCenter: y + 6, in: ctx) }
-                y += 12
-            }
+            y += drawVerdict(m, tone: tone, x: x0, y: y, w: w, theme: t, ctx: ctx)
+            // 6. Against the 5-hour window, when it will pause the run.
             if let tl = m.timeline {
-                y += 14
+                y += 12
                 y += drawTimeline(tl, x: x0, y: y, w: w, theme: t, ctx: ctx)
             }
-        } else if let rc = m.receipt {
-            y += 10
-            y += drawReceipt(rc, x: x0, y: y, w: w, theme: t, ctx: ctx)
         } else {
-            y += 4
-            if let ctx {
-                let line = ([m.declared ? m.headline + " done" : m.headline] + m.figures).joined(separator: " · ")
-                fit(line, F.sf(11.5, 500, tabular: true), t.muted, width: x0 + w - tx).draw(x: tx, capCenter: y + 6, in: ctx)
+            if let primary = m.verdict?.primary {
+                y += 10
+                let block = TextBlock(primary, F.sf(14), t.ink, width: w, lineHeight: 19.3, kern: -0.07)
+                if let ctx { block.draw(x: x0, top: y, in: ctx) }
+                y += block.height
+                if let secondary = m.verdict?.secondary {
+                    let s = TextBlock(secondary, F.sf(12.5), t.muted, width: w, lineHeight: 17.25)
+                    if let ctx { s.draw(x: x0, top: y + 3, in: ctx) }
+                    y += 3 + s.height
+                }
             }
-            y += 12
+            if let rc = m.receipt {
+                y += 12
+                y += drawReceipt(rc, x: x0, y: y, w: w, theme: t, ctx: ctx)
+            }
         }
 
-        if let warning = m.warning {
+        // A limit warning with no timeline to say it, as Pace's callout.
+        if let warning = m.warning, m.verdict?.primary != warning, m.timeline == nil {
             y += 10
-            let block = TextBlock(warning, F.sf(11.5, 550), t.amber, width: w - 12 - 14 - 8 - 10, lineHeight: 15)
-            let r = CGRect(x: x0, y: y, width: w, height: block.height + 12)
-            if let ctx {
-                let shape = rounded(r, 9)
-                ctx.fill(shape, t.amber.fade(t.isDark ? 0.10 : 0.09))
-                ctx.innerStroke(shape, t.amber.fade(0.28), width: 0.5)
-                Glyph.warning(in: CGRect(x: r.minX + 10, y: r.minY + 6 + 7.5 - 6.5, width: 13, height: 13), fill: t.amber,
-                              ink: t.isDark ? rgb(0x2A1E05) : .white, ctx: ctx)
-                block.draw(x: r.minX + 10 + 14 + 8, top: r.minY + 6, in: ctx)
-            }
-            y += r.height
+            y += drawCallout(warning, x: x0, y: y, w: w, theme: t, ctx: ctx)
         }
 
+        // The tasks, under a quiet header like Activity's breakdown (none over summary lines alone).
         if !m.rows.isEmpty {
-            y += m.live ? 11 : 9
-            if let ctx { ctx.fill(CGPath(rect: CGRect(x: x0, y: y, width: w, height: 0.5), transform: nil), t.separator) }
-            y += 4
+            let headed = m.rows.contains { $0.kind == .task }
+            y += headed ? (m.live ? 16 : 14) : 8
+            if headed, let ctx {
+                let b = baseline(top: y, font: F.sf(11.5, 600), lineHeight: 14)
+                Text(m.rowsTitle, F.sf(11.5, 600), t.muted).draw(x: x0, baseline: b, in: ctx)
+                if m.rows.contains(where: { $0.tokens != nil }) {
+                    Text("tokens", F.sf(11.5, 500), t.ink.fade(0.4)).draw(x: x0 + w, baseline: b, align: .right, in: ctx)
+                }
+            }
+            if headed { y += 14 + 3 }
             for row in m.rows {
                 let panel = row.details.map { DetailPanel($0, width: w - (CGFloat(row.depth) * indent + 17) + 8, theme: t) }
                 let h = rowHeight + (panel == nil ? (row.detail == nil ? 0 : detailHeight) : panel!.height + 4)
@@ -248,21 +222,149 @@ enum RunCardRenderer {
                 }
                 y += h
             }
-            y += 2
-        } else {
-            y += 4
         }
         return y + padBottom - origin.y
     }
 
+    // MARK: Header pieces
+
+    static let menuWidth: CGFloat = 30
+    static let heroHeight: CGFloat = 47 + 8 + 15
+
+    /// The provider's tile; a run with no known provider gets its state glyph on a plain tile.
+    static func drawTile(_ m: RunCardModel, rect: CGRect, tone: NSColor, theme t: Theme, ctx: CGContext) {
+        if let p = m.provider {
+            BrandMark.drawTile(p, in: rect, ctx: ctx)
+        } else {
+            ctx.fill(rounded(rect, rect.width * 0.27), t.chipFill)
+            drawGlyph(m.glyph, color: tone, center: CGPoint(x: rect.midX, y: rect.midY), size: rect.width * 0.5, ctx: ctx)
+        }
+    }
+
+    /// The card's menu, as Activity's span chip: a soft rounded chip with "···".
+    static func drawMenuChip(_ r: CGRect, theme t: Theme, ctx: CGContext) {
+        ctx.fill(rounded(r, 8), t.chipFill)
+        for dx in [-5.0, 0, 5.0] as [CGFloat] {
+            ctx.fill(CGPath(ellipseIn: CGRect(x: r.midX + dx - 1.4, y: r.midY - 1.4, width: 2.8, height: 2.8), transform: nil), t.muted)
+        }
+    }
+
+    /// A state chip, as Past weeks' header chips: a dot of the state's colour and its words.
+    struct Chip {
+        var text: Text
+        var dot: NSColor
+        var theme: Theme
+        init(_ s: String, tone: NSColor, theme: Theme) {
+            text = Text(s, F.sf(10.5, 600, tabular: true), theme.ink); dot = tone; self.theme = theme
+        }
+        var width: CGFloat { 7 + 6 + 5 + text.width + 7 }
+        func draw(right: CGFloat, mid: CGFloat, ctx: CGContext) {
+            let r = CGRect(x: right - width, y: mid - 9, width: width, height: 18)
+            ctx.fill(rounded(r, 7), theme.chipFill)
+            ctx.innerStroke(rounded(r, 7), theme.chipBorder, width: 0.5)
+            ctx.fill(CGPath(ellipseIn: CGRect(x: r.minX + 7, y: r.midY - 3, width: 6, height: 6), transform: nil), dot)
+            text.draw(x: r.minX + 7 + 6 + 5, capCenter: r.midY, in: ctx)
+        }
+    }
+
+    // MARK: Hero
+
+    /// Pace's hero: the number at 56pt with its unit raised, the label under it; the side figure
+    /// at 32pt on the right (with the hourglass for time left) and its caption.
+    static func drawHero(_ h: RunHeroModel, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext) {
+        let numFont = F.sf(56, 700, tabular: true)
+        let num = Text(h.number, numFont, t.ink, kern: -2.8)
+        let numBase = baseline(top: y, font: numFont, lineHeight: 47)
+        num.draw(x: x - 1, baseline: numBase, in: ctx)
+        let unitFont = F.sf(23, 650)
+        let capTop = numBase - numFont.capHeight
+        Text(h.unit, unitFont, t.ink.fade(0.88)).draw(x: x - 1 + num.width + 3 + 2.8, baseline: capTop + 4 + unitFont.capHeight, in: ctx)
+        let labelTop = y + 47 + 8
+        let labelBase = baseline(top: labelTop, font: F.sf(12, 500), lineHeight: 15)
+        var captionWidth: CGFloat = 0
+        if let side = h.side {
+            let right = x + w
+            let vFont = F.sf(32, 700, tabular: true)
+            let v = Text(side, vFont, t.ink, kern: -1.12)
+            let vBase = labelTop - 8 - 27.5 + baseline(top: 0, font: vFont, lineHeight: 27.5)
+            v.draw(x: right + 1.12, baseline: vBase, align: .right, in: ctx)
+            if h.hourglass {
+                let hgH: CGFloat = 19
+                let hx = right - v.width - 7 - hgH * 0.7
+                Glyph.hourglass(in: CGRect(x: hx, y: vBase - vFont.capHeight / 2 - hgH / 2, width: hgH * 0.7, height: hgH), color: t.pacing(.plenty).text, ctx: ctx)
+            }
+            if let c = h.sideCaption {
+                let caption = Text(c, F.sf(12, 500, tabular: true), t.muted)
+                caption.draw(x: right, baseline: labelBase, align: .right, in: ctx)
+                captionWidth = caption.width + 12
+            }
+        }
+        fit(h.label, F.sf(12, 500, tabular: true), t.muted, width: w - captionWidth).draw(x: x, baseline: labelBase, in: ctx)
+    }
+
+    // MARK: Verdict
+
+    /// Pace's verdict: the state badge with its figure on the right, then a sentence and a quieter
+    /// one. Returns its height.
+    static func drawVerdict(_ m: RunCardModel, tone: NSColor, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext?) -> CGFloat {
+        let v = m.verdict
+        let primary = v?.primary.map { TextBlock($0, F.sf(14), t.ink, width: w, lineHeight: 19.3, kern: -0.07) }
+        let secondary = v?.secondary.map { TextBlock($0, F.sf(12.5), t.muted, width: w, lineHeight: 17.25) }
+        var h: CGFloat = 23
+        if let primary { h += 8 + primary.height }
+        if let secondary { h += (primary == nil ? 8 : 3) + secondary.height }
+        guard let ctx else { return h }
+        drawBadge(m.stateText, color: tone, glow: m.tone != .quiet && m.tone != .neutral, origin: CGPoint(x: x, y: y), theme: t, ctx: ctx)
+        if let figure = v?.figure { Text(figure, F.mono(11, 600), t.muted).draw(x: x + w, capCenter: y + 11.5, align: .right, in: ctx) }
+        var yy = y + 23
+        if let primary { primary.draw(x: x, top: yy + 8, in: ctx); yy += 8 + primary.height }
+        if let secondary { secondary.draw(x: x, top: yy + (primary == nil ? 8 : 3), in: ctx) }
+        return h
+    }
+
+    /// Pace's state badge: a tinted capsule, a glowing dot and the state's name.
+    static func drawBadge(_ title: String, color c: NSColor, glow: Bool, origin: CGPoint, theme t: Theme, ctx: CGContext) {
+        let label = Text(title, F.sf(12.5, 650), c)
+        let r = CGRect(x: origin.x, y: origin.y, width: 8 + 7 + 7 + label.width + 11, height: 23)
+        let capsule = rounded(r, r.height / 2)
+        ctx.fill(capsule, c.fade(0.13))
+        ctx.innerStroke(capsule, c.fade(0.38), width: 0.5)
+        let dot = CGMutablePath()
+        dot.addEllipse(in: CGRect(x: r.minX + 8, y: r.midY - 3.5, width: 7, height: 7))
+        ctx.withState {
+            if glow { ctx.setShadow(offset: .zero, blur: 8, color: c.cgColor) }
+            ctx.fill(dot, c)
+        }
+        label.draw(x: r.minX + 8 + 7 + 7, capCenter: r.midY, in: ctx)
+    }
+
+    // MARK: Callout
+
+    /// A warning in Pace's callout grammar: an amber tile with the warning glyph and the sentence.
+    static func drawCallout(_ text: String, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext?) -> CGFloat {
+        let block = TextBlock(text, F.sf(12.5, 500), t.ink.fade(0.92), width: w - 22 - 22 - 10, lineHeight: 16)
+        let h = max(38, block.height + 16)
+        guard let ctx else { return h }
+        let rect = CGRect(x: x, y: y, width: w, height: h)
+        let shape = rounded(rect, 12)
+        ctx.fill(shape, t.amber.fade(t.isDark ? 0.10 : 0.08))
+        ctx.innerStroke(shape, t.amber.fade(t.isDark ? 0.26 : 0.30), width: 0.5)
+        let icon = CGRect(x: rect.minX + 10, y: rect.midY - 11, width: 22, height: 22)
+        ctx.fill(rounded(icon, 6.5), t.amber.fade(0.18))
+        Glyph.warning(in: icon.insetBy(dx: 4.5, dy: 4.5), fill: t.amber, ink: t.cardSolid, ctx: ctx)
+        block.draw(x: icon.maxX + 10, top: rect.midY - block.height / 2, in: ctx)
+        return h
+    }
+
     // MARK: Question
 
-    /// The question block: who is asking, the question in full, the answers offered, and the
+    /// The question, in the grammar of Pace's 5-hour warning panel: a rose wash, an icon tile, who
+    /// is asking; then the question at the verdict's size, the answers offered as chips, and the
     /// buttons that take you to the session. Returns its height.
     static func drawQuestion(_ q: RunQuestionModel, id: String, actions: RunActionSet, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme,
                              ctx: CGContext?, out: RenderOutput?) -> CGFloat {
         let pad: CGFloat = 12, inner = w - pad * 2
-        let text = TextBlock(q.text, F.sf(13, 550), t.ink, width: inner, lineHeight: 17.5, kern: -0.08)
+        let text = TextBlock(q.text, F.sf(14, 500), t.ink, width: inner, lineHeight: 19.3, kern: -0.07)
         // Answer chips, wrapped.
         let chipFont = F.sf(11.5, 600), chipH: CGFloat = 22, gap: CGFloat = 6
         var chips: [(Text, CGRect)] = []
@@ -278,10 +380,11 @@ enum RunCardRenderer {
         var buttons: [(String, HitRegion.RunButton)] = []
         if actions.openSession { buttons.append(("Open session", .openSession)) }
         if actions.copyResume { buttons.append(("Copy resume command", .copyResume)) }
-        let askerTop = y + pad, textTop = askerTop + 12 + 7
-        let chipsTop = textTop + text.height + 9
-        let buttonsTop = (chips.isEmpty ? textTop + text.height : chipsTop + chipsH) + 12
-        let h = (buttons.isEmpty ? (chips.isEmpty ? textTop + text.height : chipsTop + chipsH) : buttonsTop + 26) + pad - y
+        let headTop = y + 11, textTop = headTop + 22 + 9
+        let chipsTop = textTop + text.height + 10
+        let afterText = chips.isEmpty ? textTop + text.height : chipsTop + chipsH
+        let buttonsTop = afterText + 12
+        let h = (buttons.isEmpty ? afterText : buttonsTop + 26) + pad - y
         var bx = x + pad
         var rects: [CGRect] = []
         for (label, kind) in buttons {
@@ -291,18 +394,21 @@ enum RunCardRenderer {
             bx = r.maxX + 8
         }
         guard let ctx else { return h }
-        let rose = t.rose
-        let panel = rounded(CGRect(x: x, y: y, width: w, height: h), 12)
-        ctx.fill(panel, rose.fade(t.isDark ? 0.11 : 0.065))
-        ctx.innerStroke(panel, rose.fade(t.isDark ? 0.30 : 0.22), width: 0.75)
-        drawGlyph(.needsInput, color: rose, center: CGPoint(x: x + pad + 5.5, y: askerTop + 6), size: 11, ctx: ctx)
-        fit(q.asker, F.sf(11.5, 650), rose, width: inner - 16).draw(x: x + pad + 16, capCenter: askerTop + 6, in: ctx)
+        let rect = CGRect(x: x, y: y, width: w, height: h)
+        let shape = rounded(rect, 14)
+        ctx.fillLinear(shape, [rgb(0xEE3459).fade(t.isDark ? 0.17 : 0.12), rgb(0xEE3459).fade(t.isDark ? 0.06 : 0.035)],
+                       from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.maxY))
+        ctx.innerStroke(shape, rgb(0xFF6982).fade(t.isDark ? 0.30 : 0.42), width: 1)
+        let icon = CGRect(x: x + 11, y: headTop, width: 22, height: 22)
+        ctx.fill(rounded(icon, 6.5), t.rose.fade(0.18))
+        drawGlyph(.needsInput, color: t.rose, center: CGPoint(x: icon.midX, y: icon.midY), size: 12, ctx: ctx)
+        fit(q.asker, F.sf(12.5, 650), t.rose, width: inner - 32).draw(x: icon.maxX + 10, capCenter: icon.midY, in: ctx)
         text.draw(x: x + pad, top: textTop, in: ctx)
         for (label, r) in chips {
-            let shape = rounded(r.offsetBy(dx: x + pad, dy: chipsTop), chipH / 2)
-            ctx.fill(shape, t.isDark ? white(0.07) : white(0.75))
-            ctx.innerStroke(shape, rose.fade(t.isDark ? 0.34 : 0.26), width: 0.75)
-            label.draw(x: shape.boundingBox.midX, capCenter: shape.boundingBox.midY, align: .center, in: ctx)
+            let chip = rounded(r.offsetBy(dx: x + pad, dy: chipsTop), 7)
+            ctx.fill(chip, t.chipFill)
+            ctx.innerStroke(chip, t.chipBorder, width: 0.5)
+            label.draw(x: chip.boundingBox.midX, capCenter: chip.boundingBox.midY, align: .center, in: ctx)
         }
         for (i, (label, _)) in buttons.enumerated() {
             drawPill(label, rect: rects[i], theme: t, ctx: ctx, style: i == 0 ? .rose : .plain)
@@ -344,50 +450,100 @@ enum RunCardRenderer {
 
     // MARK: Map
 
-    /// One block per counted task, as wide as its share: closed solid, under way filled as far as
-    /// it has got over a wash of its colour, untouched an empty slot; failed hatched in vermilion;
-    /// a short pearl rule under each must-have.
-    static func drawMap(_ segs: [RunSegment], rect r: CGRect, theme t: Theme, ctx: CGContext) {
+    /// The task map in the meter's own grammar: the recessed track, 16pt cells, closed work lit
+    /// with the azure glow, work under way filled as far as it has got, untouched cells empty; a
+    /// cell that needs you in rose, one that's stuck in amber, a failure hatched in vermilion. One
+    /// cell per counted task, as wide as its share.
+    static func drawMap(_ segs: [RunSegment], rect: CGRect, theme t: Theme, ctx: CGContext) {
+        let track = rounded(rect, 12)
+        ctx.fill(track, t.meterTrack)
+        if t.isDark {
+            ctx.innerShadow(track, color: black(0.45), blur: 2, dy: 1)
+            ctx.innerStroke(track, t.meterTrackBorder, width: 0.5)
+        } else {
+            ctx.innerShadow(track, color: black(0.08), blur: 2, dy: 1)
+        }
         let n = segs.count
-        let gap: CGFloat = n > 24 ? 1.5 : 2.5, minW: CGFloat = 3
-        let avail = r.width - gap * CGFloat(n - 1)
+        let inner = rect.insetBy(dx: 3, dy: 3)
+        let gap: CGFloat = n > 20 ? 2 : 3, minW: CGFloat = 5
+        let avail = inner.width - gap * CGFloat(n - 1)
         let spare = max(0, avail - minW * CGFloat(n))
-        let azure = t.pacing(.plenty)
-        let pearl = t.isDark ? white(0.8) : rgb(0x50535B)
-        var x = r.minX
+        let endR: CGFloat = 9, innerR: CGFloat = n > 12 ? 2.5 : 4
+        var x = inner.minX
         for (i, s) in segs.enumerated() {
             let bw = avail > minW * CGFloat(n) ? minW + CGFloat(s.weight) * spare : avail / CGFloat(n)
-            let b = CGRect(x: x, y: r.minY, width: bw, height: r.height)
-            let shape = rounded(b, left: i == 0 ? r.height / 2 : 2, right: i == n - 1 ? r.height / 2 : 2)
-            ctx.fill(shape, t.meterTrack)
-            if t.isDark { ctx.innerStroke(shape, t.meterTrackBorder, width: 0.5) }
+            let r = CGRect(x: x, y: inner.minY, width: bw, height: 16)
+            let left = i == 0 ? endR : innerR, right = i == n - 1 ? endR : innerR
+            let shape = rounded(r, left: left, right: right)
+            ctx.fill(shape, t.meterEmpty)
             let f = CGFloat(min(max(s.fill, 0), 1))
             if s.failed {
                 let c = failure(t)
-                ctx.fill(shape, c.fade(0.5))
-                hatch(shape, color: c, ctx: ctx)
-            } else {
-                let (solid, wash): (NSColor?, NSColor?) = switch s.tone {
-                case .progress: (nil, azure.bottom.fade(t.isDark ? 0.30 : 0.2))
-                case .alert: (t.rose, t.rose.fade(0.24))
-                case .warn: (t.amber, t.amber.fade(0.22))
-                case .neutral: (t.ink.fade(0.5), t.ink.fade(0.12))
-                case .quiet: (t.muted.fade(0.6), nil)
+                ctx.fill(shape, c.fade(0.35))
+                hatch(shape, color: c.fade(0.85), ctx: ctx)
+            } else if f > 0 {
+                let pc: PacingColors = switch s.tone {
+                case .alert: t.pacing(.veryTight)
+                case .warn: t.pacing(.tight)
+                default: t.pacing(.plenty)
                 }
-                ctx.withState {
-                    ctx.addPath(shape); ctx.clip()
-                    if f < 1, let wash { ctx.fill(CGPath(rect: b, transform: nil), wash) }
-                    if f > 0 {
-                        let fr = CGRect(x: b.minX, y: b.minY, width: max(b.width * f, 2), height: b.height)
-                        if let solid { ctx.fill(CGPath(rect: fr, transform: nil), solid) } else { ctx.fillVertical(CGPath(rect: fr, transform: nil), azure.top, azure.bottom) }
+                let colors: (top: NSColor, bottom: NSColor, glow: NSColor) = s.tone == .quiet
+                    ? (t.muted.fade(0.7), t.muted.fade(0.5), .clear) : (pc.top, pc.bottom, pc.glow)
+                if f >= 1 {
+                    if s.tone != .quiet { ctx.glow(shape, color: colors.glow, blur: 12, base: colors.bottom) }
+                    ctx.fillVertical(shape, colors.top, colors.bottom)
+                    // The lit cell's edges, as the meter's: a light line on top, a dark one under.
+                    ctx.withState {
+                        ctx.addPath(shape); ctx.clip()
+                        let hi = CGMutablePath(); hi.addPath(shape); hi.addPath(rounded(r.offsetBy(dx: 0, dy: 1), left: left, right: right))
+                        ctx.addPath(hi); ctx.setFillColor(white(0.62).cgColor); ctx.fillPath(using: .evenOdd)
+                        let lo = CGMutablePath(); lo.addPath(shape); lo.addPath(rounded(r.offsetBy(dx: 0, dy: -1), left: left, right: right))
+                        ctx.addPath(lo); ctx.setFillColor(black(0.12).cgColor); ctx.fillPath(using: .evenOdd)
+                    }
+                } else {
+                    // Under way: the cell's colour as a wash, lit as far as it has got.
+                    ctx.withState {
+                        ctx.addPath(shape); ctx.clip()
+                        ctx.fill(CGPath(rect: r, transform: nil), colors.bottom.fade(t.isDark ? 0.22 : 0.16))
+                        let lit = CGRect(x: r.minX, y: r.minY, width: max(r.width * f, 3), height: r.height)
+                        ctx.fillVertical(CGPath(rect: lit, transform: nil), colors.top, colors.bottom)
                     }
                 }
             }
-            if s.critical {
-                let tw = max(4, min(bw - 4, 14))
-                ctx.fill(rounded(CGRect(x: b.midX - tw / 2, y: r.maxY + 2.5, width: tw, height: 1.75), 0.875), pearl)
-            }
             x += bw + gap
+        }
+    }
+
+    /// The x of each segment's middle on `track`, as `drawMap` lays them out.
+    static func centers(_ segs: [RunSegment], track: CGRect) -> [CGFloat] {
+        let n = segs.count
+        let inner = track.insetBy(dx: 3, dy: 3)
+        let gap: CGFloat = n > 20 ? 2 : 3, minW: CGFloat = 5
+        let avail = inner.width - gap * CGFloat(n - 1)
+        let spare = max(0, avail - minW * CGFloat(n))
+        var x = inner.minX
+        return segs.map { s in
+            let bw = avail > minW * CGFloat(n) ? minW + CGFloat(s.weight) * spare : avail / CGFloat(n)
+            defer { x += bw + gap }
+            return x + bw / 2
+        }
+    }
+
+    /// The meter's caret row for the must-haves: a ▲ under each, labelled once, as EVEN PACE is.
+    static func drawMustHaves(_ segs: [RunSegment], track: CGRect, top: CGFloat, theme t: Theme, ctx: CGContext) {
+        let color = t.isDark ? rgb(0xF4F4F6, 0.45) : rgb(0x1C1C1E, 0.45)
+        let xs = zip(segs, centers(segs, track: track)).filter { $0.0.critical }.map(\.1)
+        guard let first = xs.first else { return }
+        for cx in xs { Glyph.caret(in: CGRect(x: cx - 3.5, y: top + 3.5, width: 7, height: 5), color: color, ctx: ctx) }
+        let label = Text(xs.count == 1 ? "MUST-HAVE" : "MUST-HAVES", F.sf(8.5, 650), color, kern: 0.765)
+        let need = 3.5 + 4 + label.width
+        // Beside a caret with clear room: after the last, else in the first wide gap, else before the first.
+        if let last = xs.last, last + need <= track.maxX {
+            label.draw(x: last + 3.5 + 4, capCenter: top + 6, in: ctx)
+        } else if let gap = zip(xs, xs.dropFirst()).first(where: { $0.1 - $0.0 > need + 10 }) {
+            label.draw(x: gap.0 + 3.5 + 4, capCenter: top + 6, in: ctx)
+        } else if first - need >= track.minX {
+            label.draw(x: first - 3.5 - 4, capCenter: top + 6, align: .right, in: ctx)
         }
     }
 
@@ -430,136 +586,149 @@ enum RunCardRenderer {
 
     // MARK: Timeline
 
-    /// Working, paused at the window, working again after the reset, done: a track with labelled
-    /// ticks and the note beneath. Returns its height.
+    /// The run against its provider's 5-hour window, in the grammar of Pace's 5-hour panel: an
+    /// amber wash because it will pause, an icon tile, what happens and when, the countdown on the
+    /// right; then the track (working, paused, working again) with its ticks in the charts'
+    /// uppercase labels, and the forecast as a toned dot and one sentence. Returns its height.
     static func drawTimeline(_ tl: RunTimelineModel, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext?) -> CGFloat {
-        let trackH: CGFloat = 8, labelsTop = y + trackH + 7
-        let note = tl.note.map { TextBlock($0, F.sf(11, 500), t.muted, width: w, lineHeight: 15) }
-        let h = trackH + 7 + 12 + 13 + (note.map { 9 + $0.height } ?? 0)
+        let inner = w - 24
+        let note = tl.note.map { TextBlock($0, F.sf(12.5), t.ink.fade(0.86), width: inner - 13, lineHeight: 16.5) }
+        let trackTop: CGFloat = 48 + 4, trackH: CGFloat = 6
+        let labelsH: CGFloat = 6 + 11
+        let h = trackTop + trackH + labelsH + (note.map { 10 + $0.height } ?? 0) + 12
         guard let ctx else { return h }
-        let track = CGRect(x: x, y: y, width: w, height: trackH)
-        let shape = rounded(track, trackH / 2)
-        ctx.fill(shape, t.meterTrack)
+        let rect = CGRect(x: x, y: y, width: w, height: h)
+        let shape = rounded(rect, 14)
+        ctx.fillLinear(shape, [rgb(0xF4A51F).fade(t.isDark ? 0.17 : 0.14), rgb(0xF4A51F).fade(t.isDark ? 0.06 : 0.04)],
+                       from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.maxY))
+        ctx.innerStroke(shape, rgb(0xFFC248).fade(t.isDark ? 0.30 : 0.45), width: 1)
+        let amber = t.session(.amber)
+
+        func tick(_ label: String) -> RunTimelineModel.Tick? { tl.ticks.first { $0.label == label } }
+        let icon = CGRect(x: rect.minX + 11, y: rect.minY + 13, width: 22, height: 22)
+        ctx.fill(rounded(icon, 6.5), amber.fade(0.18))
+        Glyph.pause(in: CGRect(x: icon.midX - 3.4, y: icon.midY - 4, width: 6.8, height: 8), color: amber, ctx: ctx)
+        let tx = icon.maxX + 10, right = rect.maxX - 12
+        let done = tick("done")
+        let count = Text(done?.time ?? "", F.sf(17, 700, tabular: true), amber, kern: -0.2)
+        count.draw(x: right, baseline: rect.minY + 9 + 15, align: .right, in: ctx)
+        let caption = Text("DONE", F.sf(8.5, 650), amber.fade(0.8), kern: 0.765)
+        caption.draw(x: right + 0.765, baseline: rect.minY + 9 + 15 + 3 + 9.5, align: .right, in: ctx)
+        let title = PaceCardRenderer.fit(["Pauses at the 5-hour limit", "Pauses at the limit"], font: F.sf(12.5, 650), width: right - count.width - 10 - tx)
+        Text(title, F.sf(12.5, 650), amber).draw(x: tx, baseline: baseline(top: rect.minY + 9, font: F.sf(12.5, 650), lineHeight: 15), in: ctx)
+        var sub: [String] = []
+        if let p = tick("window empty") { sub.append("empties \(p.time)") }
+        if let r = tick("resets") { sub.append("resets \(r.time)") }
+        let subtitle = PaceCardRenderer.fit([sub.joined(separator: " · "), sub.first ?? ""], font: F.sf(12, 400, tabular: true), width: right - caption.width - 10 - tx)
+        Text(subtitle, F.sf(12, 400, tabular: true), t.muted).draw(x: tx, baseline: baseline(top: rect.minY + 9 + 15 + 1, font: F.sf(12), lineHeight: 14.4), in: ctx)
+
+        // The track, as the 5-hour panel's: dark, 6pt, working in azure, the pause hatched amber.
+        let tr = CGRect(x: rect.minX + 12, y: rect.minY + trackTop, width: inner, height: trackH)
+        let trackShape = rounded(tr, 3)
+        ctx.fill(trackShape, t.isDark ? black(0.32) : black(0.07))
+        if t.isDark { ctx.innerStroke(trackShape, white(0.05), width: 0.5) }
         let azure = t.pacing(.plenty)
         ctx.withState {
-            ctx.addPath(shape); ctx.clip()
+            ctx.addPath(trackShape); ctx.clip()
             for s in tl.spans where s.end > s.start {
-                let r = CGRect(x: x + w * CGFloat(s.start), y: y, width: w * CGFloat(s.end - s.start), height: trackH)
+                let r = CGRect(x: tr.minX + tr.width * CGFloat(s.start), y: tr.minY, width: tr.width * CGFloat(s.end - s.start), height: trackH)
                 switch s.kind {
-                case .working:
-                    ctx.fillVertical(CGPath(rect: r.insetBy(dx: 0.75, dy: 0), transform: nil), azure.top, azure.bottom)
+                case .working: ctx.fillVertical(CGPath(rect: r.insetBy(dx: 0.75, dy: 0), transform: nil), azure.top, azure.bottom)
                 case .paused:
                     let p = CGPath(rect: r.insetBy(dx: 0.75, dy: 0), transform: nil)
-                    ctx.fill(p, t.amber.fade(0.16))
-                    hatch(p, color: t.amber.fade(0.6), spacing: 3.2, lineWidth: 1, ctx: ctx)
+                    ctx.fill(p, amber.fade(0.18))
+                    hatch(p, color: amber.fade(0.7), spacing: 3.2, lineWidth: 1, ctx: ctx)
                 }
             }
         }
-        // Labels: "now" left, "done" right, the rest centred on their tick, nudged apart.
-        struct Label { var tick: RunTimelineModel.Tick; var label: Text; var time: Text; var left: CGFloat; var width: CGFloat; var shown = true }
-        var labels: [Label] = tl.ticks.sorted { $0.at < $1.at }.map { tick in
-            let l = Text(tick.label, F.sf(10.5, tick.strong ? 650 : 500), tick.strong ? t.ink.fade(0.9) : t.muted)
-            let tm = Text(tick.time, F.sf(10.5, 500, tabular: true), t.muted2)
-            let lw = max(l.width, tm.width)
-            let cx = x + w * CGFloat(tick.at)
-            return Label(tick: tick, label: l, time: tm, left: min(max(cx - lw / 2, x), x + w - lw), width: lw)
+        // Ticks: the charts' uppercase labels, one row. The strong ticks (window empty, done) are
+        // placed first; the others only where there's room left.
+        let labelFont = F.sf(8.5, 650)
+        struct Placed { var left: CGFloat; var right: CGFloat }
+        var placed: [Placed] = []
+        let order = tl.ticks.enumerated().sorted { ($0.element.strong ? 0 : 1, $0.offset) < ($1.element.strong ? 0 : 1, $1.offset) }.map(\.element)
+        for tk in order {
+            let cx = min(max(tr.minX + tr.width * CGFloat(tk.at), tr.minX + 1), tr.maxX - 1)
+            let mark = CGMutablePath(); mark.move(to: CGPoint(x: cx, y: tr.maxY + 1.5)); mark.addLine(to: CGPoint(x: cx, y: tr.maxY + 4.5))
+            ctx.stroke(mark, tk.strong ? amber.fade(0.8) : t.muted2, width: 1, cap: .round)
+            let l = Text(tk.label.uppercased(), labelFont, tk.strong ? amber.fade(0.9) : t.muted, kern: 0.765)
+            let left = min(max(cx - l.width / 2, tr.minX), tr.maxX - l.width)
+            guard !placed.contains(where: { left < $0.right + 8 && left + l.width + 8 > $0.left }) else { continue }
+            l.draw(x: left, capCenter: tr.maxY + 6 + 5.5, in: ctx)
+            placed.append(Placed(left: left, right: left + l.width))
         }
-        let space: CGFloat = 8
-        // Pull labels left from the right edge first, so a label crowded by "done" moves rather than goes.
-        for i in labels.indices.reversed().dropFirst() {
-            let next = labels[i + 1].left
-            if labels[i].left + labels[i].width + space > next { labels[i].left = max(x, next - space - labels[i].width) }
+        if let note {
+            let top = tr.maxY + labelsH + 10
+            let dot = CGMutablePath(); dot.addEllipse(in: CGRect(x: rect.minX + 12, y: top + 8.25 - 3, width: 6, height: 6))
+            ctx.withState { ctx.setShadow(offset: .zero, blur: 6, color: amber.fade(0.8).cgColor); ctx.fill(dot, amber) }
+            note.draw(x: rect.minX + 12 + 6 + 7, top: top, in: ctx)
         }
-        for i in labels.indices.dropFirst() {
-            guard let prev = labels[..<i].lastIndex(where: \.shown) else { continue }
-            let prevRight = labels[prev].left + labels[prev].width
-            if labels[i].left < prevRight + space {
-                labels[i].left = prevRight + space
-                if labels[i].left + labels[i].width > x + w {
-                    // No room: the weaker of the two keeps its tick but loses its words.
-                    if labels[i].tick.strong && !labels[prev].tick.strong { labels[prev].shown = false; labels[i].left = x + w - labels[i].width }
-                    else { labels[i].shown = false }
-                }
-            }
-        }
-        for l in labels {
-            let cx = min(max(x + w * CGFloat(l.tick.at), x + 1), x + w - 1)
-            let mark = CGMutablePath(); mark.move(to: CGPoint(x: cx, y: y + trackH + 1.5)); mark.addLine(to: CGPoint(x: cx, y: y + trackH + 5))
-            ctx.stroke(mark, l.tick.strong ? t.ink.fade(0.55) : t.muted2, width: 1, cap: .round)
-            guard l.shown else { continue }
-            l.label.draw(x: l.left, capCenter: labelsTop + 6, in: ctx)
-            l.time.draw(x: l.left, capCenter: labelsTop + 19, in: ctx)
-        }
-        note?.draw(x: x, top: labelsTop + 25 + 9, in: ctx)
         return h
     }
 
     // MARK: Receipt
 
-    /// Three figures (start to finish, tokens and cost, tasks), where the time went, and the footnote.
+    /// A finished run's figures as Activity's stat tiles (how long, tokens with their cost, tasks),
+    /// then where the time went as Activity's composition bar with a legend. Returns its height.
     static func drawReceipt(_ rc: RunReceiptModel, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext?) -> CGFloat {
-        let tokens: String = rc.cost.map { "tokens · " + $0 } ?? "tokens"
-        let cols: [(String, String)] = [(rc.duration, "start to finish"), (rc.tokens, tokens), (rc.tasks, rc.tasksNote)]
-        let colW = w / 3
-        let captions = cols.map { TextBlock($0.1, F.sf(10.5, 500), t.muted, width: colW - 20, lineHeight: 13) }
-        let captionH: CGFloat = captions.map(\.height).max() ?? 13
-        let tileH: CGFloat = 9 + 17 + 4 + captionH + 9
-        var h = tileH
+        let tileW = (w - 12) / 3, tileH: CGFloat = 49
         let parts = splitParts(rc.time, theme: t)
-        let legendFont = F.sf(10.5, 500, tabular: true)
+        let legendFont = F.sf(11, 500, tabular: true)
         var legend: [(Text, NSColor, CGPoint)] = []
         var legendH: CGFloat = 0
         if !parts.isEmpty {
-            h += 10 + 6 + 8
             var lx: CGFloat = 0, ly: CGFloat = 0
             for p in parts {
                 let label = Text(p.label + " " + RunsPresenter.duration(p.seconds), legendFont, t.muted)
-                let iw = 6 + 5 + label.width
-                if lx > 0, lx + iw > w { lx = 0; ly += 15 }
+                let iw = 7 + 5 + label.width
+                if lx > 0, lx + iw > w { lx = 0; ly += 16 }
                 legend.append((label, p.color, CGPoint(x: lx, y: ly)))
                 lx += iw + 12
             }
-            legendH = ly + 13
-            h += legendH
+            legendH = ly + 14
         }
-        let foot = rc.footnote.map { TextBlock($0, F.sf(10.5, 500), t.muted2, width: w, lineHeight: 14) }
-        if let foot { h += 7 + foot.height }
+        let h = tileH + (parts.isEmpty ? 0 : 9 + 5 + 8 + legendH)
         guard let ctx else { return h }
-
-        let tile = CGRect(x: x, y: y, width: w, height: tileH)
-        ctx.fill(rounded(tile, 10), t.isDark ? white(0.035) : white(0.7))
-        ctx.innerStroke(rounded(tile, 10), t.isDark ? white(0.06) : black(0.05), width: 0.5)
-        for (i, c) in cols.enumerated() {
-            let cx = x + colW * CGFloat(i) + 10
-            if i > 0 { ctx.fill(CGPath(rect: CGRect(x: x + colW * CGFloat(i), y: y + 9, width: 0.5, height: tileH - 18), transform: nil), t.separator) }
-            fit(c.0, F.sf(15, 680, tabular: true), t.ink, width: colW - 20, kern: -0.3).draw(x: cx, capCenter: y + 9 + 8, in: ctx)
-            captions[i].draw(x: cx, top: y + 9 + 17 + 4, in: ctx)
+        let cost = rc.cost?.replacingOccurrences(of: "about ", with: "~")
+        let tiles: [(String, String, String?)] = [("Took", rc.duration, nil), ("Tokens", rc.tokens, cost), ("Tasks", rc.tasks, nil)]
+        for (i, tile) in tiles.enumerated() {
+            let r = CGRect(x: x + CGFloat(i) * (tileW + 6), y: y, width: tileW, height: tileH)
+            ctx.fill(rounded(r, 11), t.tileFill)
+            Text(tile.0, F.sf(11, 500), t.muted).draw(x: r.minX + 9, baseline: baseline(top: r.minY + 8, font: F.sf(11, 500), lineHeight: 14), in: ctx)
+            let vb = baseline(top: r.minY + 8 + 14 + 3, font: F.sf(15, 700), lineHeight: 17)
+            let v = fit(tile.1, F.sf(15, 700, tabular: true), t.ink, width: r.width - 18, kern: -0.15)
+            v.draw(x: r.minX + 9, baseline: vb, in: ctx)
+            if let suffix = tile.2 {
+                let room = r.width - 18 - v.width - 4
+                let s = fit(suffix, F.sf(11, 500, tabular: true), t.ink.fade(0.45), width: room)
+                if room > 18 { s.draw(x: r.minX + 9 + v.width + 4, baseline: vb, in: ctx) }
+            }
         }
-        var yy = y + tileH
-        if !parts.isEmpty {
-            yy += 10
-            let total = parts.reduce(0) { $0 + $1.seconds }
-            let gap: CGFloat = 2, avail = w - gap * CGFloat(parts.count - 1)
+        guard !parts.isEmpty else { return h }
+        var yy = y + tileH + 9
+        let total = parts.reduce(0) { $0 + $1.seconds }
+        let bar = CGRect(x: x, y: yy, width: w, height: 5)
+        ctx.withState {
+            ctx.addPath(rounded(bar, 3)); ctx.clip()
+            let avail = w - 2 * CGFloat(parts.count - 1)
             var bx = x
-            for (i, p) in parts.enumerated() {
+            for p in parts {
                 let bw = max(3, avail * CGFloat(p.seconds / total))
-                let r = CGRect(x: bx, y: yy, width: min(bw, x + w - bx), height: 6)
-                ctx.fill(rounded(r, left: i == 0 ? 3 : 1.5, right: i == parts.count - 1 ? 3 : 1.5), p.color)
-                bx += bw + gap
+                ctx.fill(CGPath(rect: CGRect(x: bx, y: yy, width: bw, height: 5), transform: nil), p.color)
+                bx += bw + 2
             }
-            yy += 6 + 8
-            for (label, c, at) in legend {
-                ctx.fill(CGPath(ellipseIn: CGRect(x: x + at.x, y: yy + at.y + 6.5 - 3, width: 6, height: 6), transform: nil), c)
-                label.draw(x: x + at.x + 11, capCenter: yy + at.y + 6.5, in: ctx)
-            }
-            yy += legendH
         }
-        if let foot { foot.draw(x: x, top: yy + 7, in: ctx) }
+        yy += 5 + 8
+        for (label, c, at) in legend {
+            ctx.fill(rounded(CGRect(x: x + at.x, y: yy + at.y + 7 - 3.5, width: 7, height: 7), 2.5), c)
+            label.draw(x: x + at.x + 12, capCenter: yy + at.y + 7, in: ctx)
+        }
         return h
     }
 
-    /// The parts of the run's time worth a mark: working in graphite (a finished run isn't
-    /// progress, so never azure), waiting on you in rose, on a limit in amber, idle faint.
+    /// The parts of the run's time worth a mark: working in the pacing azure's quiet cousin
+    /// (graphite, since a finished run isn't progress), waiting on you in rose, on a limit in
+    /// amber, idle faint.
     static func splitParts(_ s: TaskTimeSplit, theme t: Theme) -> [(label: String, seconds: Double, color: NSColor)] {
         guard s.total >= 60 else { return [] }
         let all: [(String, Double, NSColor)] = [("working", s.working, t.ink.fade(t.isDark ? 0.62 : 0.55)), ("waiting on you", s.waitingInput, t.rose),

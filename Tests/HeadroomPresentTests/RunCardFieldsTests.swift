@@ -294,3 +294,50 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(rec.tokensByModel == ["m": 5] && rec.state == .partial)
     }
 }
+
+// The Runs card in the Pace card's grammar: a hero (number, raised unit, side figure with a
+// clock caption) and a verdict (a sentence under the badge, the tokens beside it).
+@Suite struct RunHeroAndVerdictTests {
+    @Test func aDeclaredRunsHeroIsItsPercentAndTimeLeft() throws {
+        let nodes = [leaf("a", .done), leaf("b", .running), leaf("c", .planned)]
+        let hero = try #require(p.card(run(nodes: nodes) { $0.etaLowSeconds = 20 * 60; $0.etaHighSeconds = 30 * 60 }).hero)
+        #expect(hero.number == "50" && hero.unit == "%" && hero.label == "1 of 3 tasks · 1 running")
+        #expect(hero.side == "~25m" && hero.hourglass)
+        // A clock time, as Pace's renewal is.
+        #expect(hero.sideCaption == "done 1:00–1:10 AM" || hero.sideCaption?.hasPrefix("done ") == true)
+        #expect(hero.fraction == 0.5)
+    }
+
+    @Test func aPauseAtTheLimitCountsInTheTimeLeft() throws {
+        let hero = try #require(p.card(run {
+            $0.limitOutlook = TaskLimitOutlook(provider: .claude, pauseAt: at(30), resumeAt: at(80), finishAt: at(105))
+        }).hero)
+        #expect(hero.side == "~2h" && hero.sideCaption?.hasPrefix("done ~") == true)
+    }
+
+    @Test func agentsCountedWithoutAPlanGetNoForecast() throws {
+        let nodes = [leaf("a", .done), leaf("b", .running), leaf("c", .done)]
+        let hero = try #require(p.card(run(nodes: nodes) { $0.hasDeclaredTasks = false; $0.time = TaskTimeSplit(working: 40 * 60) }).hero)
+        #expect(hero.number == "2" && hero.unit == "/3" && hero.label == "agents finished · 1 running")
+        #expect(hero.side == "40m" && hero.sideCaption == "working" && !hero.hourglass)
+    }
+
+    @Test func theVerdictSaysWhatsHappening() {
+        let nodes = [leaf("routes", .running), leaf("tests", .running), leaf("docs", .planned)]
+        let v = p.card(run(nodes: nodes)).verdict
+        #expect(v?.primary == "Working on Routes and 1 more." && v?.figure == "296K tokens")
+        // A run that needs you leads with the question instead.
+        #expect(p.card(run(state: .waiting, wait: .input, nodes: nodes)).verdict?.primary == nil)
+        // Stopped: what's left, not the state again.
+        #expect(p.card(run(state: .stopped, nodes: nodes)).verdict?.primary?.hasPrefix("3 tasks left.") == true)
+        // Done with optional work failed says so, so "4 of 5" beside it adds up.
+        let done = [leaf("a", .done), leaf("b", .done), leaf("bench", .failed, importance: .optional, counted: false)]
+        #expect(p.card(run(state: .done, nodes: done)).verdict?.primary == "Everything that counts is done; Bench, which was optional, failed.")
+    }
+
+    @Test func theRowsAreNamedForWhatTheyAre() {
+        #expect(p.card(run(nodes: [leaf("a", .running)])).rowsTitle == "Tasks")
+        #expect(p.card(run(nodes: [leaf("a", .running)]) { $0.mirrored = true }).rowsTitle == "Steps")
+        #expect(p.card(run(nodes: [leaf("a", .running)]) { $0.hasDeclaredTasks = false }).rowsTitle == "Agents")
+    }
+}
