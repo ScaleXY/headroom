@@ -26,8 +26,9 @@ final class PopoverController: NSObject {
         if isShown { close() } else { show(relativeTo: button) }
     }
 
-    /// `tab` opens on that tab (the Runs tab when a run needs you) instead of the last one used.
-    func show(relativeTo button: NSStatusBarButton, tab: Int? = nil) {
+    /// `tab` opens on that tab (the Runs tab when a run needs you) instead of the last one used;
+    /// `run` opens that run's own page on it.
+    func show(relativeTo button: NSStatusBarButton, tab: Int? = nil, run: String? = nil) {
         guard panel == nil, let buttonWindow = button.window else { return }
         let panel = PopoverPanel(contentRect: NSRect(x: 0, y: 0, width: PopoverChrome.width, height: 400),
                                  styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -47,6 +48,7 @@ final class PopoverController: NSObject {
         // ~190 MB shader archive on open (measured: 163–171 MB peaks vs 35 MB drawn), which breaks
         // the popover memory budget (PLAN §4.4).
         let root = PopoverRootView(model: model, controller: self, tab: tab)
+        if tab == PopoverRootView.runsTab { root.openRun(run) }
         // A plain container: a layer-backed `updateLayer` view as the content view itself leaves
         // the window without a server-side surface (AppKit reports it visible; nothing appears).
         let container = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
@@ -191,6 +193,9 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
                 .draw(x: x + width - 3, capCenter: mid, align: .right, in: ctx)
         }
     }
+
+    /// Opens a run's own page (nil: the list), before the first rebuild.
+    func openRun(_ id: String?) { cards.detailRun = id }
 
     /// Back from a run's page; false when there was nowhere to go back to.
     func goBack() -> Bool {

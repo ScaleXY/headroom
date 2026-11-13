@@ -1,0 +1,101 @@
+import Foundation
+import Testing
+import HeadroomKit
+@testable import HeadroomPresent
+
+/// The run page's parts: one status line, open tasks under their parents, the limit, the lanes.
+@MainActor @Suite struct RunLayoutsTests {
+    let now = Demo.now
+    var presenter: RunsPresenter { RunsPresenter(now: now) }
+
+    @Test func aRunningRunSaysWhatsRunningInOneLine() {
+        let page = presenter.pageModel(Demo.declaredRun(now: now))
+        #expect(page.status.key == "3 running")
+        #expect(page.status.detail == "Refund webhooks, Receipts, Cover checkout end to end")
+        #expect(page.groupsTitle == "Open tasks")
+    }
+
+    @Test func statusFollowsTheState() {
+        #expect(presenter.pageModel(Demo.inputRun(now: now)).status == RunStatusModel(key: "Waiting on you", detail: "Switch the queries over asks"))
+        #expect(presenter.pageModel(Demo.observedRun(now: now)).status.key == "2 agents running")
+        #expect(presenter.pageModel(Demo.limitRun(now: now)).status.key == "Paused at the limit")
+        let quiet = presenter.pageModel(Demo.quietRun(now: now)).status
+        #expect(quiet.key.hasPrefix("Quiet ") && quiet.detail?.hasPrefix("on ") == true)
+        #expect(presenter.pageModel(Demo.finishedRun(now: now)).status.key == RunWords.done)
+        #expect(presenter.pageModel(Demo.abandonedRun(now: now)).status.key == RunWords.abandoned)
+    }
+
+    @Test func openTasksSitUnderTheirParentsAndFinishedOnesFold() {
+        let r = Demo.declaredRun(now: now)
+        let page = presenter.pageModel(r)
+        let titled = page.groups.map { ($0.title, $0.rows.map(\.title)) }
+        #expect(titled.contains { $0.0 == "Rewrite the routes › Refunds" && $0.1 == ["Refund webhooks", "Audit log"] })
+        #expect(titled.contains { $0.0 == "Port the checkout endpoints › Rewrite the routes" && $0.1 == ["Receipts"] })
+        // Top-level tasks read as "Other" beside named groups, and come last.
+        #expect(page.groups.last?.title == "Other")
+        #expect(page.groups.last?.rows.map(\.title) == ["Cover checkout end to end", "Update the integration guide"])
+        #expect(page.groups.allSatisfy { g in g.rows.allSatisfy { $0.glyph != .done } })
+        #expect(page.openCount == 5 && page.doneCount == 5 && !page.showDone)
+
+        let shown = presenter.pageModel(r, showDone: true)
+        #expect(shown.showDone && shown.groups.last?.title == "Done" && shown.groups.last?.rows.count == 5)
+    }
+
+    @Test func aFinishedRunListsWhatDidntFinish() {
+        let page = presenter.pageModel(Demo.replacedRun(now: now))
+        #expect(page.groupsTitle == "Didn't finish")
+        #expect(page.groups.flatMap(\.rows).allSatisfy { $0.glyph != .done })
+        #expect(page.lanes == nil && page.limit == nil)
+        #expect(page.facts.map(\.label).starts(with: ["Took", "Tokens"]))
+    }
+
+    @Test func theLimitIsOneLineWithItsForecast() throws {
+        let page = presenter.pageModel(Demo.timelineRun(now: now))
+        let limit = try #require(page.limit)
+        #expect(!limit.pause.isEmpty && !limit.resume.isEmpty && limit.finish?.hasPrefix("~") == true)
+        #expect(limit.note?.contains("62%") == true)
+        #expect(page.line?.hasPrefix("Pauses \(limit.pause) at the limit") == true)
+        #expect(page.facts.first?.label == "Done")
+        #expect(page.facts.contains { $0.mustHave && $0.value == "2 of 3" })
+    }
+
+    @Test func theListLineLeadsWithTheQuestion() {
+        let page = presenter.pageModel(Demo.inputRun(now: now))
+        #expect(page.line?.hasPrefix("“May I drop the unused audit table?") == true)
+    }
+
+    @Test func lanesPutWorkOnOneTimeAxisWithThePause() throws {
+        let lanes = try #require(presenter.pageModel(Demo.timelineRun(now: now)).lanes)
+        let pause = try #require(lanes.pause)
+        #expect(lanes.now > 0 && lanes.now < pause.lowerBound && pause.upperBound < 1)
+        // Open tasks first, the finished ones in one lane last.
+        #expect(lanes.lanes.last?.id == "~done" && lanes.lanes.last?.bars.count == 5)
+        let running = try #require(lanes.lanes.first { $0.title == "Cover checkout end to end" })
+        #expect(running.mustHave && running.bars.contains { $0.kind == .running && $0.end <= lanes.now + 0.001 })
+        // What's left of it is forecast, and never inside the pause.
+        let ahead = running.bars.filter { $0.kind == .forecast }
+        #expect(!ahead.isEmpty && ahead.allSatisfy { $0.start >= lanes.now - 0.001 && !($0.start > pause.lowerBound && $0.end < pause.upperBound) })
+        #expect(lanes.ticks.contains { $0.kind == .now } && lanes.ticks.filter { $0.kind == .limit }.count == 2)
+        #expect(lanes.ticks.contains { $0.kind == .finish })
+        // Labels never crowd each other.
+        for (a, b) in zip(lanes.ticks, lanes.ticks.dropFirst()) where a.kind == .plain || b.kind == .plain { #expect(b.at - a.at >= 0.1) }
+        #expect(lanes.lanes.allSatisfy { $0.bars.allSatisfy { $0.start >= 0 && $0.end <= 1 && $0.end >= $0.start } })
+    }
+
+    @Test func aRunAskingDrawsItsLaneInRose() throws {
+        let lanes = try #require(presenter.pageModel(Demo.inputRun(now: now)).lanes)
+        let asking = try #require(lanes.lanes.first)
+        #expect(asking.title == "Switch the queries over" && asking.bars.contains { $0.kind == .asking })
+        #expect(asking.meta?.hasPrefix("asks") == true)
+    }
+
+    @Test func everyDemoRunBuildsAPage() {
+        for s in Demo.runScenarios(now: now) {
+            let page = presenter.page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
+            for c in page.live + page.recent {
+                #expect(c.page != nil, "\(s.name) \(c.title)")
+                #expect(c.page?.status.key.isEmpty == false)
+            }
+        }
+    }
+}

@@ -211,10 +211,12 @@ extension RunsPresenter {
 
     // MARK: Status
 
-    /// The leaves a page lists: declared tasks (and the replaced ones), a mirrored plan's steps,
-    /// or, with no plan, the agents. Helper agents under a declared task stay out.
+    /// What a page lists: declared leaf tasks (and the replaced ones) or a mirrored plan's steps;
+    /// with no plan, every agent, since one that spawned others is still at work itself. Helper
+    /// agents under a declared task stay out.
     func pageLeaves(_ r: TaskRun) -> [TaskNode] {
-        r.nodes.filter { n in n.leaf && (!r.hasDeclaredTasks || n.declared || n.counted || n.replacedBy != nil) }
+        guard r.hasDeclaredTasks else { return r.nodes }
+        return r.nodes.filter { n in n.leaf && (n.declared || n.counted || n.replacedBy != nil) }
     }
 
     func status(_ r: TaskRun) -> RunStatusModel {

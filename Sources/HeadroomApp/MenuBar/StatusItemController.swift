@@ -83,8 +83,9 @@ final class StatusItemController: NSObject {
         if NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
             showMenu()
         } else if !popover.isShown, runNeedsYou() {
-            // A run waiting on an answer: open where the question is.
-            popover.show(relativeTo: sender, tab: PopoverRootView.runsTab)
+            // A run waiting on an answer: open where the question is, on its own page when it's the only one.
+            let asking = model.taskRuns.filter { $0.needsInput && !$0.hidden && !$0.abandoned && $0.isActive(now: Date()) }
+            popover.show(relativeTo: sender, tab: PopoverRootView.runsTab, run: asking.count == 1 ? asking[0].id : nil)
         } else {
             popover.toggle(relativeTo: sender)
         }

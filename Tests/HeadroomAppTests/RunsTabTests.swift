@@ -5,6 +5,7 @@ import Testing
 import HeadroomKit
 import HeadroomPresent
 
+/// The Runs tab: a list (in any style) whose every line opens the run's own page.
 @MainActor @Suite struct RunsTabTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -14,127 +15,140 @@ import HeadroomPresent
         return TaskRun(id: id, title: "Run \(id)", startedAt: now, updatedAt: now, state: .running, hasDeclaredTasks: true, nodes: nodes)
     }
 
-    /// Draws the page offscreen and returns the regions it recorded.
-    func regions(_ page: RunsPageModel) -> [HitRegion] {
+    /// Draws the list offscreen: its measured and drawn heights and the regions it recorded.
+    func list(_ page: RunsPageModel, _ style: RunsListStyle, showFinished: Bool = false) -> (measured: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
         let out = RenderOutput()
-        _ = renderImage(size: CGSize(width: 400, height: 600), scale: 1) { ctx in
-            RunCardRenderer.drawPage(page, origin: CGPoint(x: 12, y: 0), width: 360, theme: .dark, ctx: ctx, out: out)
+        let measured = RunListRenderer.drawPage(page, style: style, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: nil)
+        var drawn: CGFloat = 0
+        _ = renderImage(size: CGSize(width: 400, height: 1600), scale: 1) { ctx in
+            drawn = RunListRenderer.drawPage(page, style: style, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: ctx, out: out)
         }
-        return out.regions
+        return (measured, drawn, out.regions)
     }
 
-    @Test func headerAndSummaryRowToggleTheRun() {
+    /// Draws a run's page offscreen.
+    func runPage(_ card: RunCardModel, _ style: RunPageStyle, theme: Theme = .dark) -> (measured: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
+        let out = RenderOutput()
+        let measured = RunPageRenderer.draw(card, style: style, origin: .zero, width: 360, theme: theme, ctx: nil)
+        var drawn: CGFloat = 0
+        _ = renderImage(size: CGSize(width: 400, height: 1600), scale: 1) { ctx in
+            drawn = RunPageRenderer.draw(card, style: style, origin: .zero, width: 360, theme: theme, ctx: ctx, out: out)
+        }
+        return (measured, drawn, out.regions)
+    }
+
+    func opens(_ regions: [HitRegion]) -> Set<String> {
+        Set(regions.compactMap { if case .openRun(let id) = $0.action { id } else { nil } })
+    }
+
+    @Test func everyLineOpensItsRunInEveryStyle() {
+        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
+        let all = Set((page.live + page.recent).map(\.id))
+        for style in RunsListStyle.allCases {
+            let l = list(page, style, showFinished: true)
+            #expect(opens(l.regions) == all, "\(style)")
+            // Lines say they're clickable on hover.
+            #expect(l.regions.filter { if case .openRun = $0.action { true } else { false } }.allSatisfy { $0.hover != nil }, "\(style)")
+        }
+    }
+
+    @Test func twoLineFoldsTheFinishedRuns() {
+        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
+        let folded = list(page, .twoLine)
+        #expect(folded.regions.contains { $0.action == .toggleFinished })
+        #expect(opens(folded.regions) == Set(page.live.map(\.id)))
+        #expect(list(page, .twoLine, showFinished: true).measured > folded.measured)
+    }
+
+    @Test func fillRowsAnswerFromTheRow() {
+        let r = Demo.inputRun(now: Demo.now)
+        let l = list(RunsPresenter(now: Demo.now).page([r]), .fill)
+        // The button wins over its row.
+        let button = l.regions.first { $0.action == .runButton(r.id, .openSession) }
+        #expect(button != nil)
+        if let b = button {
+            #expect(l.regions.last { $0.rect.contains(CGPoint(x: b.rect.midX, y: b.rect.midY)) && $0.action != .none }?.action == .runButton(r.id, .openSession))
+        }
+    }
+
+    @Test func emptyTabConnectsAgentsAndFinishedListOpens() {
+        for style in RunsListStyle.allCases {
+            #expect(list(RunsPageModel(), style).regions.contains { $0.action == .connectAgents })
+        }
+        let many = (0..<6).map { i in
+            TaskRun(id: "d\(i)", title: "Done \(i)", startedAt: now, updatedAt: now.addingTimeInterval(-Double(i + 1) * 60), state: .done, hasDeclaredTasks: true)
+        }
+        for style in RunsListStyle.allCases {
+            #expect(list(RunsPresenter(now: now).page(many), style, showFinished: true).regions.contains { $0.action == .moreRecent }, "\(style)")
+        }
+    }
+
+    @Test func theListIsFarShorterThanTheOldCards() {
+        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
+        #expect(list(page, .ledger).measured < 620)
+    }
+
+    @Test func aRunPageOffersItsMenuSessionAndQuestionButtons() {
+        let r = Demo.inputRun(now: Demo.now)
+        let card = RunsPresenter(now: Demo.now).page([r]).live[0]
+        for style in RunPageStyle.allCases {
+            let actions = runPage(card, style).regions
+            #expect(actions.contains { $0.action == .runMenu(r.id) }, "\(style)")
+            #expect(actions.contains { $0.action == .runButton(r.id, .openSession) } && actions.contains { $0.action == .runButton(r.id, .copyResume) }, "\(style)")
+            // The offered answers are words, never buttons.
+            #expect(actions.allSatisfy { $0.tooltip?.contains("Drop it") != true })
+            let menu = actions.first { $0.action == .runMenu(r.id) }!
+            #expect(actions.last { $0.rect.contains(CGPoint(x: menu.rect.midX, y: menu.rect.midY)) && $0.action != .none }?.action == .runMenu(r.id))
+        }
+    }
+
+    @Test func doneTasksFoldBehindOneToggle() {
         let presenter = RunsPresenter(now: now)
-        var expanded: Set<String> = []
-        var page = presenter.page([run("x", finished: true)], expanded: expanded)
-        let toggles = regions(page).filter { $0.action == .toggleRun("x") }
-        // The header and the "1 finished" row.
-        #expect(toggles.count == 2 && toggles[0].rect.minY < toggles[1].rect.minY)
-        #expect(page.live[0].rows.map(\.title) == ["Still going", "1 finished"])
-
-        // A click on the summary row, as `CardsView` handles it.
-        let click = CGPoint(x: toggles[1].rect.midX, y: toggles[1].rect.midY)
-        if case .toggleRun(let id) = regions(page).last(where: { $0.rect.contains(click) && $0.action != .none })?.action {
-            if expanded.remove(id) == nil { expanded.insert(id) }
-        }
-        page = presenter.page([run("x", finished: true)], expanded: expanded)
-        #expect(page.live[0].expanded && page.live[0].rows.map(\.title) == ["Still going", "Done already", "Hide 1 finished"])
-        #expect(regions(page).filter { $0.action == .toggleRun("x") }.count == 2)
-    }
-
-    @Test func nothingToToggleWithoutFinishedRows() {
-        let page = RunsPresenter(now: now).page([run("y", finished: false)])
-        #expect(!regions(page).contains { if case .toggleRun = $0.action { true } else { false } })
-    }
-
-    @Test func cardsOfferTheirMenuAndQuestionButtons() {
-        let page = RunsPresenter(now: Demo.now).page([Demo.inputRun(now: Demo.now)])
-        let actions = regions(page).map(\.action)
-        let id = Demo.inputRun(now: Demo.now).id
-        #expect(actions.contains(.runMenu(id)))
-        #expect(actions.contains(.runButton(id, .openSession)) && actions.contains(.runButton(id, .copyResume)))
-        // The menu wins over the header's toggle where they overlap.
-        let menu = regions(page).first { $0.action == .runMenu(id) }!
-        let hit = regions(page).last { $0.rect.contains(CGPoint(x: menu.rect.midX, y: menu.rect.midY)) && $0.action != .none }
-        #expect(hit?.action == .runMenu(id))
+        let card = presenter.page([run("x", finished: true)]).live[0]
+        let toggles = runPage(card, .briefing).regions.filter { $0.action == .toggleRun("x") }
+        #expect(toggles.count == 1 && toggles[0].hover != nil)
+        let shown = presenter.page([run("x", finished: true)], expanded: ["x"]).live[0]
+        #expect(runPage(shown, .briefing).measured > runPage(card, .briefing).measured)
+        // Nothing finished, nothing to toggle.
+        let none = presenter.page([run("y", finished: false)]).live[0]
+        #expect(!runPage(none, .briefing).regions.contains { if case .toggleRun = $0.action { true } else { false } })
     }
 
     @Test func rowsWithMoreToSayOpenOnClick() {
         let r = Demo.declaredRun(now: Demo.now)
         let presenter = RunsPresenter(now: Demo.now)
-        let closed = regions(presenter.page([r], expanded: [r.id]))
+        let closed = runPage(presenter.page([r], expanded: [r.id]).live[0], .briefing).regions
         #expect(closed.contains { $0.action == .toggleRow(r.id, "schema") })
-        // Opened, the row is taller and still closes on click.
-        let opened = regions(presenter.page([r], expanded: [r.id], opened: [RunsPresenter.rowKey(run: r.id, row: "schema")]))
+        let opened = runPage(presenter.page([r], expanded: [r.id], opened: [RunsPresenter.rowKey(run: r.id, row: "schema")]).live[0], .briefing).regions
         let before = closed.first { $0.action == .toggleRow(r.id, "schema") }!.rect.height
         let after = opened.first { $0.action == .toggleRow(r.id, "schema") }!.rect.height
         #expect(after > before)
     }
 
-    @Test func emptyTabConnectsAgentsAndFinishedListOpens() {
-        #expect(regions(RunsPageModel()).contains { $0.action == .connectAgents })
-        let many = (0..<6).map { i in
-            TaskRun(id: "d\(i)", title: "Done \(i)", startedAt: now, updatedAt: now.addingTimeInterval(-Double(i + 1) * 60), state: .done, hasDeclaredTasks: true)
-        }
-        #expect(regions(RunsPresenter(now: now).page(many)).contains { $0.action == .moreRecent })
-        #expect(regions(RunsPresenter(now: now).page(many, allRecent: true)).contains { $0.action == .moreRecent })
-    }
-
     @Test func everyDemoScenarioMeasuresAsItDraws() {
         for s in Demo.runScenarios(now: Demo.now) {
             let page = RunsPresenter(now: Demo.now).page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
-            for theme in [Theme.dark, .light] {
-                let measured = RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: theme, ctx: nil)
-                var drawn: CGFloat = 0
-                _ = renderImage(size: CGSize(width: 400, height: 200), scale: 1) { ctx in
-                    drawn = RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: theme, ctx: ctx)
+            for style in RunsListStyle.allCases {
+                for show in [false, true] {
+                    let l = list(page, style, showFinished: show)
+                    #expect(l.measured == l.drawn && l.measured > 0, "\(s.name) \(style)")
                 }
-                #expect(measured == drawn, "\(s.name)")
+            }
+            for card in page.live + page.recent {
+                for style in RunPageStyle.allCases {
+                    for theme in [Theme.dark, .light] {
+                        let p = runPage(card, style, theme: theme)
+                        #expect(p.measured == p.drawn && p.measured > 0, "\(s.name) \(card.title) \(style)")
+                    }
+                }
             }
         }
     }
-
-    @Test func measuringMatchesDrawing() {
-        let page = RunsPresenter(now: now).page([run("x", finished: true), run("y", finished: false)])
-        let measured = RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: .light, ctx: nil)
-        var drawn: CGFloat = 0
-        _ = renderImage(size: CGSize(width: 400, height: 600), scale: 1) { ctx in
-            drawn = RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: .light, ctx: ctx)
-        }
-        #expect(measured == drawn && measured > 0)
-    }
 }
 
-/// The compact view: a line per run, each opening its card in place; heights measured as drawn.
+/// What the Ledger's time column says when a run isn't simply running.
 @MainActor @Suite struct RunsCompactTests {
     let now = Demo.now
-
-    func regions(_ page: RunsPageModel, open: Set<String> = []) -> (height: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
-        let out = RenderOutput()
-        let measured = RunCompactRenderer.drawPage(page, open: open, origin: .zero, width: 360, theme: .dark, ctx: nil)
-        var drawn: CGFloat = 0
-        _ = renderImage(size: CGSize(width: 400, height: 1600), scale: 1) { ctx in
-            drawn = RunCompactRenderer.drawPage(page, open: open, origin: .zero, width: 360, theme: .dark, ctx: ctx, out: out)
-        }
-        return (measured, drawn, out.regions)
-    }
-
-    @Test func everyRunIsOneLineThatOpensItsCard() throws {
-        let page = RunsPresenter(now: now).page(Demo.runScenarios(now: now).first { $0.name == "mixed" }!.runs)
-        let lines = regions(page)
-        #expect(lines.height == lines.drawn)
-        let opens = lines.regions.filter { if case .openCompact = $0.action { true } else { false } }
-        #expect(opens.count == page.live.count + page.recent.count)
-        #expect(opens.allSatisfy { $0.rect.height == RunCompactRenderer.rowHeight })
-        // Far shorter than the cards.
-        #expect(lines.height < RunCardRenderer.drawPage(page, origin: .zero, width: 360, theme: .dark, ctx: nil) / 2)
-
-        // Opening one puts its card in the line's place, and its header closes it again.
-        let id = try #require(page.live.dropFirst().first?.id)
-        let opened = regions(page, open: [id])
-        #expect(opened.height == opened.drawn && opened.height > lines.height)
-        #expect(opened.regions.contains { $0.action == .openCompact(id) && $0.rect.height == 44 })
-    }
 
     @Test func theTimeColumnSaysWhatHoldsARunUp() {
         let page = RunsPresenter(now: now).page(Demo.runScenarios(now: now).first { $0.name == "mixed-all" }!.runs)
