@@ -36,7 +36,7 @@ public enum HeadroomCLI {
             return Exit.ok.rawValue
         }
         let json = args.contains("--json")
-        let ctx = TaskContext(home: home, environment: environment, now: now, output: output, style: style, input: input)
+        let ctx = TaskContext(home: home, environment: environment, now: now, output: output, style: style, input: input, snapshotURL: snapshotURL)
         switch args.first {
         case "statusline":
             // Status lines are read through pipes (Claude Code, tmux), so only NO_COLOR turns colors off.
@@ -82,9 +82,9 @@ public enum HeadroomCLI {
            headroom tasks [--run ID] [--all] [--json] [--watch]
            headroom task plan [--run ID] [--title T] [--file PATH | -]
            headroom task add ID --title T [--effort xs|s|m|l|xl|N] [--importance critical|normal|optional] [--steps N]
-           headroom task start|done|fail|skip|cancel|progress|wait ID … (see headroom task --help)
-           headroom task guide | hook
-           headroom hooks install|uninstall|status [--settings PATH] [--project] [--codex] [--enforce]
+           headroom task start|done|fail|skip|cancel ID [ID …] | progress|wait ID … (see headroom task --help)
+           headroom task status [--titles] | guide | adopt RUN | hook
+           headroom hooks install|uninstall|status [--codex] [--enforce] [--instructions] [--settings PATH] [--project]
            headroom mcp
 
     Shows how much of your weekly Claude and Codex allowance is left against the time
@@ -116,7 +116,7 @@ public enum HeadroomCLI {
         // Claude Code pipes its session JSON in; its `session_id` names the run when nothing else does.
         let piped = format == .claude ? tasks.input.readPiped() : nil
         let session = piped.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }?["session_id"] as? String
-        if let run = RunResolver.resolve(flag: value("--run") ?? session, environment: tasks.environment),
+        if let run = RunResolver.resolve(flag: value("--run"), environment: tasks.environment, session: session, home: tasks.home),
            let r = TaskStore(home: tasks.home).run(run, now: now), !r.nodes.isEmpty, r.isActive(now: now) {
             line += "  " + TaskRender.statusSegment(r, format: format, colors: style.colors)
         }

@@ -36,7 +36,7 @@ public struct CLIInput {
     }
 
     /// Input only if some is already waiting or arrives within a moment: status lines also run
-    /// under tmux and prompts, where standard input may be a pipe nobody writes to.
+    /// under tmux and prompts, and agents' shells, where standard input may be a pipe nobody writes to.
     func readPiped(timeout: Int32 = 50) -> Data? {
         guard isPiped, isReady(timeout) else { return nil }
         let data = readAll()
@@ -52,6 +52,8 @@ struct TaskContext {
     var output: (String) -> Void
     var style: Style
     var input: CLIInput
+    /// The app's snapshot, for the room left in the 5-hour window; `home/snapshot.json` when nil.
+    var snapshotURL: URL? = nil
 
     /// Wakes `--watch`, `wait --run` and the app.
     func posted() { notify_post(TaskJournal.notification) }
@@ -62,28 +64,46 @@ struct TaskContext {
     }
 
     func error(_ text: String) { FileHandle.standardError.write(Data((text + "\n").utf8)) }
+
+    var snapshot: Snapshot? { SnapshotFile.read(from: snapshotURL ?? home.appendingPathComponent("snapshot.json")) }
 }
 
-/// Run ids: `--run`, else a `RUN:` prefix on the task id, else the first harness variable set.
-/// `CODEX_THREAD_ID` sits with the harness-native ids, before T3 Code's, so a command an agent
-/// runs and the hooks of its harness (which see only the session id) name the same run.
+/// Which run a command or hook means. One order everywhere: `--run`, then `HEADROOM_RUN`, then the
+/// harness session (a hook payload's `session_id`, else `CLAUDE_CODE_SESSION_ID`,
+/// `CODEX_THREAD_ID`, `T3CODE_THREAD_ID`). A harness session that adopted an earlier run
+/// (`headroom task adopt`) means that run. A `RUN:` prefix on a task id names the run for that id
+/// when no `--run` is given.
 enum RunResolver {
-    static let variables = ["HEADROOM_RUN", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "T3CODE_THREAD_ID"]
+    static let sessionVariables = ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "T3CODE_THREAD_ID"]
+    static let variables = ["HEADROOM_RUN"] + sessionVariables
 
-    static func resolve(flag: String?, environment: [String: String]) -> String? {
+    static func resolve(flag: String?, environment: [String: String], session: String? = nil, home: URL? = nil) -> String? {
         if let flag, !flag.isEmpty { return TaskRunID.sanitize(flag) }
-        for v in variables { if let raw = environment[v], let id = TaskRunID.sanitize(raw) { return id } }
+        if let raw = environment["HEADROOM_RUN"], let id = TaskRunID.sanitize(raw) { return id }
+        guard let s = harnessSession(environment: environment, payload: session) else { return nil }
+        return home.flatMap { alias(for: s, home: $0) } ?? s
+    }
+
+    /// The harness's own id for this session, before any adoption.
+    static func harnessSession(environment: [String: String], payload: String? = nil) -> String? {
+        if let payload, let id = TaskRunID.sanitize(payload) { return id }
+        for v in sessionVariables { if let raw = environment[v], let id = TaskRunID.sanitize(raw) { return id } }
         return nil
     }
 
-    /// The run and path for a task id that may carry a `RUN:` prefix.
-    static func resolve(flag: String?, id: String, environment: [String: String]) -> (run: String, path: String)? {
-        if let flag, !flag.isEmpty {
-            guard let run = TaskRunID.sanitize(flag) else { return nil }
-            return (run, TaskRef(id)?.path ?? id)
-        }
-        if let ref = TaskRef(id) { return (ref.run, ref.path) }
-        return resolve(flag: nil, environment: environment).map { ($0, id) }
+    /// `tasks/aliases/<session>`: the run a session adopted.
+    static func aliasURL(session: String, home: URL) -> URL {
+        TaskJournal.directory(home: home).appendingPathComponent("aliases", isDirectory: true).appendingPathComponent(session)
+    }
+
+    static func alias(for session: String, home: URL) -> String? {
+        guard let data = FileManager.default.contents(atPath: aliasURL(session: session, home: home).path) else { return nil }
+        return TaskRunID.sanitize(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Whether a run has any event file.
+    static func exists(_ run: String, home: URL) -> Bool {
+        TaskJournal.Stream.allCases.contains { FileManager.default.fileExists(atPath: TaskJournal.url(run: run, stream: $0, home: home).path) }
     }
 
     /// Which harness a run id came from, for the run's metadata.
@@ -95,28 +115,55 @@ enum RunResolver {
         return nil
     }
 
-    static let missing = "no run id: pass --run ID, prefix the task id with RUN:, or set HEADROOM_RUN"
+    /// The app the session runs in: its bundle id (`__CFBundleIdentifier`), else `TERM_PROGRAM`.
+    static func host(environment: [String: String]) -> String? {
+        for v in ["__CFBundleIdentifier", "TERM_PROGRAM"] { if let h = environment[v], !h.isEmpty { return String(h.prefix(120)) } }
+        return nil
+    }
+
+    static let missing = "no run id: pass --run ID, prefix the task id with RUN: (from a [hr:RUN:PATH] tag), or set HEADROOM_RUN"
 }
 
-/// Flags and positionals. Valued flags always take the next argument, so notes may start with `-`.
+/// Flags and positionals. Valued flags take the next argument (so notes may start with `-`) or
+/// `--flag=value`; `repeated` flags may be given more than once.
 struct Args {
     var positional: [String] = []
     var values: [String: String] = [:]
+    var lists: [String: [String]] = [:]
     var flags: Set<String> = []
 
     struct Bad: Error { var message: String }
 
-    init(_ args: [String], valued: Set<String> = [], flags known: Set<String> = []) throws(Bad) {
+    init(_ args: [String], valued: Set<String> = [], flags known: Set<String> = [], repeated: Set<String> = []) throws(Bad) {
         var i = 0
         while i < args.count {
-            let a = args[i]
-            if valued.contains(a) {
-                guard i + 1 < args.count else { throw Bad(message: "\(a) needs a value") }
-                values[a] = args[i + 1]
-                i += 2
+            var a = args[i]
+            var inline: String?
+            if a.hasPrefix("--"), let eq = a.firstIndex(of: "=") {
+                inline = String(a[a.index(after: eq)...])
+                a = String(a[..<eq])
+            }
+            if valued.contains(a) || repeated.contains(a) {
+                let v: String
+                if let inline {
+                    v = inline
+                    i += 1
+                } else {
+                    guard i + 1 < args.count else { throw Bad(message: "\(a) needs a value") }
+                    v = args[i + 1]
+                    i += 2
+                }
+                if repeated.contains(a) { lists[a, default: []].append(v) } else { values[a] = v }
                 continue
             }
-            if known.contains(a) { flags.insert(a) } else if a.hasPrefix("--") { throw Bad(message: "unknown option \(a)") } else { positional.append(a) }
+            if known.contains(a) {
+                guard inline == nil else { throw Bad(message: "\(a) takes no value") }
+                flags.insert(a)
+            } else if a.hasPrefix("--") {
+                throw Bad(message: "unknown option \(a)")
+            } else {
+                positional.append(args[i])
+            }
             i += 1
         }
     }
@@ -165,6 +212,9 @@ struct TaskStore {
         let events = TaskJournal.read(run: id, home: home)
         return events.isEmpty ? nil : TaskFold.fold(events, now: now).first.map { TaskCompaction.compact($0, now: now) }
     }
+
+    /// Whether a live app wrote `tasks.json`.
+    var live: Bool { TasksFile.read(from: TasksFile.url(home: home)).map(TasksFile.writerIsAlive) ?? false }
 }
 
 /// Blocks (no CPU) until a task file changes: the Darwin notification writers post, a new file in
