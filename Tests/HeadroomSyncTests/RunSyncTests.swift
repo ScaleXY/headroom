@@ -193,7 +193,7 @@ private struct DevicePayloadBeforeRuns: Decodable {
             #expect(merged.first { $0.state.isTerminal }?.lastSeen == nil)
         }
         let quiet = RunMerge.digests([envelope("a", device(runs, state: .sleeping), seen: seen)], now: now)
-        #expect(RunsPresenter(now: now).stateText(quiet[0]) == "Last seen 2h ago")
+        #expect(RunsPresenter(now: now).stateText(quiet[0]) == "Mac last seen 2h ago")
         // Awake and heard from lately: live.
         #expect(RunMerge.digests([envelope("a", device(runs), seen: now.addingTimeInterval(-5 * 60))], now: now)[0].isLive)
     }
@@ -265,44 +265,44 @@ private struct DevicePayloadBeforeRuns: Decodable {
 
     @Test func theFirstLookOnlyPrimes() {
         var ledger = RunAlertLedger()
-        #expect(ledger.observe([digest("a", .waiting, wait: .input), digest("b", .done)], now: now, needsInput: true, finished: true).isEmpty)
-        #expect(ledger.observe([digest("a", .waiting, wait: .input), digest("b", .done)], now: now, needsInput: true, finished: true).isEmpty)
+        #expect(ledger.observe([digest("a", .waiting, wait: .input), digest("b", .done)], now: now, needsInput: true, finished: true).due.isEmpty)
+        #expect(ledger.observe([digest("a", .waiting, wait: .input), digest("b", .done)], now: now, needsInput: true, finished: true).due.isEmpty)
     }
 
     @Test func needsInputAlertsOncePerEpisode() {
         var ledger = RunAlertLedger()
         _ = ledger.observe([digest("a", .running)], now: now, needsInput: true, finished: false)
         let waiting = [digest("a", .waiting, wait: .input)]
-        #expect(ledger.observe(waiting, now: now, needsInput: true, finished: false).map(\.kind) == [.needsInput])
-        #expect(ledger.observe(waiting, now: now.addingTimeInterval(60), needsInput: true, finished: false).isEmpty)
+        #expect(ledger.observe(waiting, now: now, needsInput: true, finished: false).due.map(\.kind) == [.needsInput])
+        #expect(ledger.observe(waiting, now: now.addingTimeInterval(60), needsInput: true, finished: false).due.isEmpty)
         // Answered, then asked again: a new episode.
         _ = ledger.observe([digest("a", .running)], now: now.addingTimeInterval(120), needsInput: true, finished: false)
-        #expect(ledger.observe(waiting, now: now.addingTimeInterval(180), needsInput: true, finished: false).count == 1)
+        #expect(ledger.observe(waiting, now: now.addingTimeInterval(180), needsInput: true, finished: false).due.count == 1)
     }
 
     @Test func aQuietMacAlertsOnlyOnceItsBack() {
         var ledger = RunAlertLedger()
         _ = ledger.observe([], now: now, needsInput: true, finished: true)
-        #expect(ledger.observe([digest("a", .waiting, wait: .input, lastSeen: now)], now: now, needsInput: true, finished: true).isEmpty)
-        #expect(ledger.observe([digest("a", .waiting, wait: .input)], now: now, needsInput: true, finished: true).count == 1)
+        #expect(ledger.observe([digest("a", .waiting, wait: .input, lastSeen: now)], now: now, needsInput: true, finished: true).due.isEmpty)
+        #expect(ledger.observe([digest("a", .waiting, wait: .input)], now: now, needsInput: true, finished: true).due.count == 1)
     }
 
     @Test func finishedAlertsOnceAndOnlyWhenFresh() {
         var ledger = RunAlertLedger()
         _ = ledger.observe([digest("a", .running)], now: now, needsInput: true, finished: true)
         let done = [digest("a", .done), digest("old", .failed, updated: now.addingTimeInterval(-2 * 3600))]
-        let due = ledger.observe(done, now: now, needsInput: true, finished: true)
+        let due = ledger.observe(done, now: now, needsInput: true, finished: true).due
         #expect(due.map(\.run.id) == ["a"])
         #expect(due.map(\.kind) == [.finished])
-        #expect(ledger.observe(done, now: now.addingTimeInterval(60), needsInput: true, finished: true).isEmpty)
+        #expect(ledger.observe(done, now: now.addingTimeInterval(60), needsInput: true, finished: true).due.isEmpty)
     }
 
     @Test func aSwitchThatsOffStillUsesUpTheEpisode() {
         var ledger = RunAlertLedger()
         _ = ledger.observe([], now: now, needsInput: true, finished: true)
         let runs = [digest("a", .waiting, wait: .input), digest("b", .done)]
-        #expect(ledger.observe(runs, now: now, needsInput: false, finished: false).isEmpty)
-        #expect(ledger.observe(runs, now: now.addingTimeInterval(60), needsInput: true, finished: true).isEmpty)
+        #expect(ledger.observe(runs, now: now, needsInput: false, finished: false).due.isEmpty)
+        #expect(ledger.observe(runs, now: now.addingTimeInterval(60), needsInput: true, finished: true).due.isEmpty)
     }
 
     @Test func theLedgerSurvivesARelaunch() throws {

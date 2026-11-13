@@ -48,6 +48,7 @@ public final class MobilePreferences {
         autoTrackSessions = defaults.bool(forKey: "liveActivity.auto")
         notifyRunNeedsInput = defaults.object(forKey: "notify.runNeedsInput") as? Bool ?? true
         notifyRunFinished = defaults.bool(forKey: "notify.runFinished")
+        notifyRunStopped = defaults.object(forKey: "notify.runStopped") as? Bool ?? true
         trackRuns = defaults.object(forKey: "liveActivity.runs") as? Bool ?? true
     }
 
@@ -66,6 +67,8 @@ public final class MobilePreferences {
     public var notifyRunNeedsInput: Bool { didSet { defaults.set(notifyRunNeedsInput, forKey: "notify.runNeedsInput") } }
     /// When a sync brings a run that finished. Off by default.
     public var notifyRunFinished: Bool { didSet { defaults.set(notifyRunFinished, forKey: "notify.runFinished") } }
+    /// When a sync brings a run whose agent stopped with tasks still open. On by default.
+    public var notifyRunStopped: Bool { didSet { defaults.set(notifyRunStopped, forKey: "notify.runStopped") } }
     /// Show the most pressing live run as a Live Activity. On by default.
     public var trackRuns: Bool { didSet { defaults.set(trackRuns, forKey: "liveActivity.runs") } }
 

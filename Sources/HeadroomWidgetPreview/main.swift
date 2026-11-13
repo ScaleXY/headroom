@@ -165,13 +165,14 @@ if args.contains("--mobile") {
 @MainActor
 func runDigests(names: Bool) -> [RunDigest] {
     let laptop = [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.observedRun(now: now), Demo.limitRun(now: now),
-                  Demo.finishedRun(now: now), Demo.failedRun(now: now)]
+                  Demo.finishedRun(now: now), Demo.failedRun(now: now), Demo.largeRun(now: now)]
     let asleep = [Demo.stoppedRun(now: now)].map { r -> TaskRun in var r = r; r.state = .running; r.title = "Index the photo archive"; r.updatedAt = now.addingTimeInterval(-131 * 60); return r }
     func device(_ id: String, _ name: String, seen: Date, state: DevicePowerState, _ runs: [TaskRun]) -> DeviceEnvelope {
         DeviceEnvelope(deviceID: id, updatedAt: seen, lastSeenAt: seen,
                        payload: DevicePayload(name: name, model: nil, appVersion: "0.5.0", enabledProviders: [.claude, .codex], currentAccounts: [:],
                                               sessionWarnAt: 0.75, planPriceOverrides: [:], outages: [:], state: state, syncSince: nil,
-                                              runs: RunSummaryBuilder.summaries(runs, includeNames: names, now: now)))
+                                              runs: RunSummaryBuilder.summaries(runs.map { DemoRecords.detailed($0, now: now) }, includeNames: names,
+                                                                                includeQuestion: names, now: now)))
     }
     return RunMerge.digests([device("laptop", "MacBook Pro", seen: now, state: .awake, laptop),
                              device("studio", "Mac Studio", seen: now.addingTimeInterval(-2 * 3600), state: .sleeping, asleep)], now: now)
@@ -191,6 +192,15 @@ func renderRuns() -> Int {
                 .background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
                 .environment(\.colorScheme, dark ? .dark : .light)
             render(v, to: "mobile-runs-\(label)-\(dark ? "dark" : "light").png")
+            count += 1
+        }
+        // A tapped card lists every row its Mac synced (the long session's first 30 agents, here).
+        if names {
+            let digests = runDigests(names: true)
+            let open = presenter.page(digests, expanded: Set(digests.map(\.id)))
+            let v = RunsSectionContent(page: RunsPageModel(live: open.live.filter(\.expanded)), showFinished: .constant(false))
+                .frame(width: 358).padding(16).background(Color(red: 0.08, green: 0.086, blue: 0.10)).environment(\.colorScheme, .dark)
+            render(v, to: "mobile-runs-expanded-dark.png")
             count += 1
         }
         // iPad: two columns on Now.
@@ -219,7 +229,7 @@ func renderRuns() -> Int {
                 RunActivityWatch(state: state).padding(12).background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12)))
             }
         }
-        .padding(28).background(Backdrop(dark: true)).environment(\.colorScheme, .dark)
+        .padding(28).background(Backdrop(dark: true)).environment(\.colorScheme, .dark).environment(\.staticTimers, true)
         render(activity, to: "mobile-liveactivity-runs-\(label).png")
         count += 3
     }

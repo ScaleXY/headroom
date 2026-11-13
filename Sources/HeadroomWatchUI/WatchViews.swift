@@ -143,11 +143,16 @@ public struct WatchRunsList: View {
     public var body: some View {
         let presenter = RunsPresenter(now: now, calendar: .current, locale: .current)
         let page = presenter.page(runs)
+        // Whatever needs an answer leads, wherever the presenter put it.
+        let cards = (page.live + page.recent).enumerated().sorted { ($0.element.needsInput ? 0 : 1, $0.offset) < ($1.element.needsInput ? 0 : 1, $1.offset) }
+            .map(\.element)
         VStack(alignment: .leading, spacing: 6) {
             Text("Agent runs").font(.headline)
-            ForEach(page.live + page.recent) { card in
+            ForEach(cards) { card in
                 if let run = runs.first(where: { $0.id == card.id }) {
-                    WatchRunRow(card: card, figure: presenter.shortFigure(run), progress: run.hasDeclaredTasks ? run.progress : nil)
+                    WatchRunRow(card: card, figure: card.declared ? card.headline : presenter.shortFigure(run),
+                                progress: card.declared ? run.progress : nil,
+                                question: run.question?.text.split(whereSeparator: \.isNewline).first.map(String.init))
                 }
             }
         }
@@ -159,16 +164,27 @@ struct WatchRunRow: View {
     var card: RunCardModel
     var figure: String
     var progress: TaskProgress?
+    /// The first line of the question, when the Mac shares its wording.
+    var question: String?
 
     var body: some View {
-        let p = Palette(.dark), hue = RunHue.of(card.tone)
+        let p = Palette(.dark), hue = RunHue.of(card.tone, glyph: card.glyph)
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(card.title).font(.footnote.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 2)
                 Text(figure).font(.footnote.weight(.semibold).monospacedDigit()).foregroundStyle(card.live ? .white : p.muted)
             }
-            if let progress, card.live { RunProgressBar(done: progress.done, inFlight: progress.inFlight, height: 4) }
+            if card.live {
+                if !card.segments.isEmpty {
+                    RunTaskMap(blocks: card.segments.map { RunMapBlock(weight: $0.weight, fill: $0.fill, hue: RunHue.of($0.tone)) }, height: 4, gap: 1.5)
+                } else if let progress {
+                    RunProgressBar(done: progress.done, inFlight: progress.inFlight, height: 4)
+                }
+            }
+            if card.needsInput, let question {
+                Text(question).font(.caption2).foregroundStyle(.white).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 5) {
                 RunMarkView(RunMark.of(card.glyph), color: p.run(hue), size: 9)
                 Text(card.stateText).font(.caption2.weight(.medium)).foregroundStyle(hue == .neutral ? p.muted : p.run(hue)).lineLimit(1)
@@ -188,4 +204,6 @@ extension RunMark {
 
 extension RunHue {
     static func of(_ t: RunTone) -> RunHue { RunHue(rawValue: "\(t)") ?? .quiet }
+    /// Rose only for needing you: an alert on anything else (a failure) draws as `failed`.
+    static func of(_ t: RunTone, glyph: RunGlyph) -> RunHue { t == .alert && glyph != .needsInput ? .failed : of(t) }
 }

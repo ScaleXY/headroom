@@ -14,9 +14,10 @@ public enum RunMark: String, Codable, Sendable, Hashable, CaseIterable {
 }
 
 /// What a mark or word means, for its color (`RunTone`): blue for work moving, ink for settled,
-/// amber for something to look at, rose for something that needs you or broke.
+/// amber for something to look at, rose only for something that needs you. Something that broke
+/// is `failed`: strong ink, told apart by its ✕ and its words rather than a color.
 public enum RunHue: String, Codable, Sendable, Hashable {
-    case progress, neutral, warn, alert, quiet
+    case progress, neutral, warn, alert, quiet, failed
 }
 
 extension Palette {
@@ -27,6 +28,7 @@ extension Palette {
         case .warn: amber
         case .alert: rose
         case .quiet: muted
+        case .failed: ink.opacity(0.9)
         }
     }
 }
@@ -148,21 +150,23 @@ public struct RunStateCapsule: View {
 // MARK: - Live Activity
 
 /// What the run Live Activity shows: the most pressing live run on any Mac. Small (well under
-/// ActivityKit's 4 KB), and the finish is a fixed time, so it stays right between updates.
+/// ActivityKit's 4 KB), and the finish is a fixed time, so it stays right between updates. Fields
+/// added later are optional, so an activity started by an older build still decodes.
 public struct RunActivityState: Codable, Hashable, Sendable {
     /// The run's title, or "Run on <Mac>" when the Mac doesn't share names.
     public var title: String
-    /// "Needs your input", "Running", "Last seen 2h ago".
+    /// "Needs your input", "Running", "Mac last seen 2h ago".
     public var stateText: String
     public var mark: RunMark
     public var hue: RunHue
     public var provider: Provider?
     /// "42%", or "7/9" agents for a run with nothing declared.
     public var figure: String
-    /// The declared plan's done and in-flight shares; nil for observed runs.
+    /// Done and in-flight shares: the declared plan's, or finished and running agents over all
+    /// agents seen for an observed run.
     public var done: Double?
     public var inFlight: Double?
-    /// "7 of 9 agents finished", or the counts line.
+    /// "5 of 11 tasks · 3 running", "7 of 9 agents finished", or the counts line.
     public var detail: String?
     /// When it should finish at the recent rate.
     public var finishAt: Date?
@@ -171,16 +175,39 @@ public struct RunActivityState: Codable, Hashable, Sendable {
     public var updatedAt: Date
     /// Not finished, and its Mac still heard from.
     public var live: Bool
+    /// The task map, when the run has a plan (at most 24 blocks).
+    public var blocks: [RunMapBlock]?
+    /// The forecast as a range of clock times.
+    public var finishLow: Date?
+    public var finishHigh: Date?
+    /// The first line of the question it waits on, when the Mac shares the wording.
+    public var question: String?
 
     public init(title: String, stateText: String, mark: RunMark, hue: RunHue, provider: Provider?, figure: String, done: Double?, inFlight: Double?,
-                detail: String?, finishAt: Date?, subtitle: String, updatedAt: Date, live: Bool) {
+                detail: String?, finishAt: Date?, subtitle: String, updatedAt: Date, live: Bool, blocks: [RunMapBlock]? = nil,
+                finishLow: Date? = nil, finishHigh: Date? = nil, question: String? = nil) {
         self.title = title; self.stateText = stateText; self.mark = mark; self.hue = hue; self.provider = provider; self.figure = figure
         self.done = done; self.inFlight = inFlight; self.detail = detail; self.finishAt = finishAt; self.subtitle = subtitle; self.updatedAt = updatedAt
-        self.live = live
+        self.live = live; self.blocks = blocks; self.finishLow = finishLow; self.finishHigh = finishHigh; self.question = question
     }
 
     /// The progress the ring and bar show: done for a plan, finished agents otherwise.
     public var fraction: Double? { done }
+
+    /// "~2:10 PM", or "2:05–2:20 PM" while the forecast is a wide range; nil once it's passed.
+    public func finishText(_ copy: Copy) -> String? {
+        guard live else { return nil }
+        if let lo = finishLow, let hi = finishHigh, hi > copy.now {
+            let a = copy.when(max(lo, copy.now)), b = copy.when(hi)
+            if a == b { return "~" + a }
+            // "2:05 PM–2:20 PM" reads as "2:05–2:20 PM".
+            let suffix = b.split(separator: " ").last.map(String.init) ?? ""
+            if !suffix.isEmpty, a.hasSuffix(" " + suffix), !suffix.contains(":") { return String(a.dropLast(suffix.count + 1)) + "–" + b }
+            return a + "–" + b
+        }
+        guard let f = finishAt, f > copy.now else { return nil }
+        return "~" + copy.when(f)
+    }
 }
 
 #if canImport(ActivityKit) && os(iOS)
@@ -193,6 +220,49 @@ public struct RunActivityAttributes: ActivityAttributes {
     public init(runID: String) { self.runID = runID }
 }
 #endif
+
+/// "Updated 4 min ago", ticking on its own between updates (fixed in rendered previews).
+struct RunUpdatedText: View {
+    var updatedAt: Date
+    var now: Date
+    @Environment(\.staticTimers) private var staticTimers
+
+    var body: some View {
+        if staticTimers {
+            Text("Updated \(Copy(now: now).ago(updatedAt))")
+        } else {
+            Text("Updated \(Text(.currentDate, format: .reference(to: updatedAt, allowedFields: [.minute, .hour, .day], maxFieldCount: 1)))")
+        }
+    }
+}
+
+/// The plan as a task map, or the bar when there is no map.
+struct RunActivityProgress: View {
+    var state: RunActivityState
+    var height: CGFloat
+
+    var body: some View {
+        if let blocks = state.blocks, !blocks.isEmpty {
+            RunTaskMap(blocks: blocks, height: height, gap: 2)
+        } else if let done = state.done {
+            RunProgressBar(done: done, inFlight: state.inFlight ?? 0, height: height)
+        }
+    }
+}
+
+/// The question's first line, in the needs-you rose.
+struct RunActivityQuestion: View {
+    var text: String
+    var size: CGFloat
+
+    var body: some View {
+        let p = Palette(.dark)
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "questionmark.bubble.fill").font(.system(size: size - 1, weight: .semibold)).foregroundStyle(p.rose)
+            Text(text).font(.system(size: size, weight: .medium)).foregroundStyle(p.ink).lineLimit(1).privacySensitive()
+        }
+    }
+}
 
 /// The Lock Screen and banner presentation.
 public struct RunActivityLockScreen: View {
@@ -217,22 +287,23 @@ public struct RunActivityLockScreen: View {
                 Spacer(minLength: 6)
                 Text(state.figure).font(.system(size: 24, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
             }
-            if let done = state.done { RunProgressBar(done: done, inFlight: state.inFlight ?? 0, height: 8) }
-            // The state always reads in full; the counts give way to it, on their own line.
+            if let q = state.question { RunActivityQuestion(text: q, size: 12) }
+            RunActivityProgress(state: state, height: 8)
+            // The state always reads in full; the finish gives way to it.
             HStack(spacing: 8) {
                 RunStateCapsule(state.stateText, hue: state.hue, compact: true).layoutPriority(1)
                 Spacer(minLength: 4)
-                if let finish = state.finishAt, state.live, finish > now {
-                    Text("Done ~\(copy.when(finish))").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted)
-                        .lineLimit(1)
+                if let finish = state.finishText(copy) {
+                    Text("Done \(finish)").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
                 }
             }
             HStack(spacing: 8) {
                 if let detail = state.detail {
-                    Text(detail).font(.system(size: 11, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
+                    Text(detail).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                Text("Updated \(copy.ago(state.updatedAt))").font(.system(size: 10, weight: .medium)).foregroundStyle(p.muted2).fixedSize()
+                RunUpdatedText(updatedAt: state.updatedAt, now: now).font(.system(size: 10, weight: .medium)).foregroundStyle(p.muted2)
+                    .lineLimit(1).fixedSize()
             }
         }
         .padding(14)
@@ -259,7 +330,8 @@ public struct RunActivityCompactTrailing: View {
     }
 }
 
-/// The minimal presentation and the Watch's ring: done so far, tinted by the state.
+/// The minimal presentation and the Watch's ring: done so far (finished agents for a run with no
+/// plan), tinted by the state.
 public struct RunActivityRing: View {
     public var state: RunActivityState
     public var width: CGFloat
@@ -269,13 +341,14 @@ public struct RunActivityRing: View {
         let p = Palette(.dark)
         let tone = Tone(top: p.run(state.hue), bottom: p.run(state.hue), glow: .clear, text: p.run(state.hue))
         ZStack {
-            Ring(fraction: state.done ?? 0, tone: tone, width: width)
+            Ring(fraction: state.fraction ?? 0, tone: tone, width: width)
             RunMarkView(state.mark, color: p.run(state.hue), size: 9)
         }
     }
 }
 
-/// The Dynamic Island's expanded bottom region.
+/// The Dynamic Island's expanded bottom region: the question's first line when there is one,
+/// then the map or bar, the counts and the finish.
 public struct RunActivityExpandedBottom: View {
     public var state: RunActivityState
     public var now: Date
@@ -284,12 +357,13 @@ public struct RunActivityExpandedBottom: View {
     public var body: some View {
         let p = Palette(.dark), copy = Copy(now: now)
         VStack(alignment: .leading, spacing: 6) {
-            if let done = state.done { RunProgressBar(done: done, inFlight: state.inFlight ?? 0, height: 7) }
+            if let q = state.question { RunActivityQuestion(text: q, size: 12) }
+            RunActivityProgress(state: state, height: 7)
             HStack(spacing: 8) {
-                Text(state.detail ?? state.subtitle).font(.system(size: 12, weight: .medium)).foregroundStyle(p.muted).lineLimit(1)
+                Text(state.detail ?? state.subtitle).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
                 Spacer(minLength: 4)
-                if let finish = state.finishAt, state.live, finish > now {
-                    Text("Done ~\(copy.when(finish))").font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted)
+                if let finish = state.finishText(copy) {
+                    Text("Done \(finish)").font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(p.muted).lineLimit(1)
                 }
             }
         }

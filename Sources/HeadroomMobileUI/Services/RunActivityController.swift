@@ -11,7 +11,8 @@ import HeadroomWidgetUI
 /// push-to-start, which needs a server), so it starts when Headroom is opened with a run live.
 /// Once started, every rebuild (in the foreground, or when a sync wakes the app) updates it and
 /// ends it when the run finishes or its Mac goes quiet. Between wakes it can't change; the stale
-/// date greys it out when no word has come for a while.
+/// date greys it out when no word has come for a while, and the next wake brings it back (or ends
+/// it), so a stale activity is managed like a live one rather than left behind.
 @MainActor
 public final class RunActivityController {
     /// Without an update for this long, iOS shows the activity as stale. The Mac publishes progress
@@ -22,7 +23,11 @@ public final class RunActivityController {
 
     public init() {}
 
-    private var active: [Activity<RunActivityAttributes>] { Activity<RunActivityAttributes>.activities.filter { $0.activityState == .active } }
+    /// Every activity still on screen: active, stale or not yet shown. Only ended and dismissed
+    /// ones are past managing.
+    private var current: [Activity<RunActivityAttributes>] {
+        Activity<RunActivityAttributes>.activities.filter { $0.activityState != .ended && $0.activityState != .dismissed }
+    }
 
     /// Brings the activity up to date with `runs` (most pressing first). `canStart` while in the
     /// foreground: the only time a new activity may be requested, or one swapped for a more
@@ -31,7 +36,7 @@ public final class RunActivityController {
         let presenter = RunsPresenter(now: now, calendar: .current, locale: .current)
         let target = enabled ? runs.first(where: \.isLive) : nil
         var kept = false
-        for activity in active {
+        for activity in current {
             let id = activity.attributes.runID, activityID = activity.id
             let run = runs.first { $0.id == id }
             guard let run, run.isLive, enabled else {
@@ -41,7 +46,8 @@ public final class RunActivityController {
                                       policy: run?.state.isTerminal == true ? .after(now.addingTimeInterval(Self.lingerAfterEnd)) : .immediate) }
                 continue
             }
-            if canStart, let target, target.id != id || kept {
+            // One at a time: a second one goes, and in the foreground a more pressing run takes over.
+            if kept || (canStart && target.map { $0.id != id } == true) {
                 Task { await Self.end(activityID, content: nil, policy: .immediate) }
                 continue
             }

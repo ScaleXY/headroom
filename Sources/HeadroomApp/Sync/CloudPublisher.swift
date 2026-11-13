@@ -51,6 +51,8 @@ final class CloudPublisher {
     private var lastCollect = Date.distantPast
     private var power: DevicePowerState = .awake
     private var runGate = RunPublishGate()
+    /// The `activeAt` last sent (see `activeAt(runs:now:)`).
+    private var lastActiveAt: Date?
     private var pending: Task<Void, Never>?
     private var dedupeTask: Task<Void, Never>?
     private var heartbeat: Timer?
@@ -99,6 +101,7 @@ final class CloudPublisher {
         published.removeAll()
         looks.removeAll()
         runGate = RunPublishGate()
+        lastActiveAt = nil
         status = .off
     }
 
@@ -232,6 +235,8 @@ final class CloudPublisher {
         }
         var wake: TimeInterval? = deferred ? max(5, Self.liveInterval - now.timeIntervalSince(lastLiveWrite)) : nil
         if let runsRetry { wake = min(wake ?? .infinity, max(5, runsRetry)) }
+        // While a run waits on input, keep saying you're here, so phones keep holding their alert.
+        if lastActiveAt != nil { wake = min(wake ?? .infinity, 60) }
         if let wait = wake, pending == nil {
             pending = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(wait))
@@ -248,10 +253,13 @@ final class CloudPublisher {
         guard let store, let model else { return nil }
         let now = Date()
         var payload = devicePayload(model)
-        let fresh = model.settings.taskTracking
-            ? RunSummaryBuilder.summaries(model.taskRuns, includeNames: model.settings.syncTaskNames, now: now) : nil
+        let s = model.settings
+        let fresh = s.taskTracking
+            ? RunSummaryBuilder.summaries(model.taskRuns, includeNames: s.syncTaskNames, includeQuestion: s.syncTaskNames && s.syncQuestionText, now: now)
+            : nil
         let gated = runGate.pass(fresh, now: now, force: force)
         payload.runs = gated.runs
+        payload.activeAt = activeAt(runs: gated.runs, now: now)
         guard let data = try? PayloadCodec.encode(payload) else { return gated.retryAfter }
         do {
             if data != published["device"] {
@@ -266,6 +274,21 @@ final class CloudPublisher {
             syncLog.error("device write failed: \(String(describing: error), privacy: .public)")
         }
         return gated.retryAfter
+    }
+
+    /// When the user last touched this Mac, while a synced run waits on input, so phones can hold
+    /// their alert while you're here to see the Mac's. It moves on at most once a minute, so it
+    /// doesn't rewrite the record on every flush; nil the rest of the time.
+    private func activeAt(runs: [RunSummaryPayload]?, now: Date) -> Date? {
+        guard runs?.contains(where: { $0.state == .waiting && $0.waitReason == .input }) == true else {
+            lastActiveAt = nil
+            return nil
+        }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let touched = now.addingTimeInterval(-max(0, idle.isFinite ? idle : 0))
+        if let last = lastActiveAt, touched.timeIntervalSince(last) < 60 { return last }
+        lastActiveAt = Date(timeIntervalSince1970: (touched.timeIntervalSince1970 / 15).rounded(.down) * 15)
+        return lastActiveAt
     }
 
     // MARK: Payloads
