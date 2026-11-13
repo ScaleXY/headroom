@@ -197,7 +197,8 @@ private let presenter: RunsPresenter = {
                                       time: TaskTimeSplit(working: 70 * 60, waitingInput: 22 * 60, waitingLimit: 10 * 60), optionalFailed: 1,
                                       scopeChanges: 2, retries: 1)
         d.cost = 4.1
-        d.counts = RunCounts(failed: 1, done: 4)
+        // A failed optional task doesn't count toward the run, so the Mac leaves it out of the counts.
+        d.counts = RunCounts(done: 4)
         let r = try #require(presenter.card(d).receipt)
         #expect(r.duration == "1h 42m")
         #expect(r.tokens == "296K")

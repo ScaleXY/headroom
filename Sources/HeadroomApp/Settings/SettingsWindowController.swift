@@ -731,7 +731,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     private func drawRuns(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
         var cy = y
         let on = settings.taskTracking
-        toggleRow("Track agent runs", "Nothing new is read, and nothing leaves this Mac.", on: on, action: Action.taskTracking,
+        toggleRow("Track agent runs", "Reads the transcripts Headroom already reads for usage.", on: on, action: Action.taskTracking,
                   x: x, y: cy, w: w, ctx: ctx)
         cy += 48 + 8
         let pages: [RunsPage] = [.connect, .alerts]

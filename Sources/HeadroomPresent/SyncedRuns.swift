@@ -430,14 +430,17 @@ extension RunsPresenter {
     func syncedReceipt(_ d: RunDigest) -> RunReceiptModel? {
         guard d.state.isTerminal, let r = d.receipt else { return nil }
         let c = d.counts
+        // Counts leave out what doesn't count toward the run; the receipt names failed optional work too.
+        let optional = d.hasDeclaredTasks ? r.optionalFailed : 0
+        let failed = c.failed + optional, total = c.total + optional
         var note = [d.hasDeclaredTasks ? (d.mirrored ? "steps" : "tasks") : "agents"]
-        if c.failed > 0 { note.append(r.optionalFailed == c.failed ? "\(c.failed) optional failed" : "\(c.failed) failed") }
+        if failed > 0 { note.append(r.optionalFailed == failed ? "\(failed) optional failed" : "\(failed) failed") }
         var foot: [String] = []
         if r.scopeChanges > 0 { foot.append("Plan changed \(r.scopeChanges) time\(r.scopeChanges == 1 ? "" : "s") after it started") }
         if r.retries > 0 { foot.append("\(r.retries) retr\(r.retries == 1 ? "y" : "ies")") }
         return RunReceiptModel(duration: Self.duration(r.seconds), tokens: NumberFormat.tokens(d.tokens),
                                cost: d.cost.map { "about " + NumberFormat.dollars($0) },
-                               tasks: "\(d.hasDeclaredTasks ? c.done : c.finished) of \(c.total)", tasksNote: note.joined(separator: " · "),
+                               tasks: "\(d.hasDeclaredTasks ? c.done : c.finished) of \(total)", tasksNote: note.joined(separator: " · "),
                                time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
     }
 
