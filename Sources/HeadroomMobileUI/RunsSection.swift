@@ -518,7 +518,7 @@ extension RunHue {
 }
 
 extension RunMapBlock {
-    public init(_ s: RunSegment) { self.init(weight: s.weight, fill: s.fill, hue: RunHue(s.tone), critical: s.critical) }
+    public init(_ s: RunSegment) { self.init(weight: s.weight, fill: s.fill, hue: s.failed ? .failed : RunHue(s.tone), critical: s.critical) }
 }
 
 extension RunActivityState {

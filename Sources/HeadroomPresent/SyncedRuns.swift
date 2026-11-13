@@ -34,7 +34,8 @@ public struct RunCounts: Codable, Sendable, Hashable {
 
     public static func of(_ r: TaskRun) -> RunCounts {
         var c = RunCounts()
-        for n in r.nodes where !r.hasDeclaredTasks || n.leaf {
+        // A declared plan counts what the Mac's card counts: leaves that count toward the run.
+        for n in r.nodes where !r.hasDeclaredTasks || (n.leaf && n.counted) {
             switch n.state {
             case .running: c.running += 1
             case .waiting where n.waitReason == .input: c.needsInput += 1
@@ -364,16 +365,16 @@ extension RunsPresenter {
     func syncedCounts(_ d: RunDigest, quiet: Bool) -> String? {
         guard d.hasDeclaredTasks || d.mirrored, d.counts.total > 0 else { return nil }
         let noun = d.mirrored ? "steps" : (d.counts.total == 1 ? "task" : "tasks")
-        var s = "\(d.counts.finished) of \(d.counts.total) \(noun)"
+        var s = "\(d.counts.done) of \(d.counts.total) \(noun)"
         if !quiet, !d.state.isTerminal, d.counts.running > 0 { s += " · \(d.counts.running) running" }
         return s
     }
 
-    /// "1h 12m working" while live; "took 1h 42m" once finished.
+    /// "1h 12m working" while live; "1h 42m" once finished, as the Mac's card has it.
     func syncedElapsed(_ d: RunDigest, quiet: Bool) -> String? {
         if d.state.isTerminal {
             let seconds = d.receipt?.seconds ?? d.updatedAt.timeIntervalSince(d.startedAt)
-            return seconds >= 60 ? "took \(Self.duration(seconds))" : nil
+            return seconds >= 60 ? Self.duration(seconds) : nil
         }
         guard !quiet, let w = d.workingSeconds, w >= 60 else { return nil }
         return "\(Self.duration(w)) working"
@@ -438,16 +439,6 @@ extension RunsPresenter {
                                cost: d.cost.map { "about " + NumberFormat.dollars($0) },
                                tasks: "\(d.hasDeclaredTasks ? c.done : c.finished) of \(c.total)", tasksNote: note.joined(separator: " · "),
                                time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
-    }
-
-    /// "48m", "1h 12m", "2d 4h".
-    public static func duration(_ seconds: Double) -> String {
-        let m = Int((max(0, seconds) / 60).rounded())
-        if m < 1 { return "<1m" }
-        if m < 60 { return "\(m)m" }
-        if m < 48 * 60 { return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m" }
-        let h = m / 60
-        return h % 24 == 0 ? "\(h / 24)d" : "\(h / 24)d \(h % 24)h"
     }
 
     /// The headline percent, as the Mac's card has it: the best guess of how far along the run is

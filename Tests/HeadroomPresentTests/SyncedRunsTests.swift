@@ -156,7 +156,7 @@ private let presenter: RunsPresenter = {
         #expect(presenter.card(d).counts == "5 of 10 steps · 3 running")
         // Finished: how long it took.
         let done = presenter.card(digest(Demo.finishedRun(now: now), names: false))
-        #expect(done.elapsed == "took 56m")
+        #expect(done.elapsed == "1h 42m")
         #expect(done.counts == "4 of 4 tasks")
     }
 

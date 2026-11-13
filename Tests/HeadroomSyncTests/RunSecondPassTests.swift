@@ -145,7 +145,7 @@ private struct FirstPassDevice: Decodable {
         }
         let s = try #require(RunSummaryBuilder.summaries([run], includeNames: true, includeQuestion: true, now: now)?.first)
         #expect(s.question?.asker == "Switch the queries over")
-        #expect(s.question?.options == ["Drop it", "Keep it for now"])
+        #expect(s.question?.options == ["Drop it", "Keep it for now", "Rename it to audit_old"])
         // Once answered, it's gone.
         var answered = run
         answered.state = .running; answered.waitReason = nil
@@ -215,7 +215,7 @@ private struct FirstPassDevice: Decodable {
         let merged = RunMerge.digests([env], now: now, activity: [day])
         let finished = try #require(merged.first { $0.state.isTerminal })
         #expect(abs((finished.cost ?? 0) - 5.92) < 0.001)
-        #expect(finished.receipt?.seconds == Double(56 * 60))
+        #expect(finished.receipt?.seconds == Double(102 * 60))
         let input = try #require(merged.first { $0.needsInput })
         #expect(input.macActiveAt == active)
         #expect(input.question?.text.hasPrefix("May I drop") == true)
