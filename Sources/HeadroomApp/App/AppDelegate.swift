@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(model: model, popover: popover, caffeinate: caffeinate, fans: fans, updater: updater)
         let open: () -> Void = { [weak self] in self?.showSettings() }
         popover.openSettings = open
+        popover.openSettingsSection = { [weak self] raw in
+            guard let self else { return }
+            if let section = SettingsView.Section(rawValue: raw) { self.showSettings(section: section) } else { self.showSettings(section: raw) }
+        }
         statusItem.openSettings = open
         statusItem.openWelcome = { [weak self] in self?.showOnboarding() }
         model.publisher.onStatus = { [weak self] in self?.settingsWindow?.refresh() }
