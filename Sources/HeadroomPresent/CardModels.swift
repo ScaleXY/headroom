@@ -215,6 +215,45 @@ public struct DetailRowModel: Equatable {
     }
 }
 
+/// One live agent run's share (0…1) of what its provider is spending right now.
+public struct RunSpend: Equatable, Sendable {
+    public var title: String
+    public var share: Double
+
+    public init(title: String, share: Double) {
+        self.title = title
+        self.share = share
+    }
+}
+
+/// "What's spending it": the 5-hour window's current spend as a split bar, each live run by name
+/// and then the rest. Shown only while a run spends the provider.
+public struct SpendSplitModel: Equatable {
+    public struct Slice: Equatable {
+        public var label: String
+        /// 0…1; the slices add up to 1.
+        public var share: Double
+        /// "62%"; the slices' percents add up to 100.
+        public var percent: String
+        /// Everything that isn't a tracked run.
+        public var isOther: Bool
+
+        public init(label: String, share: Double, percent: String, isOther: Bool) {
+            self.label = label
+            self.share = share
+            self.percent = percent
+            self.isOther = isOther
+        }
+    }
+    public var title: String
+    public var slices: [Slice]
+
+    public init(title: String, slices: [Slice]) {
+        self.title = title
+        self.slices = slices
+    }
+}
+
 public struct FaultBannerModel: Equatable {
     public var message: String
     public var detail: String?
@@ -241,6 +280,8 @@ public struct PaceCardModel: Equatable {
     /// Settings can hide the week's meter and graph; the models stay for sharing and the menu bar.
     public var showsMeter = true
     public var showsGlide = true
+    /// What's spending the 5-hour window, while a live run spends this provider.
+    public var spending: SpendSplitModel? = nil
 
     public init(provider: Provider, plan: String? = nil, freshness: Freshness, session: SessionBannerModel? = nil, sessionModule: SessionModuleModel? = nil, hero: HeroModel? = nil, meter: MeterModel? = nil, glide: GlideModel? = nil, verdict: VerdictModel? = nil, callout: CalloutModel? = nil, rows: [DetailRowModel], fault: FaultBannerModel? = nil, showsMeter: Bool = true, showsGlide: Bool = true) {
         self.provider = provider

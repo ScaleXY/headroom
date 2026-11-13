@@ -104,10 +104,11 @@ enum SettingsStage {
         }
         y += height * k + 16
         let samples: [(TaskNotificationKind, String, String)] = [
-            (.needsInput, "Database upgrade needs you", "Switch the queries over is waiting for your answer."),
-            (.criticalFailed, "Ship the 2.3 release: a critical task failed", "Sign and notarize"),
-            (.stale, "Clean up the contacts import went quiet", "No agent activity for 15 minutes."),
-            (.finished, "Speed up image uploads finished", "4 tasks done."),
+            (.needsInput, RunWords.alertNeedsInput("Database upgrade"), "May I drop the unused audit table? Nothing has read it since March."),
+            (.stopped, RunWords.alertStopped("Contacts import"), "3 of 5 tasks done."),
+            (.criticalFailed, RunWords.alertCriticalFailed("Ship the 2.3 release"), "Sign and notarize"),
+            (.stale, RunWords.alertQuiet("Billing jobs"), "No agent activity for \(TaskAlerts.span(settings.runQuietAfter))."),
+            (.finished, RunWords.alertFinished("Speed up image uploads"), "4 tasks done."),
         ]
         let on = samples.filter { settings.taskNotifies($0.0) }
         for (_, title, body) in on where y < rect.maxY - 120 {

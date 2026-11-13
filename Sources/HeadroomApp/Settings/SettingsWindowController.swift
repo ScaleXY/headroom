@@ -50,6 +50,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(view)
     }
 
+    /// Opens on Runs › Connect your agents (the Runs tab's empty state leads here).
+    func showRunsSetup() {
+        view.select(.runs, animated: false)
+        view.runsPage = .connect
+        show()
+    }
+
     /// Settings or readings changed elsewhere.
     func refresh() {
         if window?.appearance != settings.appearance.nsAppearance { window?.appearance = settings.appearance.nsAppearance }
@@ -127,10 +134,10 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             case .card: ("Your Pace card.", "Meters and graphs for the week and for the 5-hour session. Keep what you read, hide what you don't.")
             case .session: ("Never get cut off\nmid-session.", "Pick when the session starts warning. From there it turns amber, counts down in the menu bar and can let you know.")
             case .notifications: ("Only what's worth a ping.", "Each alert fires once per session or week. Headroom never repeats itself.")
-            case .sync: ("Your headroom,\nin your pocket.", "Headroom on iPhone, iPad and Apple Watch shows these readings, with widgets, complications and a Live Activity for the 5-hour session.")
+            case .sync: ("Your headroom,\nin your pocket.", "These readings on iPhone, iPad and Apple Watch, with widgets, complications and a Live Activity.")
             case .advanced: ("Fine-tuning.", "Plan prices for the cost comparison, the command-line tool, and where to find the CLIs.")
             case .updates: ("Always the latest.", "Headroom updates in place and reopens where it was. Your settings and history stay put.")
-            case .runs: ("Keep an eye on\nlong agent runs.", "When an agent spawns subagents, the Runs tab shows what's running, how far along it is, what needs you and what failed.")
+            case .runs: ("Keep an eye on\nlong agent runs.", "What your agents are running, how far along, what needs you and what failed.")
             }
         }
     }
@@ -156,9 +163,19 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case choose(String)
         case revealPricing
         case checkUpdates, installUpdate, cancelUpdate
-        case syncToggle, syncRemove, syncTaskNames
+        case syncToggle, syncRemove, syncTaskNames, syncQuestion
         case autoCheck, autoDownload
         case betaUpdates(Bool)
+        case runsPage(RunsPage)
+        case connect(ConnectRow.Kind)
+        case quietAfter(TimeInterval)
+    }
+
+    /// Runs splits in two: setting agents up, and what to be told about.
+    enum RunsPage: Hashable { case connect, alerts }
+
+    var runsPage: RunsPage = .connect {
+        didSet { if runsPage != oldValue { needsDisplay = true } }
     }
 
     private let settings: AppSettings
@@ -172,11 +189,17 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     private var cliMessage: String?
     private var priceFields: [Provider: NSTextField] = [:]
     private var pathFields: [String: NSTextField] = [:]
+    /// Agent setup (Runs › Connect your agents), read when Settings comes forward and after each change.
+    private let setupContext: AgentSetupContext
+    private var setup: AgentSetupState
+    private var setupMessage: (text: String, failed: Bool)?
 
-    init(settings: AppSettings, model: AppModel?, updater: AppUpdater? = nil) {
+    init(settings: AppSettings, model: AppModel?, updater: AppUpdater? = nil, setupContext: AgentSetupContext = .current) {
         self.settings = settings
         self.model = model
         self.updater = updater
+        self.setupContext = setupContext
+        setup = AgentSetupState.read(setupContext, bundledCLI: CLIInstaller.bundledCLI?.path)
         super.init(frame: NSRect(origin: .zero, size: Self.size))
         for p in Provider.allCases { priceFields[p] = makeField() }
         for tool in ["claude", "codex"] { pathFields[tool] = makeField() }
@@ -270,6 +293,16 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .syncToggle: s.syncEnabled.toggle()
         case .syncRemove: confirmRemoveSync()
         case .syncTaskNames: s.syncTaskNames.toggle()
+        case .syncQuestion: s.syncQuestionText.toggle()
+        case .runsPage(let page):
+            guard page != runsPage else { break }
+            crossfade()
+            runsPage = page
+        case .connect(let kind):
+            let result = AgentSetupActions.perform(kind, state: setup, context: setupContext)
+            setupMessage = result.message.isEmpty ? nil : (result.message, result.failed)
+            setup = AgentSetupState.read(setupContext, bundledCLI: CLIInstaller.bundledCLI?.path)
+        case .quietAfter(let v): s.runQuietAfter = v
         }
         needsDisplay = true
     }
@@ -288,6 +321,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     // MARK: Statuses
 
     func refreshStatuses() {
+        setup = AgentSetupState.read(setupContext, bundledCLI: CLIInstaller.bundledCLI?.path)
         Task {
             let status = await CLIInstaller.status()
             cliStatus = [cliMessage, status].compactMap { $0 }.joined(separator: " ")
@@ -697,25 +731,128 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     private func drawRuns(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
         var cy = y
         let on = settings.taskTracking
-        toggleRow("Track agent runs", "For the Runs tab, the menu bar and the alerts below.", on: on, action: Action.taskTracking,
+        toggleRow("Track agent runs", "Nothing new is read, and nothing leaves this Mac.", on: on, action: Action.taskTracking,
                   x: x, y: cy, w: w, ctx: ctx)
-        cy += 48 + 14
-        sectionLabel("LET ME KNOW WHEN", x: x, y: cy, ctx: ctx)
-        cy += 14
+        cy += 48 + 8
+        let pages: [RunsPage] = [.connect, .alerts]
+        segmented(["Connect your agents", "Alerts"], selected: pages.firstIndex(of: runsPage) ?? 0, x: x, y: cy, w: w,
+                  actions: pages.map { AnyHashable(Action.runsPage($0)) }, ctx: ctx)
+        cy += 30 + 16
+        switch runsPage {
+        case .connect: drawConnect(x: x, y: cy, w: w, ctx: ctx)
+        case .alerts: drawRunAlerts(x: x, y: cy, w: w, enabled: on, ctx: ctx)
+        }
+    }
+
+    private func drawRunAlerts(x: CGFloat, y: CGFloat, w: CGFloat, enabled on: Bool, ctx: CGContext) {
+        var cy = y
+        let quiet = settings.runQuietAfter
         let details: [TaskNotificationKind: String] = [
-            .needsInput: "An agent is waiting for your answer.",
+            .needsInput: "With the question it's asking.",
+            .stopped: "The agent ended its turn with tasks still open.",
             .criticalFailed: "A task marked critical didn't make it.",
-            .stale: "No agent activity for 15 minutes.",
-            .finished: "Done, or done with problems.",
+            .stale: "No agent activity for \(TaskAlerts.span(quiet)).",
+            .finished: "Done, or done with failures.",
         ]
         for kind in TaskNotificationKind.allCases {
             toggleRow(kind.title, details[kind] ?? "", on: settings.taskNotifies(kind), action: Action.taskNotify(kind), x: x, y: cy, w: w,
                       enabled: on, ctx: ctx)
-            cy += 48
+            cy += 46
         }
-        cy += 10
-        hint(symbol: "lock.fill", "Headroom reads the transcripts it already reads for token counts. It keeps only the labels agents write, agent types, model names and the project folder's name, on this Mac. iPhone & Watch get titles only if you include them.",
-             x: x, y: cy, w: w, ctx: ctx)
+        cy += 8
+        sectionLabel("CALL A RUN QUIET AFTER", x: x, y: cy, ctx: ctx)
+        cy += 14
+        let choices = AppSettings.runQuietChoices
+        segmented(choices.map { $0 >= 3600 ? "\(Int($0 / 3600)) hour" : "\(Int($0 / 60)) min" }, selected: choices.firstIndex(of: quiet) ?? 1,
+                  x: x, y: cy, w: w, actions: choices.map { AnyHashable(Action.quietAfter($0)) }, enabled: on, ctx: ctx)
+    }
+
+    // MARK: Connect your agents
+
+    private static let connectButtonFont = F.sf(12, 650)
+
+    /// Each row's height in the Connect panel, from its wrapped detail.
+    private func connectHeights(_ rows: [ConnectRow], width w: CGFloat) -> [CGFloat] {
+        rows.map { r in
+            let detail = TextBlock(r.detail, F.sf(11.5), .black, width: connectDetailWidth(r, width: w), lineHeight: 14.5)
+            return max(52, 10 + 16 + 3 + detail.height + 10)
+        }
+    }
+
+    private func connectDetailWidth(_ r: ConnectRow, width w: CGFloat) -> CGFloat {
+        let control: CGFloat = r.button.map { Text($0, Self.connectButtonFont, .black).width + 24 } ?? 36
+        return w - 12 - 28 - 10 - 13 - 12 - control - 12
+    }
+
+    private func drawConnect(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
+        let t = theme
+        let rows = ConnectRow.rows(setup, home: setupContext.userHome, now: Date())
+        let heights = connectHeights(rows, width: w)
+        let panel = CGRect(x: x, y: y, width: w, height: heights.reduce(0, +))
+        let shape = rounded(panel, 14)
+        ctx.fill(shape, t.groupFill)
+        ctx.innerStroke(shape, t.groupBorder, width: 0.5)
+        var ry = panel.minY
+        for (i, row) in rows.enumerated() {
+            let r = CGRect(x: panel.minX, y: ry, width: panel.width, height: heights[i])
+            if i > 0 { ctx.fill(CGPath(rect: CGRect(x: r.minX + 50, y: r.minY, width: r.width - 50, height: 0.5), transform: nil), t.separator) }
+            drawConnectRow(row, rect: r, ctx: ctx)
+            ry += heights[i]
+        }
+        var cy = panel.maxY + 12
+        if let m = setupMessage {
+            let color = m.failed ? t.amber : t.muted
+            CanvasControlView.drawSymbol(m.failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+                                         in: CGRect(x: x + 2, y: cy + 1, width: 13, height: 13), color: m.failed ? t.amber : t.ok, ctx: ctx)
+            let block = TextBlock(m.text, F.sf(12, 500), color, width: w - 22, lineHeight: 15.5)
+            block.draw(x: x + 22, top: cy, in: ctx)
+            cy += block.height + 10
+        } else if setup.binary != nil {
+            Text("Each change backs the file up first and can be undone here.", F.sf(12, 500), t.muted2).draw(x: x + 1, capCenter: cy + 7, in: ctx)
+        }
+    }
+
+    private func drawConnectRow(_ row: ConnectRow, rect r: CGRect, ctx: CGContext) {
+        let t = theme
+        let action = Action.connect(row.kind)
+        ctx.withState {
+            if !row.enabled { ctx.setAlpha(0.55); ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+            // Icon: the harness's own mark, or a quiet symbol tile.
+            let icon = CGRect(x: r.minX + 12, y: r.minY + 12, width: 28, height: 28)
+            switch row.kind {
+            case .hooks(let h): BrandMark.drawTile(h == .claudeCode ? .claude : .codex, in: icon, ctx: ctx, shadow: false)
+            case .instructions, .enforce:
+                ctx.fill(rounded(icon, 8), t.isDark ? white(0.08) : black(0.055))
+                CanvasControlView.drawSymbol(row.kind == .instructions ? "text.badge.checkmark" : "arrow.uturn.backward",
+                                             in: icon.insetBy(dx: 7.5, dy: 7.5), color: t.ink.fade(0.7), ctx: ctx)
+            }
+            let tx = icon.maxX + 10
+            Text(row.title, F.sf(13, 600), t.ink).draw(x: tx, capCenter: r.minY + 10 + 8, in: ctx)
+            let dot: NSColor = switch row.health {
+            case .good: t.ok
+            case .partial: t.amber
+            case .off, .unavailable: t.muted2
+            }
+            drawStatusDot(center: CGPoint(x: tx + 3, y: r.minY + 10 + 16 + 3 + 7.25), color: dot, ctx: ctx)
+            TextBlock(row.detail, F.sf(11.5), t.muted, width: connectDetailWidth(row, width: r.width), lineHeight: 14.5)
+                .draw(x: tx + 13, top: r.minY + 10 + 16 + 3, in: ctx)
+            if !row.enabled { ctx.endTransparencyLayer() }
+        }
+        let right = r.maxX - 12
+        if row.button == nil, row.enabled, isHovered(action) {
+            ctx.fill(rounded(r.insetBy(dx: 3, dy: 3), 11), t.isDark ? white(0.03) : black(0.02))
+        }
+        if let title = row.button {
+            let style: ButtonStyle = title == "Remove" ? .plain : .tinted
+            button(title, right: right, mid: r.midY, style: style, enabled: row.enabled, height: 26, action: action, ctx: ctx)
+        } else {
+            ctx.withState {
+                if !row.enabled { ctx.setAlpha(0.4); ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+                drawSwitch(on: row.on, rect: CGRect(x: right - 36, y: r.midY - 11, width: 36, height: 22), ctx: ctx)
+                if !row.enabled { ctx.endTransparencyLayer() }
+            }
+            if row.enabled { hit(r, action) }
+        }
     }
 
     private func drawAdvanced(x: CGFloat, w: CGFloat, ctx: CGContext) {
@@ -761,13 +898,13 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     }
 
     /// The privacy promise, as the README states it.
-    static let syncPromise = "Nothing leaves your Apple Account: readings, history, token counts, account emails and run progress go end-to-end encrypted through your own private iCloud. There's no Headroom server, so we never see any of it. Prompts, project names, file paths and sign-in details never sync; task names only if you include them."
+    static let syncPromise = "Nothing leaves your Apple Account: readings, history, token counts, account emails and run progress go end-to-end encrypted through your own private iCloud. There's no Headroom server, so we never see any of it. Prompts, project names, file paths and sign-in details never sync; task names and questions only if you include them."
 
     private func drawSync(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
         let t = theme
         var cy = y
         let on = settings.syncEnabled
-        let card = CGRect(x: x, y: cy, width: w, height: 84)
+        let card = CGRect(x: x, y: cy, width: w, height: 76)
         let shape = rounded(card, 16)
         let blue = t.pacing(.plenty)
         ctx.fill(shape, t.isDark ? white(0.045) : .white)
@@ -790,9 +927,13 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         while Text(line, font, .black).width > b.minX - 14 - (tx + 13), line.count > 4 { line = String(line.dropLast(2)) + "…" }
         drawStatusDot(center: CGPoint(x: tx + 3, y: card.midY + 11), color: dot, ctx: ctx)
         Text(line, font, t.muted).draw(x: tx + 13, capCenter: card.midY + 11, in: ctx)
-        cy += card.height + 22
+        cy += card.height + 18
 
         sectionLabel("ACCOUNTS ON THIS MAC", x: x, y: cy, ctx: ctx)
+        // Removing the data sits with the accounts it removes.
+        if on || settings.syncSince != nil {
+            button("Remove from iCloud…", right: x + w + 6, mid: cy + 4, style: .plain, height: 24, action: Action.syncRemove, ctx: ctx)
+        }
         cy += 14
         let accounts = syncedAccounts()
         if accounts.isEmpty {
@@ -801,23 +942,25 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             cy += 34
         }
         for a in accounts.prefix(4) {
-            let r = CGRect(x: x, y: cy, width: w, height: 40)
-            ctx.fill(rounded(r, 11), t.groupFill)
-            ctx.innerStroke(rounded(r, 11), t.groupBorder, width: 0.5)
-            BrandMark.drawTile(a.provider, in: CGRect(x: r.minX + 10, y: r.midY - 10, width: 20, height: 20), ctx: ctx)
-            Text(a.title, F.sf(12.5, 600), t.ink).draw(x: r.minX + 40, capCenter: r.midY, in: ctx)
+            let r = CGRect(x: x, y: cy, width: w, height: 36)
+            ctx.fill(rounded(r, 10), t.groupFill)
+            ctx.innerStroke(rounded(r, 10), t.groupBorder, width: 0.5)
+            BrandMark.drawTile(a.provider, in: CGRect(x: r.minX + 9, y: r.midY - 10, width: 20, height: 20), ctx: ctx)
+            Text(a.title, F.sf(12.5, 600), t.ink).draw(x: r.minX + 38, capCenter: r.midY, in: ctx)
             Text(a.detail, F.sf(11.5, 500), t.muted).draw(x: r.maxX - 12, capCenter: r.midY, align: .right, in: ctx)
-            cy += 40 + 8
+            cy += 36 + 6
         }
+        cy += 2
         toggleRow("Include task names", "Run and task titles. Notes and projects stay here.",
                   on: settings.syncTaskNames, action: Action.syncTaskNames, x: x, y: cy, w: w, enabled: settings.taskTracking, ctx: ctx)
-        cy += 48 + 8
+        cy += 42
+        // Indented under task names: it only means something with them on.
+        let names = settings.taskTracking && settings.syncTaskNames
+        ctx.fill(CGPath(rect: CGRect(x: x + 1, y: cy + 3, width: 1.5, height: 34), transform: nil), t.isDark ? white(0.10) : black(0.08))
+        toggleRow("Include the question being asked", "So the phone can say what a run needs from you.",
+                  on: names && settings.syncQuestionText, action: Action.syncQuestion, x: x + 14, y: cy, w: w - 14, enabled: names, ctx: ctx)
+        cy += 42 + 8
         hint(symbol: "lock.shield", Self.syncPromise, x: x, y: cy, w: w, ctx: ctx)
-        let promise = TextBlock(Self.syncPromise, F.sf(12, 450), t.muted, width: w - 50, lineHeight: 16)
-        cy += promise.height + 22 + 16
-        if on || settings.syncSince != nil {
-            button("Remove Headroom Data from iCloud…", right: x + w, mid: cy + 14, style: .plain, height: 28, action: Action.syncRemove, ctx: ctx)
-        }
     }
 
     /// The status line under the sync card, and its dot.
