@@ -35,22 +35,35 @@ enum StatusItemRenderer {
 
     // MARK: Run indicator
 
-    /// A slot for the widest text of its kind ("100%", or "88/88" sized to the counts), so the
-    /// item keeps its width as the run moves.
+    /// The figure's slot is sized for the widest text of its kind ("100%", or "88/88" sized to the
+    /// counts), so the item keeps its width as the run moves; "2 need you" and "quiet 18m" take
+    /// their own width, and "·3" follows when several runs are live.
     static func runsWidth(_ r: RunsMenuBarModel) -> CGFloat {
+        11 + 3 + slotWidth(r) + (showsCount(r) ? 2 + countText(r.liveCount, color: .black).width : 0)
+    }
+
+    /// Room for the figure or words, before the count.
+    static func slotWidth(_ r: RunsMenuBarModel) -> CGFloat {
+        if r.needsInputCount > 1 || r.quiet { return countdownText(r.text, color: .black).width }
         let widest: String
         if r.text.hasSuffix("%") { widest = "100%" }
         else {
             let parts = r.text.split(separator: "/")
             widest = parts.map { String(repeating: "8", count: max($0.count, 2)) }.joined(separator: "/")
         }
-        return 11 + 3 + max(countdownText(widest, color: .black).width, countdownText(r.text, color: .black).width)
+        return max(countdownText(widest, color: .black).width, countdownText(r.text, color: .black).width)
     }
 
-    /// The most pressing live run: a list mark, or a rose mark when a run needs you, and its figure.
+    static func showsCount(_ r: RunsMenuBarModel) -> Bool { r.liveCount > 1 && r.needsInputCount < 2 }
+
+    static func countText(_ n: Int, color: NSColor) -> Text { Text("·\(n)", F.sf(10, 650, tabular: true), color) }
+
+    /// The most pressing live run: a list mark and its figure; a rose mark when a run needs you
+    /// ("2 need you" when several do); the quiet mark and how long, in amber, when it went quiet.
     static func drawRuns(_ r: RunsMenuBarModel, x: CGFloat, mid: CGFloat, dark: Bool, ctx: CGContext) {
         let ink: NSColor = dark ? .white : rgb(0x1C1C1E)
         let box = CGRect(x: x, y: mid - 5.5, width: 11, height: 11)
+        var textColor = ink.fade(0.92)
         if r.needsInput {
             let rose = dark ? rgb(0xFF6982) : rgb(0xD21F45)
             let disc = CGPath(ellipseIn: box, transform: nil)
@@ -60,6 +73,12 @@ enum StatusItemRenderer {
             bar.move(to: CGPoint(x: box.midX, y: box.minY + 2.6)); bar.addLine(to: CGPoint(x: box.midX, y: box.midY + 0.8))
             ctx.stroke(bar, .white, width: 1.6, cap: .round)
             ctx.fill(CGPath(ellipseIn: CGRect(x: box.midX - 0.9, y: box.maxY - 3.6, width: 1.8, height: 1.8), transform: nil), .white)
+        } else if r.quiet {
+            // The quiet mark: an open ring with a dot, as on the card.
+            let amber = dark ? rgb(0xFFC248) : rgb(0xB87200)
+            ctx.stroke(CGPath(ellipseIn: box.insetBy(dx: 1.4, dy: 1.4), transform: nil), amber, width: 1.5)
+            ctx.fill(CGPath(ellipseIn: CGRect(x: box.midX - 1.6, y: box.midY - 1.6, width: 3.2, height: 3.2), transform: nil), amber)
+            textColor = amber
         } else {
             // A list mark, not a ring: the 5-hour session already wears a ring beside it.
             let blue = dark ? rgb(0x9CCBFF) : palette(.plenty, dark: dark).bottom
@@ -71,7 +90,11 @@ enum StatusItemRenderer {
                 ctx.stroke(line, blue, width: 1.6, cap: .round)
             }
         }
-        countdownText(r.text, color: ink.fade(0.92)).draw(x: x + 11 + 3, capCenter: mid, in: ctx)
+        countdownText(r.text, color: textColor).draw(x: x + 11 + 3, capCenter: mid, in: ctx)
+        if showsCount(r) {
+            // After the slot, so the count doesn't shift as the figure changes.
+            countText(r.liveCount, color: ink.fade(0.55)).draw(x: x + 11 + 3 + slotWidth(r) + 2, capCenter: mid, in: ctx)
+        }
     }
 
     // MARK: Fan readout

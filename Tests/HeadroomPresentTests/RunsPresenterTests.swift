@@ -49,8 +49,9 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
 
 @Suite struct RunHeadlineTests {
     @Test func declaredRunsShowThePercent() {
+        // The best guess (the estimate), rounded down; no separate "by tokens" figure.
         let c = presenter.card(run(title: "Plan"))
-        #expect(c.declared && c.headline == "46%" && c.estimate == "~57%" && c.bar != nil)
+        #expect(c.declared && c.headline == "57%" && c.estimate == nil && c.bar != nil)
         #expect(c.figures == ["must-haves 1 of 2", "about 25m left", "2.31M tokens"])
     }
 
@@ -198,7 +199,7 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         #expect(m?.text == "7/9" && m?.needsInput == false)
         let ask = run("i", state: .waiting, wait: .input)
         let both = presenter.menuBar([ask, run("p")].sortedForDisplay())
-        #expect(both?.text == "46%" && both?.needsInput == true)
+        #expect(both?.text == "57%" && both?.needsInput == true && both?.liveCount == 2 && both?.needsInputCount == 1)
         #expect(presenter.menuBar([run("d", state: .done), run("s", state: .stopped)]) == nil)
         #expect(presenter.menuBar([]) == nil)
     }

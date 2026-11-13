@@ -9,6 +9,9 @@ final class PopoverController: NSObject {
     let model: AppModel
     let updater: AppUpdater?
     var openSettings: (() -> Void)?
+    /// Opens Settings on a section (`SettingsView.Section` raw value). When the app hasn't set
+    /// it, `openRunsSettings` opens Settings and then picks the section on its window.
+    var openSettingsSection: ((Int) -> Void)?
     private var panel: NSPanel?
     private var root: PopoverRootView?
     private var monitors: [Any] = []
@@ -23,7 +26,8 @@ final class PopoverController: NSObject {
         if isShown { close() } else { show(relativeTo: button) }
     }
 
-    func show(relativeTo button: NSStatusBarButton) {
+    /// `tab` opens on that tab (the Runs tab when a run needs you) instead of the last one used.
+    func show(relativeTo button: NSStatusBarButton, tab: Int? = nil) {
         guard panel == nil, let buttonWindow = button.window else { return }
         let panel = PopoverPanel(contentRect: NSRect(x: 0, y: 0, width: PopoverChrome.width, height: 400),
                                  styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -42,7 +46,7 @@ final class PopoverController: NSObject {
         // NSGlassEffectView and NSVisualEffectView both render in-process with Metal and map a
         // ~190 MB shader archive on open (measured: 163–171 MB peaks vs 35 MB drawn), which breaks
         // the popover memory budget (PLAN §4.4).
-        let root = PopoverRootView(model: model, controller: self)
+        let root = PopoverRootView(model: model, controller: self, tab: tab)
         // A plain container: a layer-backed `updateLayer` view as the content view itself leaves
         // the window without a server-side surface (AppKit reports it visible; nothing appears).
         let container = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
@@ -97,6 +101,15 @@ final class PopoverController: NSObject {
         Memory.relieve()
     }
 
+    /// Settings on its Runs section, where agents are connected.
+    func openRunsSettings() {
+        close()
+        let section = SettingsView.Section.runs.rawValue
+        if let openSettingsSection { return openSettingsSection(section) }
+        openSettings?()
+        for w in NSApp.windows { (w.windowController as? SettingsWindowController)?.show(section: section) }
+    }
+
     /// Called when the model changed.
     func refresh() {
         if let panel, panel.appearance != model.settings.appearance.nsAppearance { panel.appearance = model.settings.appearance.nsAppearance }
@@ -129,10 +142,10 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     private var out = RenderOutput()
     var tab: Int { didSet { model.settings.lastTab = tab } }
 
-    init(model: AppModel, controller: PopoverController) {
+    init(model: AppModel, controller: PopoverController, tab: Int? = nil) {
         self.model = model
         self.controller = controller
-        let last = model.settings.lastTab
+        let last = tab ?? model.settings.lastTab
         self.tab = !model.settings.taskTracking && last == Self.runsTab ? 0 : last
         cards = CardsView(model: model)
         super.init(frame: NSRect(x: 0, y: 0, width: PopoverChrome.width, height: 400))
@@ -277,6 +290,12 @@ final class CardsView: NSView, NSViewToolTipOwner {
     private var runsPage = RunsPageModel()
     /// Run cards showing their finished rows (for as long as the app runs).
     private var expandedRuns: Set<String> = []
+    /// Rows showing their details (`RunsPresenter.rowKey`).
+    private var openRows: Set<String> = []
+    /// Every finished run of the last day listed.
+    private var allRecent = false
+    /// The Activity tab's "Recent runs"; nil when there are none or task tracking is off.
+    private var recentRuns: RecentRunsModel?
     private var weekRecords: [Provider: [WeekRecord]] = [:]
     private var out = RenderOutput()
     private var chartLayouts: [Provider: ActivityCardRenderer.Layout] = [:]
@@ -307,6 +326,8 @@ final class CardsView: NSView, NSViewToolTipOwner {
             let range = model.settings.activityRange
             activityCards = model.settings.enabledProviders.sorted().map { ap.card($0, aggregates: aggregates, range: range, selection: selection) }
             weeks = model.settings.enabledProviders.sorted().map { pastWeeks($0, presenter: presenter) }
+            recentRuns = model.settings.taskTracking
+                ? RecentRunsPresenter(now: now, pricing: model.pricingEngine).model(RunHistory.shared.records(now: now)) : nil
             sessionHistories = model.settings.enabledProviders.sorted().compactMap { p in
                 let input = model.paceInput(p)
                 guard let reading = input.reading, reading.session != nil else { return nil }
@@ -315,7 +336,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
             }
         }
         if tab == PopoverRootView.runsTab {
-            runsPage = RunsPresenter(now: now).page(model.taskRuns, expanded: expandedRuns)
+            runsPage = RunsPresenter(now: now, pricing: model.pricingEngine).page(model.taskRuns, expanded: expandedRuns, opened: openRows, allRecent: allRecent)
         }
         if animated, states != lastStates, !lastStates.isEmpty, window != nil { beginFade() }
         contentHeight = measure()
@@ -429,6 +450,13 @@ final class CardsView: NSView, NSViewToolTipOwner {
             }
             y += 4
         }
+        if let recent = recentRuns {
+            y += 12
+            if let ctx { RecentRunsRenderer.drawSectionHeader(recent, x: pad, y: y, width: cw, theme: t, ctx: ctx) }
+            y += RecentRunsRenderer.sectionHeaderHeight
+            y += RecentRunsRenderer.draw(recent, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out)
+            y += 4
+        }
         return y + 2
     }
 
@@ -502,6 +530,31 @@ final class CardsView: NSView, NSViewToolTipOwner {
             case .toggleRun(let id):
                 toggleRun(id)
                 return
+            case .toggleRow(let run, let row):
+                let key = RunsPresenter.rowKey(run: run, row: row)
+                if openRows.remove(key) == nil { openRows.insert(key) }
+                root?.rebuild(animated: false)
+                return
+            case .moreRecent:
+                allRecent.toggle()
+                root?.rebuild(animated: false)
+                return
+            case .runMenu(let id):
+                showRunMenu(id, at: NSPoint(x: region.rect.minX, y: region.rect.maxY + 2))
+                return
+            case .runButton(let id, let button):
+                guard let run = taskRun(id) else { return }
+                switch button {
+                case .openSession:
+                    root?.controller?.close()
+                    RunActions.openSession(run)
+                case .copyResume:
+                    RunActions.copyResumeCommand(run)
+                }
+                return
+            case .connectAgents:
+                root?.controller?.openRunsSettings()
+                return
             default: break
             }
         }
@@ -539,6 +592,65 @@ final class CardsView: NSView, NSViewToolTipOwner {
     func toggleRun(_ id: String) {
         if expandedRuns.remove(id) == nil { expandedRuns.insert(id) }
         root?.rebuild(animated: false)
+    }
+
+    // MARK: Run actions
+
+    private func taskRun(_ id: String) -> TaskRun? { model.taskRuns.first { $0.id == id } }
+
+    /// Open session, copy the resume command, hide, give up: what the run allows.
+    private func showRunMenu(_ id: String, at p: NSPoint) {
+        guard let run = taskRun(id) else { return }
+        let actions = RunsPresenter.actions(run)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, _ action: Selector, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        if actions.openSession || actions.copyResume {
+            add("Open Session", #selector(openSession(_:)), enabled: actions.openSession)
+            add("Copy Resume Command", #selector(copyResume(_:)), enabled: actions.copyResume)
+            menu.addItem(.separator())
+        }
+        add("Hide This Run", #selector(hideRun(_:)))
+        if actions.abandon { add("Mark as Abandoned…", #selector(abandonRun(_:))) }
+        menu.popUp(positioning: nil, at: p, in: self)
+    }
+
+    @objc private func openSession(_ sender: NSMenuItem) {
+        guard let run = (sender.representedObject as? String).flatMap(taskRun) else { return }
+        root?.controller?.close()
+        RunActions.openSession(run)
+    }
+
+    @objc private func copyResume(_ sender: NSMenuItem) {
+        guard let run = (sender.representedObject as? String).flatMap(taskRun) else { return }
+        RunActions.copyResumeCommand(run)
+    }
+
+    @objc private func hideRun(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        RunActions.hide(id)
+    }
+
+    /// Asks first: giving up cancels the run's open tasks. The popover closes so the alert isn't
+    /// left behind it.
+    @objc private func abandonRun(_ sender: NSMenuItem) {
+        guard let run = (sender.representedObject as? String).flatMap(taskRun) else { return }
+        let title = RunsPresenter(now: Date()).displayTitle(run)
+        root?.controller?.close()
+        let alert = NSAlert()
+        alert.messageText = "Mark “\(title)” as abandoned?"
+        alert.informativeText = "Its open tasks are cancelled and the run moves to the finished ones. The agent itself isn't stopped."
+        alert.addButton(withTitle: "Mark as Abandoned")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { RunActions.abandon(run.id) }
     }
 
     private func showBreakdownMenu(at p: NSPoint) {
