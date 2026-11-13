@@ -511,7 +511,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         ctx.fillRadial(in: CGPath(rect: b, transform: nil), center: CGPoint(x: stageRect.minX, y: b.minY), radii: CGSize(width: 420, height: 260),
                        color: t.isDark ? white(0.03) : white(0.85), fadeAt: 0.8)
         drawSidebar(ctx)
-        SettingsStage.draw(section, rect: stageRect, settings: settings, model: model, updater: updater, theme: t, ctx: ctx)
+        SettingsStage.draw(section, rect: stageRect, settings: settings, model: model, updater: updater, runsPage: runsPage, theme: t, ctx: ctx)
 
         let x0 = contentX, w = contentWidth
         var y: CGFloat = 52

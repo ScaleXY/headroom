@@ -145,6 +145,13 @@ enum RenderCommand {
                 if let rep = PopoverPage.renderSettings(section: .runs, theme: theme) {
                     write(rep, to: outDir.appendingPathComponent("settings-runs-\(suffix).png")); written += 1
                 }
+                // Runs › Layout in two combinations of styles: the preview follows the picks.
+                for (list, page) in [(RunsListStyle.ledger, RunPageStyle.briefing), (.fill, .lanes), (.twoLine, .briefing)] {
+                    let name = "settings-runs-layout-\(list.title.lowercased().replacingOccurrences(of: " ", with: "-"))-\(page.title.lowercased())-\(suffix).png"
+                    if let rep = PopoverPage.renderSettings(section: .runs, theme: theme, runsPage: .layout, configure: { $0.runsListStyle = list; $0.runPageStyle = page }) {
+                        write(rep, to: outDir.appendingPathComponent(name)); written += 1
+                    }
+                }
                 if let rep = PopoverPage.renderSettings(section: .runs, theme: theme, configure: { $0.taskTracking = false }) {
                     write(rep, to: outDir.appendingPathComponent("settings-runs-off-\(suffix).png")); written += 1
                 }
@@ -439,7 +446,7 @@ enum PopoverPage {
     }
 
     static func renderSettings(section: SettingsView.Section, theme: Theme, update: AppUpdater.State = .upToDate,
-                               configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
+                               runsPage: SettingsView.RunsPage = .connect, configure: ((AppSettings) -> Void)? = nil) -> NSBitmapImageRep? {
         let suite = "com.scalexy.headroom.render.settings"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
@@ -449,6 +456,7 @@ enum PopoverPage {
         configure?(settings)
         let view = SettingsView(settings: settings, model: nil, updater: AppUpdater(settings: settings, preview: update))
         view.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        view.runsPage = runsPage
         let size = SettingsView.size
         return renderImage(size: size, appearance: view.appearance) { ctx in
             let shape = rounded(CGRect(origin: .zero, size: size), 12)
