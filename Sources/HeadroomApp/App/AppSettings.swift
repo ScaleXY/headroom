@@ -167,6 +167,18 @@ final class AppSettings {
         changed()
     }
 
+    /// How long a running task or run may go without activity before it reads as quiet (and the
+    /// "went quiet" alert can fire). 15 minutes by default.
+    var runQuietAfter: TimeInterval {
+        get {
+            let v = defaults.double(forKey: "runQuietAfter")
+            return Self.runQuietChoices.contains(v) ? v : TaskFold.defaultStaleAfter
+        }
+        set { defaults.set(newValue, forKey: "runQuietAfter"); changed() }
+    }
+
+    static let runQuietChoices: [TimeInterval] = [10 * 60, 15 * 60, 30 * 60, 60 * 60]
+
     /// While a run is live, its progress (and a mark when one needs you) beside the meters. On by default.
     var showRunsInMenuBar: Bool {
         get { defaults.object(forKey: "showRunsInMenuBar") as? Bool ?? true }
@@ -315,13 +327,14 @@ enum AppAppearance: String, CaseIterable, Sendable {
 
 /// Task-run notifications; kept apart from `NotificationKind`, whose cases the Settings window lists.
 enum TaskNotificationKind: String, CaseIterable, Sendable {
-    case needsInput, criticalFailed, stale, finished
+    case needsInput, stopped, criticalFailed, stale, finished
 
-    var defaultOn: Bool { self == .needsInput || self == .finished }
+    var defaultOn: Bool { self == .needsInput || self == .stopped || self == .finished }
 
     var title: String {
         switch self {
         case .needsInput: "A run needs your input"
+        case .stopped: "A run stopped with work left"
         case .criticalFailed: "A critical task failed"
         case .stale: "A run went quiet"
         case .finished: "A run finished"

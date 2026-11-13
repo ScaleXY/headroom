@@ -41,6 +41,17 @@ enum PaceCardRenderer {
             y += h
         }
 
+        // What's spending the 5-hour window sits with the session when the session is on top.
+        let spendOnTop = m.session != nil || m.sessionModule?.onTop == true
+        func spending() {
+            guard let sp = m.spending else { return }
+            y += 12
+            let h = spendHeight(sp, width: w)
+            if let ctx { drawSpend(sp, provider: m.provider, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx, out: out) }
+            y += h
+        }
+        if spendOnTop { spending() }
+
         // Fault banner replaces the callout; shown high so the reason is never missed.
         if let f = m.fault {
             y += 12
@@ -90,6 +101,7 @@ enum PaceCardRenderer {
             if let ctx { drawSessionModule(s, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx) }
             y += h
         }
+        if !spendOnTop { spending() }
 
         // 7. Callout (at most one).
         if let c = m.callout, m.fault == nil {
@@ -340,6 +352,91 @@ enum PaceCardRenderer {
         if nx - now.width / 2 > leftEdge + 6, nx + now.width / 2 < rightEdge - 6 {
             now.draw(x: nx + 0.3, capCenter: labelY, align: .center, in: ctx)
         }
+    }
+
+    // MARK: What's spending it
+
+    private static let spendLegendFont = F.sf(11.5, 500)
+    private static let spendPercentFont = F.sf(11.5, 600, tabular: true)
+    private static let spendLegendLine: CGFloat = 17
+    private static let spendLabelMax: CGFloat = 150
+
+    /// Each slice's legend entry (label cut to fit, its width) laid out in lines across `width`.
+    private static func spendLegend(_ m: SpendSplitModel, width: CGFloat) -> [[(slice: Int, label: String, width: CGFloat)]] {
+        var lines: [[(Int, String, CGFloat)]] = [[]]
+        var used: CGFloat = 0
+        for (i, s) in m.slices.enumerated() {
+            var label = s.label
+            while Text(label, spendLegendFont, .black).width > spendLabelMax, label.count > 2 { label = String(label.dropLast(2)) + "…" }
+            let w = 7 + 5 + Text(label, spendLegendFont, .black).width + 4 + Text(s.percent, spendPercentFont, .black).width
+            if used > 0, used + 12 + w > width { lines.append([]); used = 0 }
+            used += (used > 0 ? 12 : 0) + w
+            lines[lines.count - 1].append((i, label, w))
+        }
+        return lines
+    }
+
+    static func spendHeight(_ m: SpendSplitModel, width: CGFloat) -> CGFloat {
+        11 + 15 + 8 + 8 + 9 + CGFloat(spendLegend(m, width: width - 24).count) * spendLegendLine + 8
+    }
+
+    /// The colors of the runs' slices: the provider's own family, then neutral for the rest.
+    private static func spendColor(_ slice: SpendSplitModel.Slice, index: Int, provider: Provider, theme: Theme) -> NSColor {
+        if slice.isOther { return theme.isDark ? white(0.22) : black(0.15) }
+        let b = Brand.of(provider)
+        let family = theme.isDark ? [b.light, b.base, b.deep.blended(withFraction: 0.25, of: .white) ?? b.deep] : [b.base, b.light, b.deep]
+        return family[index % family.count]
+    }
+
+    static func drawSpend(_ m: SpendSplitModel, provider: Provider, rect: CGRect, theme: Theme, ctx: CGContext, out: RenderOutput?) {
+        let shape = rounded(rect, 14)
+        ctx.fill(shape, theme.groupFill)
+        ctx.innerStroke(shape, theme.groupBorder, width: 0.5)
+        let x = rect.minX + 12, w = rect.width - 24
+        var y = rect.minY + 11
+        Text(m.title, F.sf(12.5, 650), theme.ink).draw(x: x, baseline: baseline(top: y, font: F.sf(12.5, 650), lineHeight: 15), in: ctx)
+        Text("5-HOUR WINDOW · NOW", F.sf(8.5, 650), theme.muted, kern: 0.765)
+            .draw(x: x + w + 0.765, baseline: baseline(top: y, font: F.sf(12.5, 650), lineHeight: 15), align: .right, in: ctx)
+        y += 15 + 8
+
+        // The bar: one slice per run, then the rest, with hairline gaps.
+        let bar = CGRect(x: x, y: y, width: w, height: 8)
+        let track = rounded(bar, 4)
+        ctx.fill(track, theme.isDark ? black(0.32) : black(0.07))
+        let gap: CGFloat = 2
+        let room = w - gap * CGFloat(max(0, m.slices.count - 1))
+        ctx.withState {
+            ctx.addPath(track); ctx.clip()
+            var sx = bar.minX
+            for (i, s) in m.slices.enumerated() {
+                let sw = i == m.slices.count - 1 ? bar.maxX - sx : max(3, room * CGFloat(s.share))
+                let color = spendColor(s, index: i, provider: provider, theme: theme)
+                let seg = CGRect(x: sx, y: bar.minY, width: max(0, sw), height: bar.height)
+                ctx.fillVertical(CGPath(rect: seg, transform: nil), color.blended(withFraction: 0.18, of: .white) ?? color, color)
+                sx += sw + gap
+            }
+        }
+        y += 8 + 9
+
+        // The legend: a dot, the name and its share, wrapping as needed.
+        var tooltip: [String] = []
+        for line in spendLegend(m, width: w) {
+            var lx = x
+            let mid = y + spendLegendLine / 2
+            for (i, label, width) in line {
+                let s = m.slices[i]
+                let dot = CGMutablePath()
+                dot.addEllipse(in: CGRect(x: lx, y: mid - 3.5, width: 7, height: 7))
+                ctx.fill(dot, spendColor(s, index: i, provider: provider, theme: theme))
+                let name = Text(label, spendLegendFont, s.isOther ? theme.muted : theme.ink.fade(0.88))
+                name.draw(x: lx + 12, capCenter: mid, in: ctx)
+                Text(s.percent, spendPercentFont, theme.muted).draw(x: lx + 12 + name.width + 4, capCenter: mid, in: ctx)
+                lx += width + 12
+                tooltip.append("\(s.label) · \(s.percent)")
+            }
+            y += spendLegendLine
+        }
+        out?.add(rect, tooltip: "Share of what \(provider.displayName) is spending right now\n" + tooltip.joined(separator: "\n"))
     }
 
     // MARK: Hero

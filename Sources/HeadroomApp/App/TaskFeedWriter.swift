@@ -22,6 +22,8 @@ actor TaskFeedWriter {
     let home: URL
     private let now: @Sendable () -> Date
     private let pid: Int32
+    /// False for a one-off scan while the app keeps the file.
+    private let writes: Bool
     private var cache: [String: Cached] = [:]
     private var lastBody: Data?
     private var lastRuns: [TaskRun]?
@@ -29,9 +31,10 @@ actor TaskFeedWriter {
     /// Folds done since launch, for tests and diagnostics.
     private(set) var folds = 0
 
-    init(home: URL, pid: Int32 = getpid(), now: @escaping @Sendable () -> Date = { Date() }) {
+    init(home: URL, pid: Int32 = getpid(), writes: Bool = true, now: @escaping @Sendable () -> Date = { Date() }) {
         self.home = home
         self.pid = pid
+        self.writes = writes
         self.now = now
     }
 
@@ -42,8 +45,10 @@ actor TaskFeedWriter {
     }
 
     /// Folds what changed, hides `hidden` runs (delegates' child sessions), reads each against
-    /// the providers' limits, and writes `tasks.json` if anything but its timestamp changed.
-    func refresh(hidden: Set<String>, providers: [ProviderSnapshot], calendar: Calendar = .current, locale: Locale = .current) -> Result {
+    /// the providers' limits and spend, and writes `tasks.json` if anything but its timestamp
+    /// changed. `staleAfter` is how long a running task may be silent before it reads as quiet.
+    func refresh(hidden: Set<String>, providers: [ProviderSnapshot], spend: [Provider: ProviderSpend] = [:],
+                 staleAfter: TimeInterval = TaskFold.defaultStaleAfter, calendar: Calendar = .current, locale: Locale = .current) -> Result {
         let now = now()
         let since = now.addingTimeInterval(-Self.window).timeIntervalSince1970
         let files = listing()
@@ -62,19 +67,19 @@ actor TaskFeedWriter {
             cache[run] = Cached(signature: f.signature, run: nil, newest: f.newest)
         }
         for (run, list) in events {
-            cache[run]?.run = TaskFold.fold(list, now: now).first
+            cache[run]?.run = TaskFold.fold(list, now: now, staleAfter: staleAfter).first
             folds += 1
         }
         if let tpu = TaskFold.tokensPerEffortUnit(cache.values.compactMap(\.run)) {
             for (run, list) in events where cache[run]?.run.map({ !$0.state.isTerminal }) == true {
-                cache[run]?.run = TaskFold.fold(list, now: now, tokensPerEffortUnit: tpu).first
+                cache[run]?.run = TaskFold.fold(list, now: now, staleAfter: staleAfter, tokensPerEffortUnit: tpu).first
                 folds += 1
             }
         }
         let runs = cache.values.compactMap(\.run).filter { !hidden.contains($0.id) && $0.updatedAt.timeIntervalSince1970 >= since }
-            .map { TaskLimits.adjust(TaskCompaction.compact($0, now: now), providers: providers, now: now, calendar: calendar, locale: locale) }
+            .map { TaskLimits.adjust(TaskCompaction.compact($0, now: now), providers: providers, spend: spend, now: now, calendar: calendar, locale: locale) }
             .sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
-        return Result(runs: runs.sortedForDisplay(), wrote: write(TasksFeed(generatedAt: now, writerPID: pid, runs: runs)))
+        return Result(runs: runs.sortedForDisplay(), wrote: writes && write(TasksFeed(generatedAt: now, writerPID: pid, runs: runs)))
     }
 
     /// Writes atomically, and only when the content apart from `generated_at` differs from what's on disk.

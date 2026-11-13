@@ -132,11 +132,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettings(section: Int? = nil) {
-        if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(settings: settings, model: model, updater: updater)
-            settingsWindow?.openWelcome = { [weak self] in self?.showOnboarding() }
-        }
-        settingsWindow?.show(section: section)
+        settingsController().show(section: section)
+    }
+
+    /// Opens Settings on `section`; Runs opens on Connect your agents. For the popover's
+    /// `openSettingsSection` closure.
+    func showSettings(section: SettingsView.Section) {
+        if section == .runs { showRunsSetup() } else { settingsController().show(section: section.rawValue) }
+    }
+
+    /// Opens Settings on Runs › Connect your agents.
+    func showRunsSetup() {
+        settingsController().showRunsSetup()
+    }
+
+    /// Opens Settings on Runs › Connect your agents from anywhere in the app (the Runs tab's
+    /// empty-state "Connect your agents" button calls this).
+    static func openRunsSetup() {
+        (NSApp.delegate as? AppDelegate)?.showRunsSetup()
+    }
+
+    private func settingsController() -> SettingsWindowController {
+        if let settingsWindow { return settingsWindow }
+        let controller = SettingsWindowController(settings: settings, model: model, updater: updater)
+        controller.openWelcome = { [weak self] in self?.showOnboarding() }
+        settingsWindow = controller
+        return controller
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -92,7 +92,7 @@ final class TaskHome: @unchecked Sendable {
         #expect(eval(run(.waiting, wait: .input)) == [])
         #expect(eval(run(.running)) == [])
         let ask = alerts.evaluate([run(.waiting, wait: .input)], now: now) { s.taskNotifies($0) }
-        #expect(ask.map(\.kind) == [.needsInput] && ask[0].title == "demo needs you")
+        #expect(ask.map(\.kind) == [.needsInput] && ask[0].title == "demo needs your input")
         #expect(eval(run(.waiting, wait: .input)) == [])
         #expect(eval(run(.running)) == [] && eval(run(.waiting, wait: .input)) == [.needsInput])
 
@@ -132,8 +132,148 @@ final class TaskHome: @unchecked Sendable {
     @Test func settingsDefaults() {
         let s = settings()
         #expect(s.taskTracking)
-        #expect(TaskNotificationKind.allCases.filter { s.taskNotifies($0) } == [.needsInput, .finished])
+        #expect(TaskNotificationKind.allCases.filter { s.taskNotifies($0) } == [.needsInput, .stopped, .finished])
         s.taskTracking = false
         #expect(!s.taskTracking)
+        #expect(s.runQuietAfter == 15 * 60)
+        s.runQuietAfter = 30 * 60
+        #expect(s.runQuietAfter == 30 * 60)
+        #expect(!s.syncQuestionText)
+    }
+
+    @Test func theQuestionIsTheBody() {
+        var alerts = TaskAlerts()
+        _ = alerts.evaluate([run(.running)], now: now) { _ in true }
+        var asking = run(.waiting, wait: .input)
+        asking.question = TaskQuestion(text: "May I drop the unused audit table?", options: ["Drop it", "Keep it"], askedAt: now)
+        let a = alerts.evaluate([asking], now: now) { _ in true }
+        #expect(a.map(\.body) == ["May I drop the unused audit table?"] && a[0].sound)
+    }
+
+    @Test func permissionPromptsInABurstReplaceEachOtherQuietly() {
+        var alerts = TaskAlerts()
+        var t = now
+        func eval(_ r: TaskRun) -> [TaskAlerts.Alert] { alerts.evaluate([r], now: t) { _ in true } }
+        func asking(_ at: TimeInterval) -> TaskRun {
+            TaskRun(id: "r1", title: "r1", project: "demo", startedAt: now.addingTimeInterval(-600), updatedAt: now.addingTimeInterval(at),
+                    state: .waiting, waitReason: .input)
+        }
+        _ = eval(run(.running))
+        let first = eval(asking(0))
+        t = now.addingTimeInterval(30)
+        _ = eval(run(.running, updated: 20))
+        t = now.addingTimeInterval(60)
+        let second = eval(asking(60))
+        #expect(first.count == 1 && second.count == 1)
+        // A new episode, so a new ledger entry, but the same notification on screen and no sound.
+        #expect(first[0].id != second[0].id && first[0].request == second[0].request)
+        #expect(first[0].sound && !second[0].sound)
+        // Well after the burst it sounds again.
+        t = now.addingTimeInterval(400)
+        _ = eval(run(.running, updated: 390))
+        t = now.addingTimeInterval(600)
+        #expect(eval(asking(600)).first?.sound == true)
+    }
+
+    @Test func aRunThatStopsWithWorkLeftAlerts() {
+        var alerts = TaskAlerts()
+        let open = TaskNode(id: "api", title: "API", state: .running)
+        let done = TaskNode(id: "docs", title: "Docs", state: .done)
+        _ = alerts.evaluate([run(.running, nodes: [open, done])], now: now) { _ in true }
+        let stopped = alerts.evaluate([run(.stopped, nodes: [open, done])], now: now) { _ in true }
+        #expect(stopped.map(\.kind) == [.stopped] && stopped[0].title == "demo stopped with work left" && stopped[0].body == "1 of 2 tasks done.")
+        // Back to work and stopped again soon after: once is enough.
+        _ = alerts.evaluate([run(.running, nodes: [open, done], updated: -30)], now: now) { _ in true }
+        #expect(alerts.evaluate([run(.stopped, nodes: [open, done], updated: -20)], now: now) { _ in true }.isEmpty)
+    }
+
+    @Test func finishedAtMostOnceInHalfAnHourUnlessTheOutcomeChanged() {
+        var alerts = TaskAlerts()
+        var t = now
+        func eval(_ state: TaskRunState, _ at: TimeInterval) -> [TaskNotificationKind] {
+            alerts.evaluate([run(state, updated: at)], now: t) { _ in true }.map(\.kind)
+        }
+        _ = eval(.running, -60)
+        #expect(eval(.done, -50) == [.finished])
+        // An undeclared run reopening between batches of agents doesn't ping each time.
+        _ = eval(.running, -40)
+        #expect(eval(.done, -30) == [])
+        _ = eval(.running, -20)
+        #expect(eval(.partial, -10) == [.finished])
+        t = now.addingTimeInterval(31 * 60)
+        _ = eval(.running, 31 * 60 - 30)
+        #expect(eval(.partial, 31 * 60 - 10) == [.finished])
+    }
+
+    @Test func hiddenAndAbandonedRuns() {
+        var alerts = TaskAlerts()
+        var hidden = run(.running)
+        hidden.hidden = true
+        _ = alerts.evaluate([hidden], now: now) { _ in true }
+        var ask = run(.waiting, wait: .input)
+        ask.hidden = true
+        #expect(alerts.evaluate([ask], now: now) { _ in true }.isEmpty)
+
+        var other = TaskAlerts()
+        _ = other.evaluate([run(.running)], now: now) { _ in true }
+        var gaveUp = run(.failed)
+        gaveUp.abandoned = true
+        #expect(other.evaluate([gaveUp], now: now) { _ in true }.isEmpty)
+    }
+
+    @Test func theQuietAlertSaysTheThreshold() {
+        var alerts = TaskAlerts()
+        _ = alerts.evaluate([run(.running)], now: now, quietAfter: 1800) { _ in true }
+        let a = alerts.evaluate([run(.running, stale: true)], now: now, quietAfter: 1800) { _ in true }
+        #expect(a.first?.body == "No agent activity for 30 minutes." && a.first?.title == "demo went quiet")
+        #expect(TaskAlerts.span(3600) == "an hour" && TaskAlerts.span(600) == "10 minutes")
+    }
+
+    @Test func runAlertsKeepTheirOwnLedger() {
+        let defaults = UserDefaults(suiteName: "headroom-tests-\(UUID().uuidString)")!
+        for i in 0..<20 { #expect(Notifier.firstTime("limit.\(i)", ledger: Notifier.pacingLedger, defaults: defaults)) }
+        for i in 0..<500 { _ = Notifier.firstTime("task.input.r.\(i)", ledger: Notifier.runLedger, defaults: defaults) }
+        // A busy run can't push a pacing alert out and make it fire again.
+        #expect(!Notifier.firstTime("limit.0", ledger: Notifier.pacingLedger, defaults: defaults))
+        #expect(defaults.stringArray(forKey: Notifier.runLedger)?.count == Notifier.ledgerSize)
+    }
+}
+
+@Suite struct TaskTrackerPlumbingTests {
+    @Test func theQuietThresholdReachesTheFold() async throws {
+        let h = TaskHome()
+        try h.add("r1", 0, .add(.init(id: "a")))
+        try h.add("r1", 1, .start(task: "a"))
+        // The task last moved an hour ago (h.t0): quiet at 15 minutes, not at an hour and a half.
+        let writer = TaskFeedWriter(home: h.url)
+        #expect(await writer.refresh(hidden: [], providers: []).runs.first?.stale == true)
+        #expect(await writer.refresh(hidden: [], providers: [], staleAfter: 90 * 60).runs.first?.stale == false)
+    }
+
+    @Test func aScanLeavesTheAppsFeedAlone() async throws {
+        let h = TaskHome()
+        try h.add("r1", 0, .add(.init(id: "a")))
+        // The "app" is this test process.
+        _ = await TaskFeedWriter(home: h.url, pid: getpid()).refresh(hidden: [], providers: [])
+        #expect(TasksScanCommand.appOwnsFeed(home: h.url, pid: 1))
+        let scan = TaskFeedWriter(home: h.url, pid: 0, writes: false)
+        try h.add("r1", 5, .add(.init(id: "b")))
+        let r = await scan.refresh(hidden: [], providers: [])
+        #expect(!r.wrote && h.feed()?.writerPID == getpid() && h.feed()?.runs.first?.nodes.count == 1)
+        // With no live writer the scan writes, with no PID of its own.
+        _ = await TaskFeedWriter(home: h.url, pid: 0).refresh(hidden: [], providers: [])
+        #expect(h.feed()?.writerPID == 0 && !TasksScanCommand.appOwnsFeed(home: h.url, pid: 1))
+    }
+
+    @Test func spendReachesTheOutlook() async throws {
+        let h = TaskHome()
+        try h.add("r1", 0, .meta(title: "Build", project: "demo", harness: "claude-code"))
+        try h.add("r1", 0, .add(.init(id: "a")))
+        try h.add("r1", 3590, .start(task: "a"))
+        let session = SessionSnapshot(used: 0.5, left: 0.5, resetsAt: Date().addingTimeInterval(3600), level: "normal")
+        let r = await TaskFeedWriter(home: h.url).refresh(hidden: [], providers: [ProviderSnapshot(id: .claude, session: session)],
+                                                          spend: [.claude: ProviderSpend(tokensPerHour: 1_000_000, windowTokens: 2_000_000)])
+        // No rate of its own yet (another part fills it), but the window's room is known.
+        #expect(r.runs.first?.limitOutlook?.roomTokens == 2_000_000)
     }
 }

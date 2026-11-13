@@ -16,6 +16,8 @@ public struct PaceInput {
     public var planMonthlyOverride: Double? = nil
     /// Start of the current window when it reset early (an early reset happened this week).
     public var earlyResetAt: Date? = nil
+    /// Live agent runs spending this provider and their shares of its current spend (live app only).
+    public var runSpend: [RunSpend] = []
 
     public init(provider: Provider, reading: LimitReading? = nil, samples: [String: [UsageSample]] = [:], pastSessions: [SessionRecord] = [], fault: Fault? = nil, smoothedState: PacingState? = nil, weekCostMicros: Int64? = nil, planMonthlyOverride: Double? = nil, earlyResetAt: Date? = nil) {
         self.provider = provider
@@ -104,6 +106,7 @@ public struct Presenter {
             let weekLeft = reading.headline?.remaining
             model.sessionModule = sessionModule(s, forecast: forecast, weekLeft: weekLeft, samples: samples, past: input.pastSessions)
         }
+        model.spending = spendSplit(input.runSpend)
 
         // Detail rows.
         if !detailed, let s = session, !s.showsBanner, let w = reading.session {
@@ -187,6 +190,42 @@ public struct Presenter {
         }
         if options.parts.contains(.sessionGraph) { m.glide = sessionGlide(f, samples: samples, past: past, state: state) }
         return m
+    }
+
+    /// Live runs shown by name in "What's spending it"; the rest count as other sessions.
+    public nonisolated static let spendRunsShown = 3
+
+    /// The 5-hour window's current spend split by live run, then everything else. Nil when no
+    /// live run is spending the provider.
+    public func spendSplit(_ runs: [RunSpend]) -> SpendSplitModel? {
+        let live = runs.filter { $0.share >= 0.005 }.sorted { ($0.share, $1.title) > ($1.share, $0.title) }
+        guard !live.isEmpty else { return nil }
+        let shown = Array(live.prefix(Self.spendRunsShown))
+        // Rates come from slightly different windows: never more than the whole.
+        let total = shown.reduce(0) { $0 + $1.share }
+        let scale = total > 1 ? 1 / total : 1
+        var shares = shown.map { $0.share * scale }
+        let other = max(0, 1 - shares.reduce(0, +))
+        if other >= 0.005 { shares.append(other) }
+        let percents = Self.wholePercents(shares)
+        var slices = zip(shown, percents).enumerated().map { i, pair in
+            SpendSplitModel.Slice(label: pair.0.title, share: shares[i], percent: "\(pair.1)%", isOther: false)
+        }
+        if other >= 0.005 {
+            slices.append(SpendSplitModel.Slice(label: "other sessions", share: other, percent: "\(percents.last ?? 0)%", isOther: true))
+        }
+        return SpendSplitModel(title: "What's spending it", slices: slices)
+    }
+
+    /// Whole percents that add up to 100 (largest remainder).
+    nonisolated static func wholePercents(_ shares: [Double]) -> [Int] {
+        let sum = shares.reduce(0, +)
+        guard sum > 0 else { return shares.map { _ in 0 } }
+        let exact = shares.map { $0 / sum * 100 }
+        var out = exact.map { Int($0.rounded(.down)) }
+        let order = exact.indices.sorted { exact[$0] - Double(out[$0]) > exact[$1] - Double(out[$1]) }
+        for i in order.prefix(max(0, 100 - out.reduce(0, +))) { out[i] += 1 }
+        return out
     }
 
     /// Hours of 5-hour headroom the session graph shows between sessions, ending now.

@@ -24,13 +24,16 @@ enum TasksScanCommand {
             let observer = TaskObserver(roots: roots, home: home)
             let report = await observer.scan(since: Date().addingTimeInterval(-hours * 3600))
             await observer.flush()
-            let writer = TaskFeedWriter(home: home)
+            // A running app keeps tasks.json (with its limits and its PID): leave it be. Otherwise
+            // write it with no PID, since this process is gone in a moment.
+            let appOwnsFeed = Self.appOwnsFeed(home: home)
+            let writer = TaskFeedWriter(home: home, pid: 0, writes: !appOwnsFeed)
             let result = await writer.refresh(hidden: await observer.boundChildren, providers: [])
             let s = await observer.summary()
             let kinds = TaskAttemptKind.allCases.map { "\($0.rawValue) \(s.attempts[$0] ?? 0)" }.joined(separator: ", ")
             box.lines = [
                 "files read: \(report.filesRead) (\(report.bytes / 1_000_000) MB), events written: \(report.events)",
-                "runs: \(s.runs) observed, \(result.runs.count) in tasks.json",
+                "runs: \(s.runs) observed, \(result.runs.count) \(appOwnsFeed ? "folded (tasks.json left to the running app)" : "in tasks.json")",
                 "attempts: \(kinds)",
                 "delegates bound to a child: \(s.delegatesBound) of \(s.delegates)",
                 "tagged attempts: \(s.tagged)",
@@ -41,5 +44,11 @@ enum TasksScanCommand {
         done.wait()
         box.lines.forEach { print($0) }
         return 0
+    }
+
+    /// Whether another live process (the app) wrote `tasks.json` and still runs.
+    static func appOwnsFeed(home: URL, pid: Int32 = getpid()) -> Bool {
+        guard let feed = TasksFile.read(from: TasksFile.url(home: home)) else { return false }
+        return feed.writerPID != pid && TasksFile.writerIsAlive(feed)
     }
 }

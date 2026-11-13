@@ -68,9 +68,13 @@ final class AppModel {
     /// Agent runs being tracked, most pressing first (empty while task tracking is off).
     private(set) var taskRuns: [TaskRun] = []
     private var tasks: TaskTracker?
+    /// The limits and spend runs are read against, rebuilt with the snapshot.
+    private(set) var limitInputs = TaskLimitInputs()
+    private var quietAfter: TimeInterval
 
     init(settings: AppSettings) {
         self.settings = settings
+        quietAfter = settings.runQuietAfter
         notifier = Notifier(settings: settings)
         let persisted = PlistStore<PersistedState>.standard(named: "state.plist").load() ?? PersistedState()
         history = persisted.history
@@ -90,6 +94,11 @@ final class AppModel {
         refresher = ClaudeRefresher(lastRun: persisted.claudeRefreshLastRun) { await resolver.path(for: .claude) }
         claude = ClaudeUsageClient(refresher: refresher)
         codex = CodexAppServerClient { await resolver.path(for: .codex) }
+        notifier.openRun = { [weak self] id in
+            // The tracker's runs, else the feed on disk (tracking may have been turned off since).
+            let run = self?.taskRuns.first { $0.id == id } ?? TasksFile.read(from: TasksFile.url())?.run(id)
+            if let run { RunActions.openSession(run) }
+        }
     }
 
     static func pricer(_ engine: PricingEngine) -> EventPricer {
@@ -144,16 +153,17 @@ final class AppModel {
             publisher.stop()
         }
         if firstScanDone { updateTaskTracking() }
+        if settings.runQuietAfter != quietAfter {
+            quietAfter = settings.runQuietAfter
+            tasks?.refresh()
+        }
         changed()
     }
 
     /// Starts or stops the transcript observer and `tasks.json` writer to match the setting.
     private func updateTaskTracking() {
         if settings.taskTracking, tasks == nil {
-            let t = TaskTracker(settings: settings, notifier: notifier) { [weak self] in
-                guard let self else { return [] }
-                return SnapshotBuilder(now: Date()).build(model: self).providers
-            }
+            let t = TaskTracker(settings: settings, notifier: notifier) { [weak self] in self?.limitInputs ?? TaskLimitInputs() }
             t.onChange = { [weak self, weak t] in
                 guard let self, let t else { return }
                 self.taskRuns = t.runs
@@ -431,10 +441,11 @@ final class AppModel {
 
     private func changed() {
         onChange?()
-        writeSnapshot()
+        let limits = writeSnapshot()
         notify()
         armMinuteTimer()
-        tasks?.limitsChanged()
+        // Runs fold again when a window or a block moved; spend alone waits for the next fold.
+        if limits { tasks?.limitsChanged() }
     }
 
     private func notify() {
@@ -498,6 +509,7 @@ final class AppModel {
             input.fault = nil
         }
         input.planMonthlyOverride = settings.planPriceOverride(p)
+        input.runSpend = runSpend(p)
         return input
     }
 
@@ -538,15 +550,57 @@ final class AppModel {
 
     // MARK: Snapshot
 
-    private func writeSnapshot() {
+    /// Writes `snapshot.json` when it changed and keeps `limitInputs` in step. Returns whether the
+    /// limits runs are read against moved (a 5-hour window or a block).
+    @discardableResult
+    private func writeSnapshot() -> Bool {
         widgets.update(WidgetFeedBuilder(now: Date()).build(model: self))
         publisher.update()
         let snapshot = SnapshotBuilder(now: Date()).build(model: self)
+        let old = limitInputs
+        limitInputs = TaskLimitInputs(providers: snapshot.providers, spend: providerSpend(snapshot.providers, now: snapshot.generatedAt))
+        let moved = old.providers.map(LimitKey.init) != limitInputs.providers.map(LimitKey.init)
         var body = snapshot
         body.generatedAt = .distantPast
         let encoded = try? SnapshotFile.encoder().encode(body)
-        if let encoded, encoded == lastSnapshotBody { return }
+        if let encoded, encoded == lastSnapshotBody { return moved }
         lastSnapshotBody = encoded
         _ = try? snapshotWriter.write(snapshot)
+        return moved
+    }
+
+    /// The parts of a provider's snapshot a run's outlook depends on.
+    private struct LimitKey: Equatable {
+        var id: Provider
+        var session: SessionSnapshot?
+        var blocked: BlockedSnapshot?
+        init(_ s: ProviderSnapshot) { id = s.id; session = s.session; blocked = s.blocked }
+    }
+
+    /// What each provider is spending on this Mac: new tokens an hour over the last 45 to 60
+    /// minutes (whole quarter-hour slots), and new tokens since its 5-hour window began.
+    private func providerSpend(_ providers: [ProviderSnapshot], now: Date) -> [Provider: ProviderSpend] {
+        let slot = TimeInterval(UsageBuckets.slotSeconds)
+        let start = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / slot).rounded(.down) * slot - 3 * slot)
+        let end = now.addingTimeInterval(slot) // through the slot in progress
+        let hours = max(now.timeIntervalSince(start), 1800) / 3600
+        var out: [Provider: ProviderSpend] = [:]
+        for s in providers {
+            let recent = buckets.totals(s.id, from: start, to: end).tokens.fresh
+            let window = s.session?.resetsAt.flatMap { reset in
+                reset > now ? buckets.totals(s.id, from: reset.addingTimeInterval(-5 * 3600), to: end).tokens.fresh : nil
+            }
+            out[s.id] = ProviderSpend(tokensPerHour: Double(recent) / hours, windowTokens: window)
+        }
+        return out
+    }
+
+    /// Each live run's share of what `p` is spending right now, for Pace's "What's spending it".
+    func runSpend(_ p: Provider) -> [RunSpend] {
+        taskRuns.compactMap { r in
+            guard !r.hidden, r.state == .running || r.state == .waiting, let o = r.limitOutlook, o.provider == p,
+                  let share = o.share, share > 0 else { return nil }
+            return RunSpend(title: r.agentTitle ?? r.project ?? "Agent run", share: share)
+        }
     }
 }

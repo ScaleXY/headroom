@@ -3,10 +3,17 @@ import HeadroomCore
 import HeadroomKit
 import HeadroomPresent
 
+/// What runs are read against: each provider's limits as the snapshot states them, and what each
+/// is spending on this Mac right now. Built by the model when its readings change, not per fold.
+struct TaskLimitInputs: Sendable, Equatable {
+    var providers: [ProviderSnapshot] = []
+    var spend: [Provider: ProviderSpend] = [:]
+}
+
 /// Task tracking in the app: the transcript observer, the `tasks.json` writer and the run
-/// notifications. Folds again on `TaskJournal.notification` (the CLI and hooks), on new observed
-/// events, and once a minute while a run is live or an agent's end can only be seen by polling.
-/// Idle (no timer, no work) when nothing is live.
+/// notifications. Folds again on `TaskJournal.notification` (the CLI, hooks and run actions), on
+/// new observed events, and once a minute while a run is live or an agent's end can only be seen
+/// by polling. Idle (no timer, no work) when nothing is live.
 @MainActor
 final class TaskTracker {
     static let tick: TimeInterval = 60
@@ -19,8 +26,8 @@ final class TaskTracker {
     private let writer: TaskFeedWriter
     private let settings: AppSettings
     private let notifier: Notifier
-    /// The providers' limits, for the waiting-on-limit adjustment.
-    private let providers: @MainActor () -> [ProviderSnapshot]
+    /// The providers' limits and spend, for the limit outlook (cached by the model).
+    private let limits: @MainActor () -> TaskLimitInputs
     private var alerts = TaskAlerts()
     private var journalObserver: RefreshObserver?
     private var timer: Timer?
@@ -29,12 +36,12 @@ final class TaskTracker {
     private var stopped = false
 
     init(home: URL = SnapshotFile.directory, roots: LogRoots = .standard(), settings: AppSettings, notifier: Notifier,
-         providers: @escaping @MainActor () -> [ProviderSnapshot]) {
+         limits: @escaping @MainActor () -> TaskLimitInputs) {
         observer = TaskObserver(roots: roots, home: home)
         writer = TaskFeedWriter(home: home)
         self.settings = settings
         self.notifier = notifier
-        self.providers = providers
+        self.limits = limits
     }
 
     /// Catches up on the last day of transcripts, then listens.
@@ -92,11 +99,13 @@ final class TaskTracker {
         guard !stopped else { return }
         guard !busy else { again = true; return }
         busy = true
-        let snapshots = providers()
+        let inputs = limits()
+        let staleAfter = settings.runQuietAfter
         let observer = observer, writer = writer
         Task {
             let hidden = await observer.boundChildren
-            let result = await writer.refresh(hidden: hidden, providers: snapshots, calendar: Display.calendar, locale: Display.locale)
+            let result = await writer.refresh(hidden: hidden, providers: inputs.providers, spend: inputs.spend, staleAfter: staleAfter,
+                                              calendar: Display.calendar, locale: Display.locale)
             let polling = await observer.needsPolling
             finish(result.runs, polling: polling)
         }
@@ -105,12 +114,13 @@ final class TaskTracker {
     private func finish(_ new: [TaskRun], polling: Bool) {
         busy = false
         guard !stopped else { return }
+        RunHistory.shared.record(new)
         if new != runs {
             runs = new
             onChange?()
         }
         let settings = settings
-        for a in alerts.evaluate(new, now: Date(), enabled: { settings.taskNotifies($0) }) { notifier.post(a) }
+        for a in alerts.evaluate(new, now: Date(), quietAfter: settings.runQuietAfter, enabled: { settings.taskNotifies($0) }) { notifier.post(a) }
         // Past an hour of quiet a run is stale and nothing about it moves with the clock.
         let live = new.contains { !$0.state.isTerminal && Date().timeIntervalSince($0.updatedAt) < 3600 }
         arm(live || polling)
