@@ -143,6 +143,16 @@ case "tasks":
     let count = events.values.reduce(0) { $0 + $1.count }
     print(String(format: "tasks: runs=%d events=%d %.0f KB  read+decode %.2f ms  fold %.2f ms  (%.1f µs/event decode)",
                  runs.count, count, Double(bytes) / 1024, readMs, foldMs, readMs * 1000 / Double(max(count, 1))))
+    // `tasks.json` as the app wrote it: what every `headroom tasks` and statusline reads, and what each changed fold writes.
+    if let data = try? Data(contentsOf: TasksFile.url(home: home)), let feed = try? TasksFile.decoder().decode(TasksFeed.self, from: data) {
+        t0 = wallClock()
+        for _ in 0..<rounds { _ = try? TasksFile.decoder().decode(TasksFeed.self, from: data) }
+        let decodeMs = (wallClock() - t0) * 1000 / Double(rounds)
+        t0 = wallClock()
+        for _ in 0..<rounds { _ = try? TasksFile.encoder().encode(feed) }
+        let encodeMs = (wallClock() - t0) * 1000 / Double(rounds)
+        print(String(format: "tasks.json: %.0f KB runs=%d  decode %.2f ms  encode %.2f ms", Double(data.count) / 1024, feed.runs.count, decodeMs, encodeMs))
+    }
 
 case "zstd-check":
     // Decode N real rollouts and compare against `zstd -dc` byte for byte.
