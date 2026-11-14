@@ -240,7 +240,26 @@ def slides(raw):
                      "Know when one model's cap is the one to watch, and use reset credits before they lapse.",
                      f'<div style="display:flex;gap:40px">{cards}</div>', 3 * 384 + 2 * 40, 594, accent=STATE["verytight"])
 
-    return [hero, pace, session, menubar, welcome, activity, settings, themes, callouts]
+    # 10. Agent runs: the list, a run's page as Lanes, and a run that's asking.
+    shots = [("Runs · needs you first", "runs-mixed-dark", STATE["verytight"]),
+             ("A page for each run", "runpage-timeline-1-lanes-dark", STATE["plenty"]),
+             ("Questions come first", "runpage-input-1-briefing-dark", STATE["verytight"])]
+    # Cards keep their own heights; one taller than the limit is cut there with a fade.
+    limit = 560
+
+    def card(src):
+        if png_size(raw / f"{src}.png")[1] / 2 > limit:
+            return crop(f"{raw}/{src}.png", 384, limit, fade=0.82)
+        return f"<div class='shot pop'><img src='{raw}/{src}.png'></div>"
+
+    tallest = min(limit, max(png_size(raw / f"{s}.png")[1] / 2 for _, s, _ in shots))
+    cards = "".join(f"<div>{label(t, c)}{card(s)}</div>" for t, s, c in shots)
+    runs = Slide("10-runs", "violet", "Agent runs", "Know which run needs you.",
+                 "Follow every Claude Code and Codex run: how far along it is, what it's asking, and whether it reaches the 5-hour limit before it finishes.",
+                 f'<div style="display:grid;grid-template-columns:repeat(3,384px);gap:40px;align-items:start">{cards}</div>',
+                 3 * 384 + 2 * 40, round(tallest + 34), accent=STATE["verytight"])
+
+    return [hero, pace, session, menubar, welcome, activity, settings, themes, callouts, runs]
 
 
 def light_copy_css(slide):

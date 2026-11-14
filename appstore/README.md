@@ -5,9 +5,9 @@ fixture renders (`HeadroomApp --render all`), so no screenshot contains live acc
 
 | Folder | What | Upload to |
 | --- | --- | --- |
-| `screenshots/2880x1800/` | 9 screenshots, 16:10, opaque PNG | App Store → macOS App → App Previews and Screenshots (Mac). Accepted sizes are 2880×1800, 2560×1600, 1440×900 and 1280×800. |
-| `screenshots/1920x1080/` | The same 9 at exactly 1080p | Not accepted as Mac screenshots; they are the frames of the app preview and suit the web or social posts. |
-| `preview/headroom-preview-1920x1080.mp4` | 26.6 s app preview: 1920×1080, H.264 High, 30 fps, ~10 Mbps, stereo AAC (silent) | App Previews (up to 3, 15–30 s, 1920×1080). Optional. |
+| `screenshots/2880x1800/` | 10 screenshots, 16:10, opaque PNG | App Store → macOS App → App Previews and Screenshots (Mac). Accepted sizes are 2880×1800, 2560×1600, 1440×900 and 1280×800. |
+| `screenshots/1920x1080/` | The same 10 at exactly 1080p | Not accepted as Mac screenshots; they are the frames of the app preview and suit the web or social posts. |
+| `preview/headroom-preview-1920x1080.mp4` | 29.5 s app preview: 1920×1080, H.264 High, 30 fps, ~10 Mbps, stereo AAC (silent) | App Previews (up to 3, 15–30 s, 1920×1080). Optional. |
 | `icon/headroom-icon-1024.png` | 1024×1024 app icon | Reference only: App Store Connect takes the Mac icon from the build's `AppIcon`. |
 
 Screenshot order (upload in this order; the first three show in search results):
@@ -21,6 +21,7 @@ Screenshot order (upload in this order; the first three show in search results):
 7. `07-settings` Settings with the live preview
 8. `08-appearance` Light and dark
 9. `09-callouts` Model caps, early resets and expiring credits
+10. `10-runs` Agent runs: the list, a run's page and a run that's asking
 
 ## Draft listing text
 
@@ -51,6 +52,9 @@ The 5-hour session is usually the limit you hit first, so it gets its own panel:
 
 SEE WHERE THE TOKENS GO
 The Activity tab shows tokens and cost by hour and by model, every past week, and your recent 5-hour sessions, so a run of near-misses stands out.
+
+FOLLOW LONG AGENT RUNS
+The Runs tab follows your Claude Code and Codex agent runs: the ones waiting on you first, then the live ones, then what finished today. Each run opens its own page with what it's working on, how far along it is and when it should be done, including when it will pause at your 5-hour limit. When an agent stops to ask you something, the question comes first.
 
 NO SURPRISES
 Headroom flags when a single model's weekly cap is the one to watch, notices early resets, and highlights reset credits before they lapse.
