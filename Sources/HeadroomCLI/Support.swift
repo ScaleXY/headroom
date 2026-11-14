@@ -204,13 +204,18 @@ struct TaskStore {
     }
 
     /// One run, cheaply: the live file's copy if current, else a fold of just its events.
-    func run(_ id: String, now: Date) -> TaskRun? {
-        if let feed = TasksFile.read(from: TasksFile.url(home: home)), TasksFile.writerIsAlive(feed), let r = feed.run(id),
-           !TaskJournal.runs(home: home, modifiedSince: feed.generatedAt).contains(id) {
-            return r
+    func run(_ id: String, now: Date) -> TaskRun? { loadRun(id, now: now).runs.first }
+
+    /// One run, and whether a live app wrote `tasks.json`, from a single read of that file.
+    func loadRun(_ id: String, now: Date) -> Loaded {
+        let feed = TasksFile.read(from: TasksFile.url(home: home))
+        let live = feed.map(TasksFile.writerIsAlive) ?? false
+        if let feed, live, let r = feed.run(id), !TaskJournal.modified(run: id, home: home, since: feed.generatedAt) {
+            return Loaded(runs: [r], live: live)
         }
         let events = TaskJournal.read(run: id, home: home)
-        return events.isEmpty ? nil : TaskFold.fold(events, now: now).first.map { TaskCompaction.compact($0, now: now) }
+        let run = events.isEmpty ? nil : TaskFold.fold(events, now: now).first.map { TaskCompaction.compact($0, now: now) }
+        return Loaded(runs: run.map { [$0] } ?? [], live: live)
     }
 
     /// Whether a live app wrote `tasks.json`.

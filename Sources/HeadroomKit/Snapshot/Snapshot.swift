@@ -242,7 +242,7 @@ public enum SnapshotFile {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let s = try decoder.singleValueContainer().decode(String.self)
-            if let date = ISO8601DateFormatter.headroom.date(from: s) { return date }
+            if let date = ISO8601DateFormatter.headroomDate(s) { return date }
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "bad date \(s)"))
         }
         return d
@@ -252,7 +252,7 @@ public enum SnapshotFile {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .custom { date, encoder in
             var c = encoder.singleValueContainer()
-            try c.encode(ISO8601DateFormatter.headroom.string(from: date))
+            try c.encode(ISO8601DateFormatter.headroomString(date))
         }
         e.outputFormatting = pretty ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes] : [.sortedKeys, .withoutEscapingSlashes]
         return e

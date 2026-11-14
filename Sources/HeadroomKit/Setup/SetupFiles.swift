@@ -60,7 +60,7 @@ enum HookHeartbeat {
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [:] }
         var out: [String: Date] = [:]
         for (k, v) in obj {
-            if let s = v as? String, let d = ISO8601DateFormatter.headroomMillis.date(from: s) ?? ISO8601DateFormatter.headroom.date(from: s) { out[k] = d }
+            if let s = v as? String, let d = ISO8601DateFormatter.headroomEventDate(s) { out[k] = d }
         }
         return out
     }
@@ -70,7 +70,7 @@ enum HookHeartbeat {
         var beats = read(store: store)
         if let last = beats[harness.rawValue], abs(at.timeIntervalSince(last)) < 5 { return }
         beats[harness.rawValue] = at
-        let obj = beats.mapValues { ISO8601DateFormatter.headroomMillis.string(from: $0) }
+        let obj = beats.mapValues { ISO8601DateFormatter.headroomEventString($0) }
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return }
         let dir = TaskJournal.directory(home: store)
         try? TaskJournal.makeDirectory(dir)

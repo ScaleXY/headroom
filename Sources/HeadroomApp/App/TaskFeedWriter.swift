@@ -6,7 +6,8 @@ import HeadroomKit
 ///
 /// Runs are cached with their files' sizes and times: a run is read and folded again only when
 /// its files changed, or while it's unfinished and recent (the stale overlay and the ETA move with
-/// the clock). Calibration is `TaskFold.foldCalibrated`'s, computed across the cache: tokens per
+/// the clock); what was already read of a run's files is kept (`TaskJournalReader`), so a fold of a
+/// live run decodes only the lines added since the last one. Calibration is `TaskFold.foldCalibrated`'s, computed across the cache: tokens per
 /// effort unit come from done leaves, which don't depend on it, so only unfinished runs fold twice.
 actor TaskFeedWriter {
     static let window: TimeInterval = 7 * 86400
@@ -25,6 +26,8 @@ actor TaskFeedWriter {
     /// False for a one-off scan while the app keeps the file.
     private let writes: Bool
     private var cache: [String: Cached] = [:]
+    /// The events of the runs read last time: live ones, read again on every refresh.
+    private var reader = TaskJournalReader()
     private var lastBody: Data?
     private var lastRuns: [TaskRun]?
     private var prunedAt: Date = .distantPast
@@ -63,9 +66,10 @@ actor TaskFeedWriter {
             let c = cache[run]
             let live = c?.run.map { !$0.state.isTerminal && now.timeIntervalSince($0.updatedAt) < Self.liveWindow } ?? true
             guard c?.signature != f.signature || live else { continue }
-            events[run] = TaskJournal.read(run: run, home: home)
+            events[run] = reader.read(run: run, home: home)
             cache[run] = Cached(signature: f.signature, run: nil, newest: f.newest)
         }
+        reader.keep(only: Set(events.keys))
         for (run, list) in events {
             cache[run]?.run = TaskFold.fold(list, now: now, staleAfter: staleAfter).first
             folds += 1

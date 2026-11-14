@@ -120,6 +120,30 @@ case "incremental":
     let mb = Double(r.bytesProcessed) / 1e6
     print(String(format: "incremental: %.1f MB appended, %.2f ms, %.2f ms/MB, events=%d", mb, ms, ms / max(mb, 0.001), r.eventsAdded))
 
+case "tasks":
+    // Reads and folds every run's event files the way the app does on each refresh. Read-only.
+    let home = option("--home").map { URL(fileURLWithPath: $0) } ?? SnapshotFile.directory
+    let rounds = Int(option("--rounds") ?? "20") ?? 20
+    let runs = TaskJournal.runs(home: home)
+    var events: [String: [TaskEvent]] = [:]
+    var bytes = 0
+    for run in runs {
+        for s in TaskJournal.Stream.allCases {
+            bytes += (try? FileManager.default.attributesOfItem(atPath: TaskJournal.url(run: run, stream: s, home: home).path)[.size] as? Int) ?? 0
+        }
+    }
+    var t0 = wallClock()
+    for _ in 0..<rounds { for run in runs { events[run] = TaskJournal.read(run: run, home: home) } }
+    let readMs = (wallClock() - t0) * 1000 / Double(rounds)
+    let now = Date()
+    var folded = 0
+    t0 = wallClock()
+    for _ in 0..<rounds { for run in runs { folded += TaskFold.fold(events[run] ?? [], now: now).count } }
+    let foldMs = (wallClock() - t0) * 1000 / Double(rounds)
+    let count = events.values.reduce(0) { $0 + $1.count }
+    print(String(format: "tasks: runs=%d events=%d %.0f KB  read+decode %.2f ms  fold %.2f ms  (%.1f µs/event decode)",
+                 runs.count, count, Double(bytes) / 1024, readMs, foldMs, readMs * 1000 / Double(max(count, 1))))
+
 case "zstd-check":
     // Decode N real rollouts and compare against `zstd -dc` byte for byte.
     let limit = args.count > 1 ? Int(args[1]) ?? 20 : 20

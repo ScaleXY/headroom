@@ -80,8 +80,10 @@ enum HookCommand {
             events.insert(TaskEvent(at: now, run: run, source: .hook, op: .meta(title: nil, project: cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
                                                                                  harness: a?["--harness"] ?? "claude-code", host: host, cwd: cwd)), at: 0)
         } else if host != nil || cwd != nil {
-            let journal = (try? Data(contentsOf: TaskJournal.url(run: run, stream: .journal, home: ctx.home))).map(TaskJournal.decode) ?? []
-            let last = TaskOps.lastPlace(journal)
+            // Only `run.meta` lines say where a session runs: the rest needn't be decoded to find the last.
+            let journal = (try? Data(contentsOf: TaskJournal.url(run: run, stream: .journal, home: ctx.home))) ?? Data()
+            let meta = Data("run.meta".utf8)
+            let last = TaskOps.lastPlace(journal.split(separator: 0x0A).filter { $0.range(of: meta) != nil }.flatMap { TaskJournal.decode(Data($0)) })
             if (host != nil && host != last.host) || (cwd != nil && cwd != last.cwd) {
                 events.insert(TaskEvent(at: now, run: run, source: .hook, op: .meta(title: nil, project: nil, harness: nil, host: host ?? last.host, cwd: cwd ?? last.cwd)), at: 0)
             }

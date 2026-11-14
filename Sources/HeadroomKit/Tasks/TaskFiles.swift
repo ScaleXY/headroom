@@ -120,6 +120,15 @@ public enum TaskJournal {
         return out.sorted()
     }
 
+    /// Whether either of a run's files was written to since `since`: what `runs(home:modifiedSince:)`
+    /// answers for one run, without listing every run.
+    public static func modified(run: String, home: URL, since: Date) -> Bool {
+        Stream.allCases.contains { s in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: url(run: run, stream: s, home: home).path)
+            return (attrs?[.modificationDate] as? Date).map { $0 >= since } ?? false
+        }
+    }
+
     /// Every event of every run written to since `modifiedSince`.
     public static func readAll(home: URL, modifiedSince: Date? = nil) -> [TaskEvent] {
         runs(home: home, modifiedSince: modifiedSince).flatMap { read(run: $0, home: home) }
@@ -129,7 +138,7 @@ public enum TaskJournal {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .custom { date, encoder in
             var c = encoder.singleValueContainer()
-            try c.encode(ISO8601DateFormatter.headroomMillis.string(from: date))
+            try c.encode(ISO8601DateFormatter.headroomEventString(date))
         }
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return e
@@ -140,10 +149,93 @@ public enum TaskJournal {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let s = try decoder.singleValueContainer().decode(String.self)
-            if let date = ISO8601DateFormatter.headroomMillis.date(from: s) ?? ISO8601DateFormatter.headroom.date(from: s) { return date }
+            if let date = ISO8601DateFormatter.headroomEventDate(s) { return date }
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "bad date \(s)"))
         }
         return d
+    }
+}
+
+/// Reads runs' event files over and over without decoding a line twice: what `TaskJournal.read`
+/// returns, for a reader that asks again on every change (the app folds live runs every few
+/// seconds while agents work). The files only grow, one whole line per write, so a file that is
+/// the same file and longer is read from where the last read ended; one that was replaced
+/// (`compactObserved` renames a new file over it), shrank or was rewritten is read from the start.
+public struct TaskJournalReader: Sendable {
+    struct Key: Hashable, Sendable {
+        var run: String
+        var stream: TaskJournal.Stream
+    }
+
+    struct File: Sendable {
+        /// Device, inode and creation time: a renamed-over file differs even at the same size.
+        var identity: [Int64]
+        var size = 0
+        var modified: [Int] = []
+        /// Bytes decoded into `events`: up to and including the last newline read.
+        var consumed = 0
+        var events: [TaskEvent] = []
+        /// What follows the last newline, if it decodes. Read again next time.
+        var tail: [TaskEvent] = []
+    }
+
+    private var files: [Key: File] = [:]
+
+    public init() {}
+
+    /// One run's events: the journal, then the observed file, exactly as `TaskJournal.read`.
+    public mutating func read(run: String, home: URL) -> [TaskEvent] {
+        TaskJournal.Stream.allCases.flatMap { read(Key(run: run, stream: $0), path: TaskJournal.url(run: run, stream: $0, home: home).path) }
+    }
+
+    /// Drops what is held for every other run.
+    public mutating func keep(only runs: Set<String>) {
+        files = files.filter { runs.contains($0.key.run) }
+    }
+
+    private mutating func read(_ key: Key, path: String) -> [TaskEvent] {
+        let fd = open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { files[key] = nil; return [] }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else { files[key] = nil; return [] }
+        let identity = [Int64(st.st_dev), Int64(bitPattern: UInt64(st.st_ino)), Int64(st.st_birthtimespec.tv_sec), Int64(st.st_birthtimespec.tv_nsec)]
+        let modified = [Int(st.st_mtimespec.tv_sec), Int(st.st_mtimespec.tv_nsec)]
+        var size = Int(st.st_size)
+        if let f = files[key], f.identity == identity, f.size == size, f.modified == modified { return f.events + f.tail }
+        // The same file, longer: the lines already read are still its first lines.
+        var f = files[key].flatMap { $0.identity == identity && $0.size < size ? $0 : nil } ?? File(identity: identity)
+        let want = size - f.consumed
+        var chunk = Data(count: want)
+        let got = want == 0 ? 0 : chunk.withUnsafeMutableBytes { buffer -> Int in
+            guard let base = buffer.baseAddress else { return -1 }
+            var n = 0
+            while n < want {
+                let r = pread(fd, base + n, want - n, off_t(f.consumed + n))
+                if r < 0 && errno == EINTR { continue }
+                if r < 0 { return -1 }
+                if r == 0 { break }
+                n += r
+            }
+            return n
+        }
+        guard got >= 0 else { files[key] = nil; return [] }
+        if got < want {
+            chunk.count = got
+            size = f.consumed + got
+        }
+        let d = TaskJournal.decoder()
+        var rest = chunk[...]
+        if let newline = chunk.lastIndex(of: 0x0A) {
+            f.events += chunk[..<newline].split(separator: 0x0A).compactMap { try? d.decode(TaskEvent.self, from: Data($0)) }
+            f.consumed += newline + 1
+            rest = chunk[(newline + 1)...]
+        }
+        f.tail = rest.isEmpty ? [] : (try? d.decode(TaskEvent.self, from: Data(rest))).map { [$0] } ?? []
+        f.size = size
+        f.modified = modified
+        files[key] = f
+        return f.events + f.tail
     }
 }
 

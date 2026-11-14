@@ -38,7 +38,7 @@ enum WaitCommand {
                 announced = true
                 let b = soonest.blocked!
                 if json {
-                    let until = b.until.map { "\"\(ISO8601DateFormatter.headroom.string(from: $0))\"" } ?? "null"
+                    let until = b.until.map { "\"\(ISO8601DateFormatter.headroomString($0))\"" } ?? "null"
                     output("{\"provider\":\"\(soonest.id.rawValue)\",\"blocked_by\":\"\(b.by)\",\"until\":\(until)}")
                 } else {
                     output(style.dim("⏸ waiting on " + description(b, provider: soonest.id, now: now())))

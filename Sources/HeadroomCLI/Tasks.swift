@@ -698,7 +698,7 @@ enum TasksCommand {
             var loaded: TaskStore.Loaded
             if let only {
                 // Just that run: never fold every other run to find it.
-                loaded = TaskStore.Loaded(runs: store.run(only, now: now).map { [$0] } ?? [], live: store.live)
+                loaded = store.loadRun(only, now: now)
             } else {
                 loaded = store.load(now: now, all: a.has("--all"))
             }
