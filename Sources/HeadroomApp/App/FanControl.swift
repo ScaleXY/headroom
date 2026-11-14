@@ -62,6 +62,7 @@ final class FanControl {
         readoutTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshReadout() }
         }
+        readoutTimer?.tolerance = 1
     }
 
     /// Reads off the main thread: a pass over every die sensor takes tens of milliseconds.

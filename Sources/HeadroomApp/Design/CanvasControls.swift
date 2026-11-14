@@ -71,6 +71,15 @@ class CanvasControlView: NSView {
         }
     }
 
+    /// Drops the drawn image (about 10 MB for Settings at 2x) while the window is closed.
+    /// `updateLayer()` draws it again.
+    func releaseBacking() {
+        fade = nil
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        layer?.contents = nil
+    }
+
     // MARK: Input
 
     func hit(_ rect: CGRect, _ action: some Hashable) { regions.append((rect, AnyHashable(action))) }

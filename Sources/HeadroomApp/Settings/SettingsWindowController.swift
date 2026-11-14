@@ -11,6 +11,8 @@ import UserNotifications
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings: AppSettings
     private let view: SettingsView
+    /// The drawn image was dropped on close; the controller stays so the section is remembered.
+    private var released = false
     var openWelcome: (() -> Void)? {
         get { view.openWelcome }
         set { view.openWelcome = newValue }
@@ -44,6 +46,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func show(section: Int? = nil) {
         if let section { view.select(SettingsView.Section.allCases[min(max(section, 0), SettingsView.Section.allCases.count - 1)], animated: false) }
+        if released {
+            // Draw now, so the window never comes up empty.
+            released = false
+            view.updateLayer()
+        }
         NSApp.activate()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -61,7 +68,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func refresh() {
         if window?.appearance != settings.appearance.nsAppearance { window?.appearance = settings.appearance.nsAppearance }
         view.syncFields()
-        view.needsDisplay = true
+        if !released { view.needsDisplay = true }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        released = true
+        // After the close animation, which may still show the image; skipped if reopened by then.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.released, self.window?.isVisible != true else { return }
+                self.view.releaseBacking()
+                Memory.relieve()
+            }
+        }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

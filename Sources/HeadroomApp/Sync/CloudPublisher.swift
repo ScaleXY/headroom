@@ -152,6 +152,7 @@ final class CloudPublisher {
         let timer = Timer(timeInterval: Self.heartbeatInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.update() }
         }
+        timer.tolerance = 60
         RunLoop.main.add(timer, forMode: .common)
         heartbeat = timer
     }
@@ -185,7 +186,9 @@ final class CloudPublisher {
         pending = nil
         guard running, let store, let model else { return }
         let now = Date()
-        var deferred = false
+        // Held back until their interval is up; each wakes the flush at its own due time.
+        var liveDeferred = false
+        var activityDeferred = false
         var runsRetry: TimeInterval?
         do {
             runsRetry = await writeDevice(force: force)
@@ -196,7 +199,7 @@ final class CloudPublisher {
                 // Accounts no longer signed in here are written once (backfill), then left as they were.
                 if !item.current, published[key] != nil { continue }
                 let urgent = looks[key] != item.look
-                if !force, !urgent, now.timeIntervalSince(lastLiveWrite) < Self.liveInterval { deferred = true; continue }
+                if !force, !urgent, now.timeIntervalSince(lastLiveWrite) < Self.liveInterval { liveDeferred = true; continue }
                 try await store.upsertLive(deviceID: deviceID, provider: item.provider, accountKey: item.accountKey, payload: item.payload, now: now)
                 published[key] = data
                 looks[key] = item.look
@@ -219,7 +222,7 @@ final class CloudPublisher {
                 }
                 lastActivityWrite = now
             } else {
-                deferred = true
+                activityDeferred = true
             }
 
             if now.timeIntervalSince(lastCollect) > 86400 {
@@ -233,7 +236,8 @@ final class CloudPublisher {
             syncLog.error("publish failed: \(String(describing: error), privacy: .public)")
             status = .failed("Couldn't save to iCloud. Headroom will try again.")
         }
-        var wake: TimeInterval? = deferred ? max(5, Self.liveInterval - now.timeIntervalSince(lastLiveWrite)) : nil
+        var wake: TimeInterval? = liveDeferred ? max(5, Self.liveInterval - now.timeIntervalSince(lastLiveWrite)) : nil
+        if activityDeferred { wake = min(wake ?? .infinity, max(5, Self.activityInterval - now.timeIntervalSince(lastActivityWrite))) }
         if let runsRetry { wake = min(wake ?? .infinity, max(5, runsRetry)) }
         // While a run waits on input, keep saying you're here, so phones keep holding their alert.
         if lastActiveAt != nil { wake = min(wake ?? .infinity, 60) }
