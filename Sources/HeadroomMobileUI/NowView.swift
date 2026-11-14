@@ -21,7 +21,7 @@ struct NowView: View {
                     EmptyStateView(model: model, state: state)
                 } else {
                     Banners(model: model)
-                    RunsSection(model: model, columns: columns)
+                    RunsSection(model: model)
                     let grid = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: columns)
                     LazyVGrid(columns: grid, spacing: 14) {
                         ForEach(model.orderedAccounts) { account in

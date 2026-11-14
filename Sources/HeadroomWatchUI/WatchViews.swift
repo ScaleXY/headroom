@@ -150,9 +150,15 @@ public struct WatchRunsList: View {
             Text("Agent runs").font(.headline)
             ForEach(cards) { card in
                 if let run = runs.first(where: { $0.id == card.id }) {
-                    WatchRunRow(card: card, figure: card.declared ? card.headline : presenter.shortFigure(run),
-                                progress: card.declared ? run.progress : nil,
-                                question: run.question?.text.split(whereSeparator: \.isNewline).first.map(String.init))
+                    NavigationLink {
+                        WatchRunPage(runs: runs, id: card.id, now: now)
+                    } label: {
+                        WatchRunRow(card: card, figure: card.declared ? card.headline : presenter.shortFigure(run),
+                                    progress: card.declared ? run.progress : nil,
+                                    question: run.question?.text.split(whereSeparator: \.isNewline).first.map(String.init))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the run")
                 }
             }
         }
@@ -190,13 +196,104 @@ struct WatchRunRow: View {
             }
             HStack(spacing: 5) {
                 RunMarkView(RunMark.of(card.glyph), color: p.run(hue), size: 9)
-                Text(card.stateText).font(.caption2.weight(.medium)).foregroundStyle(hue == .neutral ? p.muted : p.run(hue)).lineLimit(1)
+                Text(card.page?.status.key ?? card.stateText).font(.caption2.weight(.medium)).foregroundStyle(hue == .neutral ? p.muted : p.run(hue)).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(p.muted2)
             }
         }
         .padding(.vertical, 7).padding(.horizontal, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(card.needsInput ? p.rose.opacity(0.16) : Color.white.opacity(card.live ? 0.10 : 0.05)))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A run's own page on the Watch, as a short Briefing: its status (or the question), the percent
+/// and when it's done, the task map, the limit, then the open tasks.
+public struct WatchRunPage: View {
+    var runs: [RunDigest]
+    var id: String
+    var now: Date
+
+    public init(runs: [RunDigest], id: String, now: Date) { self.runs = runs; self.id = id; self.now = now }
+
+    public var body: some View {
+        let presenter = RunsPresenter(now: now, calendar: .current, locale: .current)
+        let listed = presenter.page(runs)
+        let card = (listed.live + listed.recent).first { $0.id == id } ?? runs.first { $0.id == id }.map { presenter.card($0) }
+        ScrollView {
+            if let card {
+                WatchRunPageContent(card: card)
+            } else {
+                Text("This run isn't synced anymore.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(card?.live == false ? "Finished" : "Run")
+    }
+}
+
+/// The page's content (the PNG renderer draws it without the scroll view).
+public struct WatchRunPageContent: View {
+    var card: RunCardModel
+
+    public init(card: RunCardModel) { self.card = card }
+
+    public var body: some View {
+        let p = Palette(.dark), c = card, hue = RunHue.of(c.tone, glyph: c.glyph), page = c.page
+        let tone = c.tone == .quiet ? p.muted : p.run(hue)
+        VStack(alignment: .leading, spacing: 7) {
+            Text(c.title).font(.headline).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            if let q = c.question {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(q.asker.isEmpty ? RunWords.needsInput : q.asker).font(.caption2.weight(.semibold)).foregroundStyle(p.rose)
+                    Text(q.text).font(.footnote).lineLimit(6).fixedSize(horizontal: false, vertical: true)
+                    if !q.options.isEmpty {
+                        Text("Offered: " + q.options.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.rose.opacity(0.16)))
+            } else if let status = page?.status {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if c.live { Circle().fill(tone).frame(width: 6, height: 6) } else { RunMarkView(RunMark.of(c.glyph), color: tone, size: 9) }
+                    (Text(status.key).fontWeight(.semibold).foregroundStyle(tone) + Text(status.detail.map { " · " + $0 } ?? "").foregroundStyle(.secondary))
+                        .font(.caption2).lineLimit(3)
+                }
+            }
+            if let hero = c.hero {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(hero.number + (hero.unit == "%" ? "%" : "")).font(.title2.weight(.semibold).monospacedDigit())
+                    if hero.unit != "%" { Text(hero.unit).font(.footnote.weight(.semibold).monospacedDigit()).foregroundStyle(.secondary) }
+                    if let done = page?.facts.first(where: { $0.label == "Done" || $0.label == "Took" }) {
+                        Text((done.label == "Done" ? "done " : "") + done.value).font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+            if c.live {
+                if !c.segments.isEmpty {
+                    RunTaskMap(blocks: c.segments.map { RunMapBlock(weight: $0.weight, fill: $0.fill, hue: $0.failed ? .failed : RunHue.of($0.tone), critical: $0.critical) },
+                               height: 6, gap: 1.5)
+                } else if let bar = c.bar {
+                    RunProgressBar(done: bar.done, inFlight: bar.inFlight, height: 5)
+                }
+            }
+            if let limit = page?.limit {
+                Label("Pauses \(limit.pause) · resumes \(limit.resume)", systemImage: "pause.fill").font(.caption2.monospacedDigit()).foregroundStyle(p.amber)
+            }
+            if let page, !page.groups.isEmpty {
+                Text("\(page.groupsTitle.uppercased()) · \(page.openCount)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).padding(.top, 2)
+                ForEach(page.groups.flatMap(\.rows).prefix(8)) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        RunMarkView(RunMark.of(row.glyph), color: row.glyph == .done ? p.muted : p.run(RunHue.of(row.tone, glyph: row.glyph)), size: 8)
+                        Text(row.title).font(.caption2).lineLimit(2)
+                    }
+                }
+                if page.moreOpen > 0 { Text("and \(page.moreOpen) more").font(.caption2).foregroundStyle(.secondary) }
+            }
+            Text(c.subtitle).font(.system(size: 10)).foregroundStyle(.tertiary).padding(.top, 2)
+        }
+        .padding(.horizontal, 4)
     }
 }
 

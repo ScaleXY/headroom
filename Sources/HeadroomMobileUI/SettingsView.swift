@@ -1,4 +1,5 @@
 import HeadroomKit
+import HeadroomPresent
 import HeadroomSync
 import SwiftUI
 
@@ -10,6 +11,8 @@ public enum PrivacyPromise {
 
 struct MobileSettingsView: View {
     @Bindable var model: MobileModel
+    @AppStorage(RunStyleKeys.list) private var listStyle = RunsListStyle.ledger.rawValue
+    @AppStorage(RunStyleKeys.page) private var pageStyle = RunPageStyle.briefing.rawValue
 
     var body: some View {
         @Bindable var prefs = model.prefs
@@ -36,6 +39,18 @@ struct MobileSettingsView: View {
                 Text("Agent runs")
             } footer: {
                 Text("These arrive when your Mac syncs, usually within a minute or two. Each run alerts once per question and once when it stops or ends. While you're using the Mac, a question waits two minutes here, so you only hear about it once.")
+            }
+            Section {
+                Picker("List", selection: $listStyle) {
+                    ForEach(RunsListStyle.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+                }
+                Picker("Run page", selection: $pageStyle) {
+                    ForEach(RunPageStyle.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+                }
+            } header: {
+                Text("Runs layout")
+            } footer: {
+                Text("\((RunsListStyle(rawValue: listStyle) ?? .ledger).detail) \((RunPageStyle(rawValue: pageStyle) ?? .briefing).detail) Lanes needs the Mac to share task names; a finished run always reads as a briefing.")
             }
             if model.setTracking != nil {
                 Section {

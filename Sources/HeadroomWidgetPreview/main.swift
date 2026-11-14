@@ -178,6 +178,14 @@ func runDigests(names: Bool) -> [RunDigest] {
                              device("studio", "Mac Studio", seen: now.addingTimeInterval(-2 * 3600), state: .sleeping, asleep)], now: now)
 }
 
+extension RunsListStyle {
+    var name: String { switch self { case .ledger: "ledger"; case .twoLine: "twoline"; case .fill: "fill" } }
+}
+
+extension RunPageStyle {
+    var name: String { switch self { case .briefing: "briefing"; case .lanes: "lanes" } }
+}
+
 @MainActor
 func renderRuns() -> Int {
     var count = 0
@@ -187,40 +195,36 @@ func renderRuns() -> Int {
         let label = names ? "names" : "nonames"
         for dark in [true, false] {
             // ImageRenderer on macOS ignores Dynamic Type, so the largest sizes are checked in the simulator.
-            let v = RunsSectionContent(page: page, showFinished: .constant(true))
-                .frame(width: 358).padding(16)
-                .background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
-                .environment(\.colorScheme, dark ? .dark : .light)
-            render(v, to: "mobile-runs-\(label)-\(dark ? "dark" : "light").png")
-            count += 1
-            // The compact view, and with the second live run opened into its card.
-            for (suffix, opened) in [("", Set<String>()), ("-open", Set(page.live.dropFirst().prefix(1).map(\.id)))] {
-                let c = RunsSectionContent(page: page, showFinished: .constant(true), compact: .constant(true), opened: opened)
-                    .frame(width: 358).padding(16)
-                    .background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
+            let backdrop = dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96)
+            for style in RunsListStyle.allCases {
+                let v = RunsSectionContent(page: page, style: style, showFinished: .constant(true))
+                    .frame(width: 358).padding(16).background(backdrop)
                     .environment(\.colorScheme, dark ? .dark : .light)
-                render(c, to: "mobile-runs-\(label)-compact\(suffix)-\(dark ? "dark" : "light").png")
+                render(v, to: "mobile-runs-\(label)-\(style.name)-\(dark ? "dark" : "light").png")
                 count += 1
             }
+            // Each live run's own page in both styles, and the first finished one.
+            for (i, card) in (page.live + page.recent.prefix(1)).enumerated() {
+                for style in RunPageStyle.allCases where card.live || style == .briefing {
+                    let v = RunPageView(card: card, style: style)
+                        .frame(width: 370).padding(10).background(backdrop)
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                    render(v, to: "mobile-runpage-\(label)-\(i)-\(style.name)-\(dark ? "dark" : "light").png")
+                    count += 1
+                }
+            }
         }
-        // A tapped card lists every row its Mac synced (the long session's first 30 agents, here).
-        if names {
-            let digests = runDigests(names: true)
-            let open = presenter.page(digests, expanded: Set(digests.map(\.id)))
-            let v = RunsSectionContent(page: RunsPageModel(live: open.live.filter(\.expanded)), showFinished: .constant(false))
-                .frame(width: 358).padding(16).background(Color(red: 0.08, green: 0.086, blue: 0.10)).environment(\.colorScheme, .dark)
-            render(v, to: "mobile-runs-expanded-dark.png")
-            count += 1
-        }
-        // iPad: two columns on Now.
-        let pad = RunsSectionContent(page: page, columns: 2, showFinished: .constant(false))
-            .frame(width: 760).padding(20).background(Color(red: 0.08, green: 0.086, blue: 0.10)).environment(\.colorScheme, .dark)
-        render(pad, to: "mobile-runs-\(label)-ipad-dark.png")
         // The watch list, at the 45 mm screen's width.
         let watch = WatchRunsList(runs: runDigests(names: names), now: now).frame(width: 198).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 36).fill(.black)).padding(20).background(Backdrop(dark: true))
             .environment(\.colorScheme, .dark)
         render(watch, to: "mobile-watch-runs-\(label).png")
+        for (i, card) in page.live.prefix(3).enumerated() {
+            let w = WatchRunPageContent(card: card).frame(width: 198).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 36).fill(.black)).padding(20).background(Backdrop(dark: true))
+                .environment(\.colorScheme, .dark)
+            render(w, to: "mobile-watch-runpage-\(label)-\(i).png")
+        }
         // The run Live Activity in each presentation, for the three most pressing runs.
         let states = runDigests(names: names).filter { !$0.state.isTerminal }.prefix(3).map { RunActivityState.from($0, presenter: presenter) }
         let activity = VStack(alignment: .leading, spacing: 20) {
