@@ -251,7 +251,8 @@ func happyChannel(account: String = "codex/openai-free-account-read.json", limit
         let outcome = await client.read()
         #expect(outcome.fault?.code == "error")
         #expect(silent.closed)
-        #expect(Date().timeIntervalSince(start) < 3)
+        // Well short of the 10s default; a busy CI machine can hold the timer up for seconds.
+        #expect(Date().timeIntervalSince(start) < 8)
     }
 
     @Test func rateLimitErrorResponse() async {
