@@ -107,9 +107,23 @@ Right-click any card to copy a share image or a text version. Shares never inclu
 
 ## Follow long agent runs
 
-When Claude Code or Codex spawns subagents, delegates or workflows, the **Runs** tab shows each run as it goes: what's running, what needs your answer, what's waiting on a limit and what failed, with the rest folded away until you click the card. If the agent declared a plan, you get a percentage, a bar and an estimate of the time left. If it didn't, you see how many of the agents it spawned have finished, since nobody knows how many more are coming. While a run is live, its progress sits beside the meters in the menu bar, with a rose mark when one needs you (turn this off in **Settings → Menu Bar**). Pick which runs notify you in **Settings → Runs**.
+<img src="media/runs.png" alt="The Runs tab in its three list styles, Ledger, Two-line and Fill rows, and in light appearance: one run needs you, three are live and five finished today">
 
-Run `headroom hooks install` to hear about permission prompts the moment they happen, and `headroom task guide` to show agents how to declare a plan. `headroom tasks` shows the same runs in your terminal.
+Connect your agents in **Settings → Runs** and every Claude Code and Codex run shows up in the **Runs** tab: the ones waiting on you first, then the live ones, then what finished today. If the agent declared a plan, you get a percentage and an estimate of the time left. If it didn't, you see how many of the agents it spawned have finished, since nobody knows how many more are coming. Pick how the list reads (Ledger, Two-line or Fill rows) in **Settings → Runs → Layout**.
+
+<img src="media/run-page.png" alt="A run's own page as a Briefing, with its percentage, tasks and open work, and as Lanes, a timeline with now, the 5-hour limit's pause and the finish">
+
+Click a run to open its own page: what it's working on, how far along it is, its open tasks under their parents, and when it should be done. Read it as a **Briefing**, or as **Lanes**: a timeline of each task with now, the limit's pause and the finish on one axis.
+
+<img src="media/run-states.png" alt="Run pages for an agent asking a question, a run paused at the 5-hour limit, a run without a plan counting finished agents, and a finished run with its time, tokens and cost">
+
+When an agent stops to ask you something, the run moves to the top with the question and the answers it offered, and one click opens the session to answer it. Headroom forecasts when a run will pause at your 5-hour limit, when it resumes and when it should finish. A finished run shows what it took: how long, how many tokens, what it cost, and where the time went.
+
+<img src="media/runs-menubar.png" alt="The menu bar with a run beside the meters: a percentage, an agent count, several runs, one or two that need you, and one gone quiet">
+
+While a run is live, its progress sits beside the meters in the menu bar, with a rose mark when one needs you (turn this off in **Settings → Menu Bar**). With a single run asking, clicking the menu bar icon takes you straight to it. Pick which runs notify you in **Settings → Runs**.
+
+Run `headroom hooks install` to hear about permission prompts the moment they happen, and `headroom task guide` to show agents how to declare a plan, so the percentage reflects the real plan rather than a guess. `headroom tasks` shows the same runs in your terminal.
 
 ## Keep your Mac awake
 
@@ -125,7 +139,7 @@ Fan speeds can only be set as root, so Headroom ships a small helper for it. The
 
 Turn on **Settings → iPhone & Watch** and Headroom on iPhone, iPad and Apple Watch shows the same Pace card, 5-hour panel, Burn-o-meter and Activity, with Home Screen widgets, Lock Screen and watch-face complications, and a Live Activity that counts down your 5-hour session. Several Macs, or several Claude and Codex accounts? Each account is one card, however many Macs report it, and its activity adds up across them.
 
-Long agent runs come along too: Now shows each Mac's live runs (percent done or agent counts, and what needs you), the watch lists them, a Live Activity follows the most pressing one, and the phone can tell you when a run needs your input or finishes. Only state and progress sync unless you turn on **Include task names**, which adds run and task titles.
+Long agent runs come along too, with the same list styles and run pages: Now shows each Mac's live runs (percent done or agent counts, and what needs you), the watch lists them, a Live Activity follows the most pressing one, and the phone can tell you when a run needs your input, stops with work left, or finishes. Only state and progress sync unless you turn on **Include task names**, which adds run and task titles.
 
 ## Also in your terminal
 

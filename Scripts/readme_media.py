@@ -40,6 +40,16 @@ body {{ font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; -webki
 """
 
 
+MENU_ROWS_CSS = """
+.opt { display: grid; grid-template-columns: 300px 1fr; align-items: center; gap: 20px; margin-bottom: 14px; }
+.opt span { font: 600 15px -apple-system, system-ui; color: #F4F4F6; padding-left: 4px; }
+.wall { height: 50px; border-radius: 12px; overflow: hidden; background: linear-gradient(115deg,#1A2150,#3B2A5C 55%,#0F2F45);
+  display: flex; align-items: center; }
+.mb { height: 30px; width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 0 16px; background: rgba(8,8,16,.32); }
+.mb img { height: 22px; }
+.mb em { font: normal 500 13px -apple-system, system-ui; color: #F4F4F6; font-variant-numeric: tabular-nums; }"""
+
+
 def run(cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
@@ -70,6 +80,13 @@ def png_size(path):
 def grid_height(rows, shot_h, gap=30):
     """Panel height for a grid of eyebrow + shot cells (padding 34 + 38, eyebrow 30)."""
     return 72 + rows * (30 + shot_h) + (rows - 1) * gap
+
+
+def uneven_height(files, cols, cell_w, gap=30):
+    """Panel height for a grid whose shots keep their own heights: each row is as tall as its tallest."""
+    heights = [cell_w * h / w for w, h in map(png_size, files)]
+    rows = [max(heights[i:i + cols]) for i in range(0, len(heights), cols)]
+    return round(72 + sum(30 + h for h in rows) + (len(rows) - 1) * gap)
 
 
 def capture(name, body, width, height, raw, work, extra_css=""):
@@ -217,14 +234,7 @@ def main():
                    ("Whichever is tighter, with percentage", "tighter"), ("Most urgent only, timer always on", "urgent")]
         rows = "".join(f"""<div class="opt"><span>{html.escape(t)}</span><div class="wall"><div class="mb">
             <img src="{raw}/statusitem-{o}-dark.png"><em>Tue 10:02</em></div></div></div>""" for t, o in options)
-        panel("customize", rows, 960, 72 + len(options) * 64 - 14, raw, work, """
-.opt { display: grid; grid-template-columns: 300px 1fr; align-items: center; gap: 20px; margin-bottom: 14px; }
-.opt span { font: 600 15px -apple-system, system-ui; color: #F4F4F6; padding-left: 4px; }
-.wall { height: 50px; border-radius: 12px; overflow: hidden; background: linear-gradient(115deg,#1A2150,#3B2A5C 55%,#0F2F45);
-  display: flex; align-items: center; }
-.mb { height: 30px; width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 0 16px; background: rgba(8,8,16,.32); }
-.mb img { height: 22px; }
-.mb em { font: normal 500 13px -apple-system, system-ui; color: #F4F4F6; font-variant-numeric: tabular-nums; }""")
+        panel("customize", rows, 960, 72 + len(options) * 64 - 14, raw, work, MENU_ROWS_CSS)
 
         # Settings: the Pace Card and 5-hour sections, dark and light.
         sw, sh = png_size(raw / "settings-3-dark.png")
@@ -266,6 +276,34 @@ def main():
 .row {{ display: grid; grid-template-columns: 1.15fr 1fr; gap: 26px; margin-top: 30px; }}
 pre {{ height: {snap_h}px; overflow: hidden; border-radius: 18px; padding: 22px 22px; background: #0A0B0E;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); font: 13px/1.75 ui-monospace, "SF Mono", Menlo, monospace; color: #D7D9E0; white-space: pre-wrap; }}""")
+
+        # Agent runs: the Runs tab in its three list styles, and in light.
+        def run_grid(name, cells):
+            files = [raw / f"{f}.png" for _, f, _ in cells]
+            grid = "".join(f"<div>{eyebrow(t, c)}<div class='shot'><img src='{raw}/{f}.png'></div></div>" for t, f, c in cells)
+            panel(name, f'<div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">{grid}</div>', 960,
+                  uneven_height(files, 2, cell_w), raw, work)
+
+        run_grid("runs", [("Runs · Ledger", "runs-mixed-dark", None), ("Two-line", "runs-mixed-twoline-dark", None),
+                          ("Fill rows", "runs-mixed-fill-dark", None), ("Light appearance", "runs-mixed-all-light", None)])
+
+        # A run's own page, as a Briefing and as Lanes.
+        run_grid("run-page", [("Run page · Briefing", "runpage-mixed-4-briefing-dark", STATE["plenty"]),
+                              ("Lanes · now, the limit's pause and the finish", "runpage-timeline-1-lanes-dark", STATE["plenty"])])
+
+        # What a run page says when it needs you, pauses, has no plan, or is done.
+        run_grid("run-states", [("An agent is asking", "runpage-input-1-briefing-dark", STATE["verytight"]),
+                                ("Paused at the 5-hour limit", "runpage-limit-1-briefing-dark", STATE["tight"]),
+                                ("No plan · agents finished", "runpage-mixed-5-briefing-dark", STATE["plenty"]),
+                                ("What a finished run took", "runpage-finished-1-briefing-dark", STATE["onpace"])])
+
+        # Runs beside the meters in the menu bar.
+        indicators = [("One run with a plan", "runs-one"), ("No plan: agents finished", "runs-observed"),
+                      ("Several runs", "runs-several"), ("One needs you", "runs-input"),
+                      ("Two need you", "runs-two-input"), ("Gone quiet", "runs-quiet")]
+        rows = "".join(f"""<div class="opt"><span>{html.escape(t)}</span><div class="wall"><div class="mb">
+            <img src="{raw}/statusitem-{o}-dark.png"><em>Tue 10:02</em></div></div></div>""" for t, o in indicators)
+        panel("runs-menubar", rows, 960, 72 + len(indicators) * 64 - 14, raw, work, MENU_ROWS_CSS)
 
         # Terminal.
         def c(t, hexc): return f'<span style="color:{hexc}">{t}</span>'
