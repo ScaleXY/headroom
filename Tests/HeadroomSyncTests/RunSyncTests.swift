@@ -147,6 +147,18 @@ private struct DevicePayloadBeforeRuns: Decodable {
         #expect(s.suffix(2).map(\.title) == ["Done 0", "Done 1"])
     }
 
+    @Test func rowsCarryTheirTimesForThePhonesLanes() throws {
+        let r = Demo.declaredRun(now: now)
+        let s = try #require(RunSummaryBuilder.summaries([r], includeNames: true, now: now)?.first)
+        let back = try PayloadCodec.decode(DevicePayload.self, from: PayloadCodec.encode(device([s])))
+        let rows = try #require(back.runs?.first?.rows)
+        #expect(rows.contains { $0.a != nil })
+        // Finished rows say when they ended; open ones how far along they are.
+        #expect(rows.allSatisfy { $0.state.isTerminal || $0.p != nil })
+        // Without names no rows, and so no times, leave the Mac.
+        #expect(RunSummaryBuilder.summaries([r], includeNames: false, now: now)?.first?.rows == nil)
+    }
+
     @Test func atMostThirtyRowsAndTheRestCounted() throws {
         let nodes = (0..<50).map { i in TaskNode(id: "t\(i)", title: "Task \(i)", state: i < 45 ? .running : .done) }
         let r = TaskRun(id: "big", title: "Big plan", startedAt: now.addingTimeInterval(-3600), updatedAt: now, state: .running,

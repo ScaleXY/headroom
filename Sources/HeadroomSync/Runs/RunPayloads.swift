@@ -21,14 +21,24 @@ public struct RunRowPayload: Codable, Sendable, Hashable {
     public var steps: TaskSteps?
     public var importance: TaskImportance
     public var quiet: Bool
+    /// Started, ended and last moved, and how far along (0…1, to two places): what the phone's
+    /// lanes draw. Left out when unknown.
+    public var a: Date?
+    public var e: Date?
+    public var t: Date?
+    public var p: Double?
+
+    enum CodingKeys: String, CodingKey { case title, state, waitReason, stale, depth, steps, importance, quiet, a, e, t, p }
 
     public init(_ row: RunDigest.Row) {
         title = row.title; state = row.state; waitReason = row.waitReason; stale = row.stale; depth = row.depth; steps = row.steps
         importance = row.importance; quiet = row.quiet
+        a = row.startedAt; e = row.endedAt; t = row.lastActivityAt; p = row.estimate.map { (min(max($0, 0), 1) * 100).rounded() / 100 }
     }
 
     public var row: RunDigest.Row {
-        RunDigest.Row(title: title, state: state, waitReason: waitReason, stale: stale, depth: depth, steps: steps, importance: importance, quiet: quiet)
+        RunDigest.Row(title: title, state: state, waitReason: waitReason, stale: stale, depth: depth, steps: steps, importance: importance, quiet: quiet,
+                      startedAt: a, endedAt: e, lastActivityAt: t, estimate: p)
     }
 
     public init(from decoder: Decoder) throws {
@@ -41,6 +51,10 @@ public struct RunRowPayload: Codable, Sendable, Hashable {
         steps = c.lenient(.steps, nil)
         importance = c.lenient(.importance, .normal)
         quiet = c.lenient(.quiet, false)
+        a = c.lenient(.a, Date?.none)
+        e = c.lenient(.e, Date?.none)
+        t = c.lenient(.t, Date?.none)
+        p = c.lenient(.p, Double?.none).map { min(max($0, 0), 1) }
     }
 }
 

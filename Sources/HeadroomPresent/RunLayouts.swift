@@ -179,12 +179,39 @@ public struct RunPageModel: Sendable, Hashable {
     /// Open rows past the cap.
     public var moreOpen: Int
     public var lanes: RunLanesModel?
+    /// The finished tasks can be listed (`showDone`). A synced run carries only its open ones, so
+    /// it says how many finished without a way to show them.
+    public var listsDone: Bool
 
     public init(status: RunStatusModel, line: String? = nil, facts: [RunFactModel] = [], limit: RunLimitModel? = nil, groups: [RunGroupModel] = [],
                 groupsTitle: String = "Open tasks", openCount: Int = 0, doneCount: Int = 0, showDone: Bool = false, moreOpen: Int = 0,
-                lanes: RunLanesModel? = nil) {
+                lanes: RunLanesModel? = nil, listsDone: Bool = true) {
         self.status = status; self.line = line; self.facts = facts; self.limit = limit; self.groups = groups; self.groupsTitle = groupsTitle
         self.openCount = openCount; self.doneCount = doneCount; self.showDone = showDone; self.moreOpen = moreOpen; self.lanes = lanes
+        self.listsDone = listsDone
+    }
+}
+
+/// How the finished runs ended, and what they cost together.
+public struct RunOutcomes: Sendable, Hashable {
+    public var done = 0, failed = 0, abandoned = 0
+    /// Summed costs in dollars, when any run is priced.
+    public var cost: Double?
+
+    public init(_ cards: [RunCardModel]) {
+        for c in cards {
+            switch c.glyph {
+            case .failed, .partial: failed += 1
+            case .skipped: abandoned += 1
+            default: done += 1
+            }
+            if let s = c.receipt?.cost, let v = Double(s.filter { $0.isNumber || $0 == "." }) { cost = (cost ?? 0) + v }
+        }
+    }
+
+    /// "3 done", "1 with failures", "1 abandoned".
+    public var words: [String] {
+        [done > 0 ? "\(done) done" : nil, failed > 0 ? "\(failed) with failures" : nil, abandoned > 0 ? "\(abandoned) abandoned" : nil].compactMap { $0 }
     }
 }
 
@@ -275,8 +302,10 @@ extension RunsPresenter {
         return status.detail
     }
 
-    func limit(_ r: TaskRun) -> RunLimitModel? {
-        guard let tl = timeline(r) else { return nil }
+    func limit(_ r: TaskRun) -> RunLimitModel? { limit(from: timeline(r)) }
+
+    func limit(from tl: RunTimelineModel?) -> RunLimitModel? {
+        guard let tl else { return nil }
         func tick(_ label: String) -> String? { tl.ticks.first { $0.label == label }?.time }
         guard let pause = tick("window empty"), let resume = tick("resets") else { return nil }
         return RunLimitModel(pause: pause, resume: resume, finish: tick("done"), note: tl.note)

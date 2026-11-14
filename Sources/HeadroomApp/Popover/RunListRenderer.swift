@@ -271,28 +271,9 @@ enum RunListRenderer {
     }
 
     /// "3 done", "1 with failures", "1 abandoned".
-    static func outcomes(_ cards: [RunCardModel]) -> [String] {
-        let o = Outcomes(cards)
-        return [o.done > 0 ? "\(o.done) done" : nil, o.failed > 0 ? "\(o.failed) with failures" : nil,
-                o.abandoned > 0 ? "\(o.abandoned) abandoned" : nil].compactMap { $0 }
-    }
+    static func outcomes(_ cards: [RunCardModel]) -> [String] { RunOutcomes(cards).words }
 
-    /// How the finished runs ended, and what they cost together.
-    struct Outcomes {
-        var done = 0, failed = 0, abandoned = 0
-        /// Summed costs in dollars, when any run is priced.
-        var cost: Double?
-        init(_ cards: [RunCardModel]) {
-            for c in cards {
-                switch c.glyph {
-                case .failed, .partial: failed += 1
-                case .skipped: abandoned += 1
-                default: done += 1
-                }
-                if let s = c.receipt?.cost, let v = Double(s.filter { $0.isNumber || $0 == "." }) { cost = (cost ?? 0) + v }
-            }
-        }
-    }
+    typealias Outcomes = RunOutcomes
 
     // MARK: Fill rows
 

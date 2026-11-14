@@ -71,11 +71,19 @@ public struct RunDigest: Sendable, Hashable, Identifiable {
         public var importance: TaskImportance
         /// Doesn't count toward the run.
         public var quiet: Bool
+        /// When it started, finished and last moved, and how far along it is: what a run page's
+        /// lanes draw. Older Macs leave them empty.
+        public var startedAt: Date?
+        public var endedAt: Date?
+        public var lastActivityAt: Date?
+        public var estimate: Double?
 
         public init(title: String, state: TaskState, waitReason: TaskWaitReason? = nil, stale: Bool = false, depth: Int = 0, steps: TaskSteps? = nil,
-                    importance: TaskImportance = .normal, quiet: Bool = false) {
+                    importance: TaskImportance = .normal, quiet: Bool = false, startedAt: Date? = nil, endedAt: Date? = nil,
+                    lastActivityAt: Date? = nil, estimate: Double? = nil) {
             self.title = title; self.state = state; self.waitReason = waitReason; self.stale = stale; self.depth = depth; self.steps = steps
             self.importance = importance; self.quiet = quiet
+            self.startedAt = startedAt; self.endedAt = endedAt; self.lastActivityAt = lastActivityAt; self.estimate = estimate
         }
     }
 
@@ -222,7 +230,9 @@ extension RunsPresenter {
                 if !rolled.isEmpty { steps = TaskSteps(done: rolled.filter(\.state.isTerminal).count, total: rolled.count) }
             }
             return RunDigest.Row(title: n.title, state: n.replacedBy != nil ? .skipped : n.state, waitReason: n.waitReason, stale: n.stale, depth: v.depth, steps: steps,
-                                 importance: n.importance, quiet: !n.counted || n.state == .skipped || n.state == .cancelled)
+                                 importance: n.importance, quiet: !n.counted || n.state == .skipped || n.state == .cancelled,
+                                 startedAt: n.startedAt, endedAt: n.endedAt, lastActivityAt: n.lastActivityAt,
+                                 estimate: n.state.isTerminal ? nil : n.progress.estimate)
         }
         return (rows, max(0, l.visible.count - cap), l.finished)
     }
@@ -278,6 +288,7 @@ extension RunsPresenter {
         card.hero = syncedHero(d, quiet: quiet)
         card.verdict = syncedVerdict(d, quiet: quiet, timeline: card.timeline != nil)
         card.rowsTitle = !declared ? "Agents" : d.mirrored ? "Steps" : "Tasks"
+        card.page = syncedPage(d, card: card)
         return card
     }
 

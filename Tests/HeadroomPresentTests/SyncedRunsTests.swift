@@ -243,4 +243,66 @@ private let presenter: RunsPresenter = {
         #expect(presenter.card(d).stateText == RunWords.abandoned)
         #expect(!d.stoppedWithWorkLeft)
     }
+
+    // MARK: The run's own page
+
+    @Test func withNamesAFlatRunsPageIsTheMacs() throws {
+        for r in [Demo.inputRun(now: now), Demo.observedRun(now: now)] {
+            let mac = presenter.pageModel(r)
+            let phone = try #require(presenter.card(digest(r, names: true)).page)
+            #expect(phone.status == mac.status, "\(r.id)")
+            #expect(phone.groups.map(\.title) == mac.groups.map(\.title), "\(r.id)")
+            #expect(phone.groups.flatMap(\.rows).map(\.title) == mac.groups.flatMap(\.rows).map(\.title), "\(r.id)")
+            #expect(phone.openCount == mac.openCount && phone.doneCount == mac.doneCount, "\(r.id)")
+            // Only the open rows sync, so the finished ones are counted, not listed.
+            #expect(!phone.listsDone && mac.listsDone)
+        }
+    }
+
+    /// The Mac's card rolls work deeper than two levels into its ancestor ("Refunds 1/3"), and
+    /// those are the rows that sync: the phone lists them under the same parents.
+    @Test func aNestedPlanSyncsRolledUp() throws {
+        let r = Demo.declaredRun(now: now)
+        let mac = presenter.pageModel(r)
+        let card = presenter.card(digest(r, names: true))
+        let phone = try #require(card.page)
+        #expect(phone.status.key == mac.status.key)
+        #expect(phone.groups.map(\.title) == ["Port the checkout endpoints › Rewrite the routes", "Other"])
+        let open = card.rows.filter { $0.kind == .task && $0.glyph != .done }.map(\.title)
+        // The parents head the groups; the rows under them are the leaves.
+        #expect(Set(phone.groups.flatMap(\.rows).map(\.title)) == Set(open).subtracting(["Port the checkout endpoints", "Rewrite the routes"]))
+        #expect(phone.groups.flatMap(\.rows).first { $0.title == "Refunds" }?.steps == "1/3")
+    }
+
+    @Test func syncedTaskTimesDrawLanes() throws {
+        let r = Demo.declaredRun(now: now)
+        let page = try #require(presenter.card(digest(r, names: true)).page)
+        let lanes = try #require(page.lanes)
+        #expect(lanes.lanes.map(\.title) == page.groups.flatMap(\.rows).map(\.title))
+        #expect(lanes.now > 0 && lanes.now < 1)
+        let running = try #require(lanes.lanes.first { $0.title == "Cover checkout end to end" })
+        #expect(running.mustHave && running.bars.contains { $0.kind == .running } && running.bars.contains { $0.kind == .forecast })
+        #expect(lanes.lanes.allSatisfy { $0.bars.allSatisfy { $0.start >= 0 && $0.end <= 1 && $0.end >= $0.start } })
+        // An older Mac sends no times: no lanes, and the page reads as a Briefing.
+        var old = digest(r, names: true)
+        old.rows = old.rows?.map { var row = $0; row.startedAt = nil; row.endedAt = nil; row.lastActivityAt = nil; row.estimate = nil; return row }
+        #expect(presenter.card(old).page?.lanes == nil)
+    }
+
+    @Test func withoutNamesThePageHasNoTasksOrLanes() throws {
+        for r in Self.runs() {
+            let page = try #require(presenter.card(digest(r, names: false)).page)
+            #expect(page.groups.isEmpty && page.lanes == nil && page.openCount == 0, "\(r.id)")
+            #expect(!page.status.key.isEmpty)
+        }
+        // Running agents are still counted.
+        let observed = try #require(presenter.card(digest(Demo.observedRun(now: now), names: false)).page)
+        #expect(observed.status.key == presenter.pageModel(Demo.observedRun(now: now)).status.key)
+    }
+
+    @Test func aRunFromAMacThatWentQuietSaysSoAndDrawsNoLanes() throws {
+        let page = try #require(presenter.card(digest(Demo.declaredRun(now: now), names: true, lastSeen: now.addingTimeInterval(-3600))).page)
+        #expect(page.status.key.hasPrefix("Mac last seen"))
+        #expect(page.lanes == nil)
+    }
 }
