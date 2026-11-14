@@ -42,6 +42,10 @@ final class AppModel {
     private let ingestStore = PlistStore<IngestState>.standard(named: "ingest.plist")
     private var saver: DebouncedSaver?
     private var ingestor: LogIngestor
+    /// `ingestor.persistRevision` last written to disk in full; nil when the files may be stale.
+    private var savedIngestRevision: Int?
+    /// The latest disk write, so writes land in the order they were asked for.
+    private var lastWrite: Task<Bool, Never>?
     private var watcher: LogWatcher?
     private let resolver = CLIResolver()
     private var claude: ClaudeUsageClient!
@@ -203,8 +207,12 @@ final class AppModel {
         if firstScanDone { await saveIngest() } // hand the child our latest cursors
         if Bundle.main.bundleURL.pathExtension == "app", let scanned = await ScanChild.scan(stateURL: ingestStore.url) {
             ingestor = LogIngestor(pricer: Self.pricer(pricing), state: scanned)
+            savedIngestRevision = nil
         } else {
-            if !firstScanDone, let saved = ingestStore.load() { ingestor = LogIngestor(pricer: Self.pricer(pricing), state: saved) }
+            if !firstScanDone, let saved = ingestStore.load() {
+                ingestor = LogIngestor(pricer: Self.pricer(pricing), state: saved)
+                savedIngestRevision = nil
+            }
             _ = await ingestor.scanAll()
             await saveIngest()
         }
@@ -220,10 +228,28 @@ final class AppModel {
         Memory.relieve()
     }
 
+    /// Writes `ingest.plist` and `ledger.bin`, unless both already hold this ingestor's state:
+    /// they are about 12 MB, and most saves come from limit reads that touch neither.
     private func saveIngest() async {
-        let state = await ingestor.exportState()
-        try? ingestStore.save(state)
-        await mapLedger()
+        let current = ingestor
+        if let saved = savedIngestRevision, await current.persistRevision == saved { return }
+        let (state, revision, mapped) = await current.exportState(mappingLedgerTo: ledgerURL)
+        let store = ingestStore
+        let written = await write { (try? store.save(state)) != nil }
+        Memory.relieve()
+        if written, mapped, current === ingestor { savedIngestRevision = revision }
+    }
+
+    /// Runs a disk write off the main actor, after any earlier one, so an older state never
+    /// lands over a newer one. Awaiting it means the file is on disk.
+    private func write(_ body: @escaping @Sendable () -> Bool) async -> Bool {
+        let previous = lastWrite
+        let task = Task.detached(priority: .utility) { () -> Bool in
+            _ = await previous?.value
+            return body()
+        }
+        lastWrite = task
+        return await task.value
     }
 
     private func logsChanged(paths: [String], rescan: Bool) async {
@@ -276,7 +302,8 @@ final class AppModel {
         state.claudeRefreshLastRun = await refresher.lastRunDate
         state.codexAccountKey = codexAccountKey
         state.accountTimeline = timeline
-        try? store.save(state)
+        let (store, final) = (self.store, state)
+        _ = await write { (try? store.save(final)) != nil }
         Memory.relieve()
     }
 

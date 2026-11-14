@@ -103,6 +103,49 @@ struct TailerTests {
         #expect(again.filesRead == 0)
     }
 
+    @Test func persistRevisionMovesOnlyWhenSavedStateChanges() async throws {
+        let home = try TempHome()
+        let rel = ".claude/projects/p/s.jsonl"
+        try home.write(rel, claudeLine(id: "a", output: 10) + "\n")
+        // Resolved, so the scan and the tail agree on the path (the temp directory sits behind /var).
+        let real = try #require(realpath(home.url.path, nil))
+        defer { free(real) }
+        let resolved = URL(fileURLWithPath: String(cString: real))
+        let path = resolved.appendingPathComponent(rel).path
+        let i = LogIngestor(roots: .standard(home: resolved), pricer: flatPricer, now: { fixedNow })
+        let start = await i.persistRevision
+        _ = await i.scanAll()
+        let scanned = await i.persistRevision
+        #expect(scanned > start)
+        #expect(await i.exportState().cursors.keys.sorted() == [path])
+
+        // Nothing new, by path or by full scan: the saved state is still current.
+        _ = await i.ingest(paths: [path])
+        #expect(await i.persistRevision == scanned)
+        _ = await i.scanAll()
+        #expect(await i.persistRevision == scanned)
+
+        // A partial line moves only the cursor, and that still counts.
+        let second = claudeLine(id: "b", output: 20)
+        try home.append(rel, String(second.prefix(40)))
+        _ = await i.ingest(paths: [path])
+        let partial = await i.persistRevision
+        #expect(partial > scanned)
+
+        // A new event moves it; a no-op ingest after does not.
+        try home.append(rel, String(second.dropFirst(40)) + "\n")
+        _ = await i.ingest(paths: [path])
+        let added = await i.persistRevision
+        #expect(added > partial)
+        _ = await i.ingest(paths: [path])
+        #expect(await i.persistRevision == added)
+
+        // A log that disappears drops its cursor.
+        try FileManager.default.removeItem(atPath: path)
+        _ = await i.scanAll()
+        #expect(await i.persistRevision > added)
+    }
+
     @Test func laterLineSupersedesSameKey() async throws {
         let home = try TempHome()
         let rel = ".claude/projects/p/s.jsonl"

@@ -38,6 +38,27 @@ struct StoreTests {
         #expect(await total(second) == before)
     }
 
+    @Test func exportWhileMappingMatchesPlainExport() async throws {
+        let home = try TempHome()
+        try home.copyFixture("claude-main.jsonl", to: ".claude/projects/p-a/main.jsonl")
+        try home.copyFixture("codex-rollout-new.jsonl.zst", to: ".codex/sessions/2026/10/01/r.jsonl.zst")
+        let i = ingestor(home)
+        _ = await i.scanAll()
+        let plain = await i.exportState()
+        let ledgerFile = home.url.appendingPathComponent("ledger.bin")
+        let (state, revision, mapped) = await i.exportState(mappingLedgerTo: ledgerFile)
+        #expect(mapped)
+        #expect(await i.ledgerIsMapped)
+        #expect(revision == (await i.persistRevision))
+        // The same bytes go to the plist and to the mapped file, as when each encoded its own.
+        #expect(try Data(contentsOf: ledgerFile) == plain.ledger)
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        #expect(try encoder.encode(state) == (try encoder.encode(plain)))
+        // Mapping changes how the ledger is held, not what is saved.
+        #expect(await i.exportState().ledger == plain.ledger)
+    }
+
     @Test func debouncedSaverCoalescesAndFlushes() async throws {
         let count = Mutexed(0)
         let saver = DebouncedSaver(delay: .milliseconds(150)) { count.mutate { $0 += 1 } }

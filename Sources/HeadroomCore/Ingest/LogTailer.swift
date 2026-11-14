@@ -265,6 +265,9 @@ public actor LogIngestor {
     private var passiveLatest: PassiveCodexLimits?
     private var passiveTrusted: PassiveCodexLimits?
     private(set) var changeCount = 0
+    /// Bumped whenever anything `exportState()` writes changes (cursors, ledger, passive limits),
+    /// so a caller can skip rewriting a state file that is already current.
+    public private(set) var persistRevision = 0
 
     public init(
         roots: LogRoots = .standard(),
@@ -285,6 +288,7 @@ public actor LogIngestor {
                                  projects: state.projects, files: state.files)
             passiveLatest = state.passiveLatest
             passiveTrusted = state.passiveTrusted
+            persistRevision += 1
         }
     }
 
@@ -303,12 +307,24 @@ public actor LogIngestor {
     public var revision: Int { changeCount }
 
     public func exportState() -> IngestState {
+        state(ledger: LedgerCodec.encode(ledger.entries))
+    }
+
+    /// `exportState()` and `mapLedger(file:)` in one step, encoding the ledger once for both.
+    /// Also returns the `persistRevision` the state was taken at and whether the mapping worked.
+    public func exportState(mappingLedgerTo url: URL) -> (state: IngestState, revision: Int, mapped: Bool) {
+        let data = LedgerCodec.encode(ledger.entries)
+        let mapped = mapLedger(data, file: url)
+        return (state(ledger: data), persistRevision, mapped)
+    }
+
+    private func state(ledger data: Data) -> IngestState {
         var s = IngestState()
         s.cursors = cursors
         s.models = ledger.buckets.models
         s.projects = ledger.buckets.projects
         s.files = ledger.files
-        s.ledger = LedgerCodec.encode(ledger.entries)
+        s.ledger = data
         s.passiveLatest = passiveLatest
         s.passiveTrusted = passiveTrusted
         return s
@@ -318,7 +334,11 @@ public actor LogIngestor {
     /// resident app keeps only recent changes in memory. Safe to call again after each save.
     @discardableResult
     public func mapLedger(file url: URL) -> Bool {
-        let data = LedgerCodec.encode(ledger.entries)
+        mapLedger(LedgerCodec.encode(ledger.entries), file: url)
+    }
+
+    /// `data` must be the encoding of the current `ledger.entries`.
+    private func mapLedger(_ data: Data, file url: URL) -> Bool {
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp")
         do { try data.write(to: tmp) } catch { return false }
         guard rename(tmp.path, url.path) == 0, let table = ContributionTable(mappedFile: url), table.count == ledger.entries.count else {
@@ -335,6 +355,7 @@ public actor LogIngestor {
         self.pricer = pricer
         ledger.reprice(pricer)
         changeCount += 1
+        persistRevision += 1
     }
 
     // MARK: Scanning
@@ -364,8 +385,11 @@ public actor LogIngestor {
         report.filesVisited = candidates.count
         // Forget cursors of logs that no longer exist in either form.
         let present = Set(candidates.map { LogFileReader.logicalPath($0.path) })
+        let cursorCount = cursors.count
         cursors = cursors.filter { present.contains($0.key) }
+        let entryCount = ledger.entries.count
         ledger.prune(before: now().addingTimeInterval(-retention))
+        if cursors.count != cursorCount || ledger.entries.count != entryCount { persistRevision += 1 }
         report.seconds = Date().timeIntervalSince(t0)
         return report
     }
@@ -418,6 +442,8 @@ public actor LogIngestor {
     }
 
     private func merge(_ r: FileResult, into report: inout ScanReport) {
+        // Any item may touch persisted state (a refused add still interns its file), so count them too.
+        if cursors[r.logical] != r.cursor || !r.items.isEmpty { persistRevision += 1 }
         cursors[r.logical] = r.cursor
         report.filesRead += 1
         report.bytesProcessed += r.bytes
