@@ -25,16 +25,26 @@ public enum ISO8601Fast {
             guard b[4] == 0x2D, b[7] == 0x2D, b[10] == 0x54, b[13] == 0x3A, b[16] == 0x3A,
                   let y0 = d(0), let y1 = d(1), let y2 = d(2), let y3 = d(3), let mo0 = d(5), let mo1 = d(6), let d0 = d(8), let d1 = d(9),
                   let h0 = d(11), let h1 = d(12), let mi0 = d(14), let mi1 = d(15), let s0 = d(17), let s1 = d(18) else { return nil }
-            let year = y0 * 1000 + y1 * 100 + y2 * 10 + y3, month = mo0 * 10 + mo1, day = d0 * 10 + d1
-            let hour = h0 * 10 + h1, minute = mi0 * 10 + mi1, second = s0 * 10 + s1
+            // Typed and split up: long integer sums stall the type checker on slower machines.
+            let century: Int = y0 * 1000 + y1 * 100
+            let year: Int = century + y2 * 10 + y3
+            let month: Int = mo0 * 10 + mo1
+            let day: Int = d0 * 10 + d1
+            let hour: Int = h0 * 10 + h1
+            let minute: Int = mi0 * 10 + mi1
+            let second: Int = s0 * 10 + s1
             guard years.contains(year), month >= 1, month <= 12, day >= 1, day <= daysIn(month, of: year),
                   hour <= 23, minute <= 59, second <= 59 else { return nil }
-            let seconds = days(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+            let dayStart: Int = days(year, month, day) * 86400
+            let clock: Int = hour * 3600 + minute * 60
+            let seconds: Int = dayStart + clock + second
             guard b.count == 24 else { return Date(timeIntervalSince1970: Double(seconds)) }
             guard b[19] == 0x2E, let f0 = d(20), let f1 = d(21), let f2 = d(22) else { return nil }
+            let fraction: Int = f0 * 100 + f1 * 10 + f2
+            let total: Int = seconds * 1000 + fraction
             // Divided as one number of milliseconds: adding the fraction to the seconds lands one
             // ulp away from the formatter's answer for about a third of all values.
-            return Date(timeIntervalSince1970: Double(seconds * 1000 + f0 * 100 + f1 * 10 + f2) / 1000)
+            return Date(timeIntervalSince1970: Double(total) / 1000)
         } ?? nil
     }
 
