@@ -135,19 +135,22 @@ import HeadroomKit
         #expect(lines.first?.contains(#""blocked_by":"session""#) == true)
     }
 
-    @Test func waitWakesWhenTheSnapshotClearsTheBlock() throws {
+    @Test func waitWakesWhenTheSnapshotClearsTheBlock() async throws {
         let url = try write(snapshot(blocked: true, sessionUsed: 1))
         let unblocked = snapshot()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) {
+        after(0.4) {
             var s = unblocked
             s.generatedAt = Date()
             let tmp = url.deletingLastPathComponent().appendingPathComponent(".tmp")
             try? SnapshotFile.encoder().encode(s).write(to: tmp)
             _ = rename(tmp.path, url.path)
         }
-        var lines: [String] = []
-        let code = HeadroomCLI.run(["wait", "--provider", "claude", "--timeout", "10s"], environment: ["NO_COLOR": "1"],
-                                   output: { lines.append($0) }, snapshotURL: url, now: Date.init)
+        let (code, lines) = await offPool {
+            var lines: [String] = []
+            let code = HeadroomCLI.run(["wait", "--provider", "claude", "--timeout", "10s"], environment: ["NO_COLOR": "1"],
+                                       output: { lines.append($0) }, snapshotURL: url, now: Date.init)
+            return (code, lines)
+        }
         #expect(code == 0)
         #expect(lines.first?.contains("waiting on the 5-hour session") == true)
     }

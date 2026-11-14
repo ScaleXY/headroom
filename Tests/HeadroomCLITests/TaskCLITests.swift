@@ -238,19 +238,19 @@ final class Lines: @unchecked Sendable {
         #expect(h.run(["tasks"]).1.contains("Refactor auth"))
     }
 
-    @Test func watchRedrawsOnChange() {
+    @Test func watchRedrawsOnChange() async {
         let h = Home()
         seed(h)
         let lines = Lines()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) {
-            _ = h.run(["task", "done", "api/tests"])
-        }
-        let start = Date()
-        var frames = 0
-        // Other suites post the same notification, so draw until the change shows (or give up).
-        let code = TasksCommand.run(["--watch"], ctx: h.ctx(out: lines.add, clock: Date.init)) { frame in
-            frames += 1
-            return !frame.contains("✓ Tests") && frames < 40 && Date().timeIntervalSince(start) < 10
+        after(0.4) { _ = h.run(["task", "done", "api/tests"]) }
+        let code = await offPool {
+            let start = Date()
+            var frames = 0
+            // Other suites post the same notification, so draw until the change shows (or give up).
+            return TasksCommand.run(["--watch"], ctx: h.ctx(out: lines.add, clock: Date.init)) { frame in
+                frames += 1
+                return !frame.contains("✓ Tests") && frames < 40 && Date().timeIntervalSince(start) < 10
+            }
         }
         #expect(code == 0)
         #expect(lines.all.count >= 2)
@@ -494,6 +494,10 @@ final class Lines: @unchecked Sendable {
     @Test func dispatchThroughTheCLI() throws {
         let h = Home()
         let url = try settings(h, "{}")
+        // A `headroom` on the path in this home, so the hook doesn't point at the test runner.
+        let bin = h.url.appendingPathComponent(".local/bin/headroom")
+        try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: bin.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
         let (code, out) = h.run(["hooks", "install", "--settings", url.path], env: ["HOME": h.url.path])
         #expect(code == 0 && out.contains("task hook"))
         #expect(h.run(["hooks", "status", "--settings", url.path]).1.contains("All 7 installed"))
@@ -617,12 +621,12 @@ final class Lines: @unchecked Sendable {
         #expect(h.run(["wait", "--run", "r1", "--timeout", "never"]).0 == 64)
     }
 
-    @Test func wakesWhenTheRunFinishes() {
+    @Test func wakesWhenTheRunFinishes() async {
         let h = Home()
         h.run(["task", "start", "a"])
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { _ = h.run(["task", "done", "a"], clock: Date.init) }
+        after(0.4) { _ = h.run(["task", "done", "a"], clock: Date.init) }
         let start = Date()
-        let (code, out) = h.run(["wait", "--run", "r1", "--timeout", "20s"], clock: Date.init)
+        let (code, out) = await offPool { h.run(["wait", "--run", "r1", "--timeout", "20s"], clock: Date.init) }
         #expect(code == 0 && out.contains("waiting on run r1") && out.contains("done"))
         #expect(Date().timeIntervalSince(start) < 10)
     }
