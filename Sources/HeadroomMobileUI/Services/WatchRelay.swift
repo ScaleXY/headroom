@@ -1,5 +1,6 @@
 import Foundation
 import HeadroomKit
+import HeadroomSync
 #if canImport(WatchConnectivity) && os(iOS)
 import WatchConnectivity
 
@@ -10,6 +11,10 @@ import WatchConnectivity
 public final class WatchRelay: NSObject, WCSessionDelegate {
     private var lastLook: [Int] = []
     private var lastSent = Date.distantPast
+    /// The `generatedAt` last put into the application context, the copy a Watch gets when it
+    /// activates later. The Watch drops a feed that isn't newer, so resending one is wasted. A
+    /// complication transfer doesn't count: it leaves the context as it was.
+    private var contextSentAt: Date?
 
     public override init() {
         super.init()
@@ -22,6 +27,7 @@ public final class WatchRelay: NSObject, WCSessionDelegate {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
+              FeedFreshness.isNewer(feed.generatedAt, than: contextSentAt),
               let data = try? SnapshotFile.encoder().encode(WatchFeed.compact(feed)) else { return }
         let look = FeedWriter.colors(FeedWriter.look(feed, kind: ""))
         let changed = look != lastLook
@@ -30,12 +36,18 @@ public final class WatchRelay: NSObject, WCSessionDelegate {
             session.transferCurrentComplicationUserInfo(["feed": data])
             lastSent = Date()
         } else {
-            try? session.updateApplicationContext(["feed": data])
+            if (try? session.updateApplicationContext(["feed": data])) != nil { contextSentAt = feed.generatedAt }
         }
         lastLook = look
     }
 
-    nonisolated public func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {}
+    /// A fresh activation or a new pairing may have a Watch with nothing yet: send the next feed whatever its stamp.
+    nonisolated public func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {
+        Task { @MainActor in self.contextSentAt = nil }
+    }
+    nonisolated public func sessionWatchStateDidChange(_ session: WCSession) {
+        Task { @MainActor in self.contextSentAt = nil }
+    }
     nonisolated public func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated public func sessionDidDeactivate(_ session: WCSession) { session.activate() }
 }

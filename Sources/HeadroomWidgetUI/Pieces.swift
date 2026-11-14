@@ -249,9 +249,22 @@ public struct SVGShape: Shape {
     public var d: String
     public var box: CGSize
 
+    nonisolated(unsafe) private static var parsed: [String: CGPath] = [:]
+    private static let lock = NSLock()
+
+    /// Parsed once per path string: a shape is drawn again on every body pass.
+    private static func parse(_ d: String) -> CGPath {
+        lock.lock()
+        defer { lock.unlock() }
+        if let p = parsed[d] { return p }
+        let p = SVGPath.parse(d)
+        parsed[d] = p
+        return p
+    }
+
     public func path(in rect: CGRect) -> Path {
         var t = CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.width / box.width, y: rect.height / box.height)
-        let cg = SVGPath.parse(d)
+        let cg = Self.parse(d)
         return Path(cg.copy(using: &t) ?? cg)
     }
 

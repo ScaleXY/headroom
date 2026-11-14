@@ -205,6 +205,22 @@ public struct GlideChartView: View {
         }
     }
 
+    nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
+    private static let formatterLock = NSLock()
+
+    /// A formatter for the template, made once. A formatter takes the locale, time zone and calendar
+    /// current when it is made, so those are part of the key and a change of any of them makes a new one.
+    private static func formatter(_ template: String) -> DateFormatter {
+        let key = [template, Locale.current.identifier, TimeZone.current.identifier, "\(Calendar.current.identifier)"].joined(separator: "|")
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        if let f = formatters[key] { return f }
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate(template)
+        formatters[key] = f
+        return f
+    }
+
     /// Hour lines every 4 hours for a day-long trail (every hour for 5), day lines for a week.
     public static func axis(_ c: WidgetChart, calendar: Calendar = .current) -> Axis {
         let hours = max(c.hours, 1)
@@ -217,8 +233,7 @@ public struct GlideChartView: View {
                 let hour = Double(calendar.component(.hour, from: c.start.addingTimeInterval(h * 3600)))
                 h += (step - hour.truncatingRemainder(dividingBy: step)).truncatingRemainder(dividingBy: step)
             }
-            let f = DateFormatter()
-            f.setLocalizedDateFormatFromTemplate("j")
+            let f = formatter("j")
             while h < hours - 0.01 {
                 if h > 0.4, h < hours - 0.4 {
                     lines.append(h)
@@ -227,8 +242,7 @@ public struct GlideChartView: View {
                 h += step
             }
         } else {
-            let f = DateFormatter()
-            f.setLocalizedDateFormatFromTemplate(hours > 240 ? "MMMd" : "EEE")
+            let f = formatter(hours > 240 ? "MMMd" : "EEE")
             var bounds: [Double] = [0]
             if var d = calendar.nextDate(after: c.start, matching: DateComponents(hour: 0, minute: 0), matchingPolicy: .nextTime) {
                 while true {

@@ -38,6 +38,33 @@ import HeadroomKit
         #expect(r.live.first?.payload.reading?.weekly?.used == 0.2)
     }
 
+    @Test func repeatedReadsDecodeOnlyWhatChanged() async throws {
+        let container = try SyncContainer.make(.memory, cloudKit: false)
+        let s = SyncStore(container: container)
+        try await s.upsertDevice("A", payload: devicePayload(), lastSeenAt: now)
+        try await s.upsertLive(deviceID: "A", provider: .claude, accountKey: "k", payload: livePayload(0.1))
+        for day in 1...3 {
+            try await s.upsertActivity(deviceID: "A", provider: .claude, accountKey: "k", payload: ActivityDayPayload(day: day, slots: []))
+        }
+        let first = try await s.records()
+        #expect(await s.decodeCount == 5)
+        let again = try await s.records()
+        #expect(await s.decodeCount == 5)
+        #expect(Set(again.activity.map(\.payload)) == Set(first.activity.map(\.payload)))
+
+        // One day gains a slot: only that record is decoded again, and the result matches a store with no cache.
+        let slot = ActivitySlot(slot: 5, model: "m", tokens: TokenCounts(output: 10), micros: 1, unpricedTokens: 0, classMicros: [0, 0, 0, 1])
+        try await s.upsertActivity(deviceID: "A", provider: .claude, accountKey: "k", payload: ActivityDayPayload(day: 2, slots: [slot]))
+        let changed = try await s.records()
+        #expect(await s.decodeCount == 6)
+        let fresh = try await SyncStore(container: container).records()
+        #expect(Set(changed.activity.map(\.payload)) == Set(fresh.activity.map(\.payload)))
+        #expect(changed.activity.first { $0.day == 2 }?.payload.slots.count == 1)
+        #expect(changed.live.first?.payload.reading?.weekly?.used == fresh.live.first?.payload.reading?.weekly?.used)
+        #expect(changed.devices.first?.payload.name == fresh.devices.first?.payload.name)
+        #expect(changed.unreadable == fresh.unreadable && changed.tooNew == fresh.tooNew)
+    }
+
     @Test func dedupeKeepsTheNewestCopyOfMyRecordsOnly() async throws {
         let s = try store()
         var dupes = SyncRecords()
@@ -102,5 +129,16 @@ extension SyncStore {
             r.payloadVersion = PayloadVersion.current + 1
         }
         try modelContext.save()
+    }
+}
+
+struct FeedFreshnessTests {
+    @Test func onlyALaterStampIsNew() {
+        let t = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(FeedFreshness.isNewer(t, than: nil))
+        #expect(FeedFreshness.isNewer(t, than: .distantPast))
+        #expect(FeedFreshness.isNewer(t.addingTimeInterval(1), than: t))
+        #expect(!FeedFreshness.isNewer(t, than: t))
+        #expect(!FeedFreshness.isNewer(t.addingTimeInterval(-1), than: t))
     }
 }

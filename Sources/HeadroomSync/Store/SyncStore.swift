@@ -46,33 +46,66 @@ public actor SyncStore: ModelActor, SyncReading {
 
     // MARK: Reading
 
+    /// A payload as decoded, with the bytes it came from: a record whose bytes haven't changed
+    /// since the last read skips the decompress and JSON decode (about 20 ms for an account's
+    /// activity, and nearly all of 35 days of it is unchanged between reloads).
+    private struct Decoded<P> {
+        let data: Data
+        let value: P
+    }
+
+    private var deviceCache: [PersistentIdentifier: Decoded<DevicePayload>] = [:]
+    private var liveCache: [PersistentIdentifier: Decoded<AccountLivePayload>] = [:]
+    private var archiveCache: [PersistentIdentifier: Decoded<AccountArchivePayload>] = [:]
+    private var activityCache: [PersistentIdentifier: Decoded<ActivityDayPayload>] = [:]
+    /// How many payloads `records()` has really decoded (the rest came from the caches). For tests.
+    private(set) var decodeCount = 0
+
     public func records() throws -> SyncRecords {
         var out = SyncRecords()
+        var seen = Set<PersistentIdentifier>()
         for r in try modelContext.fetch(FetchDescriptor<DeviceRecord>()) {
-            guard let p: DevicePayload = decode(r.payload, version: r.payloadVersion, into: &out) else { continue }
+            seen.insert(r.persistentModelID)
+            guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &deviceCache, into: &out) else { continue }
             out.devices.append(DeviceEnvelope(deviceID: r.deviceID, updatedAt: r.updatedAt, lastSeenAt: r.lastSeenAt, payload: p))
         }
+        deviceCache = deviceCache.filter { seen.contains($0.key) }
+        seen.removeAll()
         for r in try modelContext.fetch(FetchDescriptor<AccountLiveRecord>()) {
-            guard let p: AccountLivePayload = decode(r.payload, version: r.payloadVersion, into: &out) else { continue }
+            seen.insert(r.persistentModelID)
+            guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &liveCache, into: &out) else { continue }
             out.live.append(Envelope(deviceID: r.deviceID, provider: Provider(rawValue: r.provider), accountKey: r.accountKey,
                                      updatedAt: r.updatedAt, payload: p))
         }
+        liveCache = liveCache.filter { seen.contains($0.key) }
+        seen.removeAll()
         for r in try modelContext.fetch(FetchDescriptor<AccountArchiveRecord>()) {
-            guard let p: AccountArchivePayload = decode(r.payload, version: r.payloadVersion, into: &out) else { continue }
+            seen.insert(r.persistentModelID)
+            guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &archiveCache, into: &out) else { continue }
             out.archives.append(Envelope(deviceID: r.deviceID, provider: Provider(rawValue: r.provider), accountKey: r.accountKey,
                                          updatedAt: r.updatedAt, payload: p))
         }
+        archiveCache = archiveCache.filter { seen.contains($0.key) }
+        seen.removeAll()
         for r in try modelContext.fetch(FetchDescriptor<ActivityDayRecord>()) {
-            guard let p: ActivityDayPayload = decode(r.payload, version: r.payloadVersion, into: &out) else { continue }
+            seen.insert(r.persistentModelID)
+            guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &activityCache, into: &out) else { continue }
             out.activity.append(Envelope(deviceID: r.deviceID, provider: Provider(rawValue: r.provider), accountKey: r.accountKey,
                                          day: r.day, updatedAt: r.updatedAt, payload: p))
         }
+        activityCache = activityCache.filter { seen.contains($0.key) }
         return out
     }
 
-    private func decode<P: Decodable>(_ data: Data?, version: Int, into out: inout SyncRecords) -> P? {
+    /// The version check comes first, so the too-new and unreadable counts don't depend on the cache.
+    private func decode<P: Decodable>(_ data: Data?, version: Int, id: PersistentIdentifier,
+                                      cache: inout [PersistentIdentifier: Decoded<P>], into out: inout SyncRecords) -> P? {
         guard version <= PayloadVersion.current else { out.tooNew += 1; out.unreadable += 1; return nil }
-        guard let data, let p = try? PayloadCodec.decode(P.self, from: data) else { out.unreadable += 1; return nil }
+        guard let data else { out.unreadable += 1; return nil }
+        if let hit = cache[id], hit.data == data { return hit.value }
+        decodeCount += 1
+        guard let p = try? PayloadCodec.decode(P.self, from: data) else { out.unreadable += 1; cache[id] = nil; return nil }
+        cache[id] = Decoded(data: data, value: p)
         return p
     }
 

@@ -16,10 +16,12 @@ public enum RunNotifier {
     /// Records what `runs` say and posts what's due. Sample data never notifies.
     public static func notify(_ runs: [RunDigest], prefs: MobilePreferences, isDemo: Bool, now: Date = Date()) async {
         guard !isDemo else { return }
-        var ledger = prefs.runAlerts
+        let before = prefs.runAlerts
+        var ledger = before
         let decision = ledger.observe(runs, now: now, needsInput: prefs.notifyRunNeedsInput, finished: prefs.notifyRunFinished,
                                       stopped: prefs.notifyRunStopped)
-        prefs.runAlerts = ledger
+        // Most rebuilds change nothing; skip the encode, the App Group write and the change notification.
+        if ledger != before { prefs.runAlerts = ledger }
         let center = UNUserNotificationCenter.current()
         if !decision.withdraw.isEmpty {
             center.removePendingNotificationRequests(withIdentifiers: decision.withdraw.map(heldID))
