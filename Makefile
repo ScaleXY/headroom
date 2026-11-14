@@ -6,6 +6,7 @@
 #   make icon       regenerate assets/AppIcon.icns from assets/icon.svg
 #   make screenshots  render the README images in media/ from fixtures (needs Google Chrome)
 #   make appstore   render the Mac App Store screenshots, app preview and icon into appstore/ (needs Chrome, ffmpeg)
+#   make site-media render the marketing site's images in site/public/ (after make appstore; needs cwebp, ImageMagick)
 #   make release    zip the signed app into dist/ with a SHA-256 checksum
 #   make dmg        build dist/Headroom-<version>.dmg (drag to Applications) with a SHA-256 checksum
 #   make dmg-background  redraw assets/dmg-background.tiff, the DMG window background (needs Chrome)
@@ -95,7 +96,7 @@ ifneq ($(wildcard $(PROFILE)),)
   endif
 endif
 
-.PHONY: all build test app install icon clean bench screenshots appstore mobile-appstore release dmg dmg-background notarize \
+.PHONY: all build test app install icon clean bench screenshots appstore site-media mobile-appstore release dmg dmg-background notarize \
         mobile-project mobile-build mobile-previews mobile-icon
 
 all: build
@@ -120,6 +121,10 @@ screenshots:
 
 appstore:
 	python3 -I Scripts/appstore_media.py
+
+# The marketing site's images, from the same fixture renders and the App Store screenshots.
+site-media:
+	python3 -I Scripts/site_media.py
 
 # iPhone, iPhone Duo, iPad and Apple Watch screenshots, app previews and creative assets in
 # appstore/mobile/ (needs the iOS, iPhone Duo and watchOS simulator runtimes and XcodeGen).
