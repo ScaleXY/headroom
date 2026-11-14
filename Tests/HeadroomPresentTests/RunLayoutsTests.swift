@@ -82,11 +82,47 @@ import HeadroomKit
         #expect(lanes.lanes.allSatisfy { $0.bars.allSatisfy { $0.start >= 0 && $0.end <= 1 && $0.end >= $0.start } })
     }
 
-    @Test func aRunAskingDrawsItsLaneInRose() throws {
+    @Test func aRunAskingDrawsItsLaneInRoseFromTheQuestion() throws {
         let lanes = try #require(presenter.pageModel(Demo.inputRun(now: now)).lanes)
         let asking = try #require(lanes.lanes.first)
-        #expect(asking.title == "Switch the queries over" && asking.bars.contains { $0.kind == .asking })
-        #expect(asking.meta?.hasPrefix("asks") == true)
+        #expect(asking.title == "Switch the queries over")
+        // Blue while it worked, rose from the question to now.
+        #expect(asking.bars.map(\.kind) == [.running, .asking])
+        let turn = asking.bars[1].start
+        #expect(asking.bars[0].end == turn && abs(asking.bars[1].end - lanes.now) < 0.001)
+        #expect(asking.status == "Asks you · 4m" && asking.statusTone == .alert)
+        #expect(lanes.lanes.first { $0.title == "Compare query times" }?.status == "Not started")
+    }
+
+    @Test func runningLanesSayWhenTheyreForecastToFinish() throws {
+        let lanes = try #require(presenter.pageModel(Demo.timelineRun(now: now)).lanes)
+        let running = lanes.lanes.filter { $0.glyph == .running }
+        #expect(!running.isEmpty && running.allSatisfy { $0.status?.hasPrefix("~") == true })
+        // The finish is on the axis and in the model; the run's start labels the left edge.
+        let finish = try #require(lanes.finish)
+        #expect(finish > lanes.now && lanes.ticks.contains { $0.kind == .finish && $0.at == finish })
+        #expect(lanes.ticks.first?.kind == .start && lanes.ticks.first?.at == 0)
+    }
+
+    @Test func aRunPausedAtTheLimitShowsThePauseItsIn() throws {
+        let lanes = try #require(presenter.pageModel(Demo.limitRun(now: now)).lanes)
+        let pause = try #require(lanes.pause)
+        // Now sits inside the pause, which runs from when it stopped to the reset.
+        #expect(pause.lowerBound < lanes.now && lanes.now < pause.upperBound && pause.upperBound < 1)
+        let held = try #require(lanes.lanes.first { $0.title == "Merge duplicate contacts" })
+        #expect(held.status == "Back 10:48")
+        #expect(held.bars.map(\.kind) == [.running, .held, .forecast])
+        #expect(held.bars[2].start >= pause.upperBound - 0.001)
+        #expect(lanes.ticks.filter { $0.kind == .limit }.count == 2 && lanes.finish != nil)
+    }
+
+    @Test func finishedTasksShareALaneThatCountsFailures() throws {
+        let lanes = try #require(presenter.pageModel(Demo.timelineRun(now: now)).lanes)
+        let done = try #require(lanes.lanes.last)
+        #expect(done.isFinished && done.status == nil)
+        let merged = RunLanesModel.merged(done.bars)
+        #expect(!merged.isEmpty && merged.count <= done.bars.count)
+        for (a, b) in zip(merged, merged.dropFirst()) { #expect(a.upperBound < b.lowerBound) }
     }
 
     @Test func everyDemoRunBuildsAPage() {

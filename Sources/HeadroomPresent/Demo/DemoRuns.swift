@@ -154,7 +154,7 @@ extension Demo {
             task("inventory", "Take a snapshot", .done, evidence: "Snapshot inv-2026-11-13 taken, restore tested on staging",
                  tokens: 96_000, started: ago(now, 40), ended: ago(now, 29), agents: 1, share: 4 / 14, working: mins(11)),
             task("migrate", "Switch the queries over", .waiting, progress: TaskProgress(done: 0.2, inFlight: 0.8, estimate: 0.2), waitReason: .input,
-                 waitNote: "May I drop the unused audit table?", tokens: 310_000, started: ago(now, 28), active: 1, share: 8 / 14, working: mins(22)),
+                 waitNote: "May I drop the unused audit table?", tokens: 310_000, started: ago(now, 28), active: 1, last: ago(now, 4), share: 8 / 14, working: mins(22)),
             task("bench", "Compare query times", .planned, importance: .optional, share: 2 / 14),
         ]
         return TaskRun(id: "0a7c4e2b-58d1-4f39-b6a2-9e1d7c3f5b80", title: "Database upgrade", project: "inventory-service", harness: "codex",
@@ -185,14 +185,17 @@ extension Demo {
         let nodes = [
             task("parse", "Parse the export files", .done, tokens: 180_000, started: ago(now, 90), ended: ago(now, 70), share: 0.3),
             task("dedupe", "Merge duplicate contacts", .waiting, progress: TaskProgress(done: 0, inFlight: 1, estimate: 0.45), waitReason: .limit,
-                 tokens: 640_000, started: ago(now, 68), active: 1, share: 0.45),
+                 tokens: 640_000, started: ago(now, 68), active: 1, last: ago(now, 12), share: 0.45),
             task("report", "Write the summary", .planned, share: 0.25),
         ]
-        return TaskRun(id: "demo-limit", title: "Clean up the contacts import", project: "crm-tools", harness: "claude-code",
+        var r = TaskRun(id: "demo-limit", title: "Clean up the contacts import", project: "crm-tools", harness: "claude-code",
                        startedAt: ago(now, 92), updatedAt: ago(now, 12), state: .waiting, waitReason: .limit,
                        progress: TaskProgress(done: 0.45, inFlight: 0.3, estimate: 0.45), tokens: 820_000,
                        warning: "Claude 5-hour limit reached, back today 10:48 AM.", hasDeclaredTasks: true, nodes: nodes,
                        time: TaskTimeSplit(working: mins(70), waitingLimit: mins(12)))
+        // As the Mac's fold fills it while the provider is blocked: paused as of now, back when the window resets.
+        r.limitOutlook = TaskLimitOutlook(provider: .claude, pauseAt: now, resumeAt: now.addingTimeInterval(mins(48)), finishAt: now.addingTimeInterval(mins(82)))
+        return r
     }
 
     /// The plan comes from the session's own todo list, not from the agent.

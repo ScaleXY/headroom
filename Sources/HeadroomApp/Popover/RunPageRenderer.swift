@@ -14,7 +14,7 @@ import HeadroomPresent
 enum RunPageRenderer {
     static let padX: CGFloat = 14, padTop: CGFloat = 13, padBottom: CGFloat = 12
     static let tileSize: CGFloat = 24, buttonSize: CGFloat = 26
-    static let laneHeight: CGFloat = 32
+    static let laneHeight: CGFloat = 34
 
     /// The run as one card. Returns the height.
     @discardableResult
@@ -512,11 +512,14 @@ enum RunPageRenderer {
         return h
     }
 
-    /// Lanes with their bars, the limit's pause as a hatched band, now as a line, the axis, and a
-    /// legend of what the chart says in words.
+    /// The chart: times along the top with now as a playhead; a lane per open task with its mark,
+    /// title and where it stands, over a track its bars sit on; the limit's pause as a hatched
+    /// band; the forecast finish as a dashed line; then what the chart says in words.
     static func drawLanes(_ l: RunLanesModel, page: RunPageModel, x: CGFloat, y: CGFloat, w: CGFloat, theme t: Theme, ctx: CGContext?) -> CGFloat {
+        let headerH: CGFloat = 18, gap: CGFloat = 6
+        let lanesTop = y + headerH + gap
         let lanesH = CGFloat(l.lanes.count) * laneHeight
-        let axisH: CGFloat = 18
+        let lanesBottom = lanesTop + lanesH - 6
         // Legend items, wrapped.
         var items: [(Text, Bool)] = []
         if let limit = page.limit {
@@ -539,61 +542,141 @@ enum RunPageRenderer {
             lx += iw + 14
         }
         let legendH = items.isEmpty ? 0 : ly + 16
-        let moreH: CGFloat = l.moreLanes > 0 ? 16 : 0
-        let h = lanesH + axisH + (legendH > 0 ? 6 + legendH : 0) + moreH
+        let moreH: CGFloat = l.moreLanes > 0 ? 18 : 0
+        let h = headerH + gap + lanesH + (legendH > 0 ? 6 + legendH : 0) + moreH
         guard let ctx else { return h }
 
         func px(_ f: Double) -> CGFloat { x + CGFloat(min(max(f, 0), 1)) * w }
-        let barOffset: CGFloat = 17, barH: CGFloat = 7
-        // The pause band, under everything.
-        if let p = l.pause {
-            let band = CGRect(x: px(p.lowerBound), y: y - 2, width: max(px(p.upperBound) - px(p.lowerBound), 2), height: lanesH + 2)
-            let shape = CGPath(rect: band, transform: nil)
-            ctx.fill(shape, t.amber.fade(t.isDark ? 0.06 : 0.07))
-            RunCardRenderer.hatch(shape, color: t.amber.fade(t.isDark ? 0.18 : 0.22), spacing: 5, lineWidth: 1, ctx: ctx)
-            for ex in [band.minX, band.maxX] {
-                let edge = CGMutablePath(); edge.move(to: CGPoint(x: ex, y: band.minY)); edge.addLine(to: CGPoint(x: ex, y: band.maxY))
-                ctx.stroke(edge, t.amber.fade(0.6), width: 1, dash: [3, 3])
-            }
-        }
-        // Lanes.
-        let pc = t.pacing(.plenty), rose = t.pacing(.veryTight), amber = t.pacing(.tight)
+        let nx = px(l.now)
+
+        // Each lane's labels, laid out first so lines through the chart can step around them.
+        struct Row { var top: CGFloat; var left: (Text, CGFloat); var status: Text?; var title: Text; var meta: Text?; var textSpans: [ClosedRange<CGFloat>] }
+        let glyphW: CGFloat = 16
+        var rows: [Row] = []
         for (i, lane) in l.lanes.enumerated() {
-            let top = y + CGFloat(i) * laneHeight
-            let labelMid = top + 7
-            let finished = lane.id == "~done"
-            let toneColor: NSColor = switch lane.tone {
-            case .alert: lane.glyph == .failed ? RunCardRenderer.failure(t) : t.rose
-            case .warn: t.amber
-            case .quiet: t.muted
-            default: t.ink
-            }
-            let titleColor = finished ? t.muted : toneColor
+            let top = lanesTop + CGFloat(i) * laneHeight
+            let statusColor: NSColor = lane.statusTone == .neutral ? t.ink.fade(0.72) : lane.statusTone == .quiet ? t.muted2
+                : RunCardRenderer.color(lane.statusTone, t, glyph: lane.glyph)
+            let status = lane.status.map { Text($0, F.sf(11, 650, tabular: true), statusColor) }
+            let statusW = status.map { $0.width + 10 } ?? 0
             let meta = lane.meta.map { Text($0, F.sf(11, 500, tabular: true), t.muted2) }
             let metaW = meta.map { $0.width + 7 } ?? 0
             let diamondW: CGFloat = lane.mustHave ? 13 : 0
-            let title = RunCardRenderer.fit(lane.title, F.sf(11.5, finished ? 550 : 600), titleColor, width: w - metaW - diamondW)
-            title.draw(x: x, capCenter: labelMid, in: ctx)
-            var mx = x + title.width
+            let titleColor = lane.isFinished || lane.glyph == .planned ? t.muted : t.ink
+            let title = RunCardRenderer.fit(lane.title, F.sf(11.5, lane.isFinished ? 550 : 600), titleColor,
+                                            width: max(w - glyphW - metaW - diamondW - statusW, 40))
+            let leftW = glyphW + title.width + diamondW + metaW
+            var spans: [ClosedRange<CGFloat>] = [(x - 2)...(x + leftW + 4)]
+            if let status { spans.append((x + w - status.width - 5)...(x + w + 2)) }
+            rows.append(Row(top: top, left: (title, leftW), status: status, title: title, meta: meta, textSpans: spans))
+        }
+        /// A vertical line through the chart that steps around the lanes' labels.
+        func through(_ lineX: CGFloat, from top: CGFloat, to bottom: CGFloat) -> CGMutablePath {
+            let p = CGMutablePath()
+            var yy = top
+            for row in rows where row.textSpans.contains(where: { $0.contains(lineX) }) {
+                let a = row.top - 3, b = row.top + 12
+                if a > yy { p.move(to: CGPoint(x: lineX, y: yy)); p.addLine(to: CGPoint(x: lineX, y: a)) }
+                yy = max(yy, b)
+            }
+            if bottom > yy { p.move(to: CGPoint(x: lineX, y: yy)); p.addLine(to: CGPoint(x: lineX, y: bottom)) }
+            return p
+        }
+
+        let chartTop = y + headerH + 1
+        // What's still to come: a faint wash right of now.
+        if nx < x + w - 2 {
+            ctx.fill(rounded(CGRect(x: nx, y: chartTop, width: x + w - nx, height: lanesBottom - chartTop + 4), 4), t.ink.fade(t.isDark ? 0.03 : 0.022))
+        }
+        /// Draws `body` everywhere but under the lanes' labels.
+        func underChart(_ body: () -> Void) {
+            ctx.withState {
+                let clip = CGMutablePath()
+                clip.addRect(CGRect(x: x - 4, y: chartTop - 2, width: w + 8, height: lanesBottom - chartTop + 10))
+                for row in rows {
+                    for span in row.textSpans {
+                        clip.addPath(rounded(CGRect(x: span.lowerBound, y: row.top - 3, width: span.upperBound - span.lowerBound, height: 15), 4))
+                    }
+                }
+                ctx.addPath(clip)
+                ctx.clip(using: .evenOdd)
+                body()
+            }
+        }
+        // The pause band.
+        if let p = l.pause { underChart {
+            let band = CGRect(x: px(p.lowerBound), y: chartTop, width: max(px(p.upperBound) - px(p.lowerBound), 2), height: lanesBottom - chartTop + 4)
+            let shape = CGPath(rect: band, transform: nil)
+            ctx.fill(shape, t.amber.fade(t.isDark ? 0.07 : 0.08))
+            RunCardRenderer.hatch(shape, color: t.amber.fade(t.isDark ? 0.16 : 0.2), spacing: 5, lineWidth: 1, ctx: ctx)
+            for ex in [band.minX, band.maxX] {
+                let edge = CGMutablePath(); edge.move(to: CGPoint(x: ex, y: band.minY)); edge.addLine(to: CGPoint(x: ex, y: band.maxY))
+                ctx.stroke(edge, t.amber.fade(0.55), width: 1, dash: [3, 3])
+            }
+        } }
+        // Hours, as faint guides.
+        for tick in l.ticks where tick.kind == .plain {
+            let gx = px(tick.at)
+            guard gx > x + 4, gx < x + w - 4 else { continue }
+            ctx.stroke(through(gx, from: chartTop, to: lanesBottom + 4), t.ink.fade(t.isDark ? 0.08 : 0.07), width: 1)
+        }
+        // The forecast finish.
+        if let f = l.finish {
+            ctx.stroke(through(px(f), from: chartTop, to: lanesBottom + 4), t.ink.fade(t.isDark ? 0.45 : 0.35), width: 1, dash: [2.5, 2.5])
+        }
+
+        // Lanes.
+        let pc = t.pacing(.plenty), rose = t.pacing(.veryTight), amber = t.pacing(.tight)
+        let trackH: CGFloat = 6, trackOffset: CGFloat = 17
+        for (lane, row) in zip(l.lanes, rows) {
+            let labelMid = row.top + 4.5
+            let glyphColor = lane.isFinished && lane.glyph == .done ? t.muted : RunCardRenderer.color(lane.tone, t, glyph: lane.glyph)
+            RunCardRenderer.drawGlyph(lane.glyph, color: glyphColor, center: CGPoint(x: x + 5, y: labelMid), size: 10, ctx: ctx)
+            row.title.draw(x: x + glyphW, capCenter: labelMid, in: ctx)
+            var mx = x + glyphW + row.title.width
             if lane.mustHave {
                 drawDiamond(center: CGPoint(x: mx + 7, y: labelMid), size: 7.5, color: t.ink.fade(0.8), filled: true, ctx: ctx)
-                mx += diamondW
+                mx += 13
             }
-            meta?.draw(x: mx + 7, capCenter: labelMid, in: ctx)
-            // A faint guide the bars sit on.
-            let guide = CGRect(x: x, y: top + barOffset + barH / 2 - 0.25, width: w, height: 0.5)
-            ctx.fill(CGPath(rect: guide, transform: nil), t.separator)
+            row.meta?.draw(x: mx + 7, capCenter: labelMid, in: ctx)
+            row.status?.draw(x: x + w, capCenter: labelMid, align: .right, in: ctx)
+
+            // The track the bars sit on.
+            let track = CGRect(x: x, y: row.top + trackOffset, width: w, height: trackH)
+            ctx.fill(rounded(track, trackH / 2), t.ink.fade(t.isDark ? 0.07 : 0.055))
+            func bar(_ b: RunLanesModel.Bar) -> (CGRect, CGPath) {
+                let r = CGRect(x: px(b.start), y: track.minY, width: max(px(b.end) - px(b.start), trackH), height: trackH)
+                return (r, rounded(r, trackH / 2))
+            }
+            if lane.isFinished {
+                // One band where any finished task ran, a dot where each one ended, failures hatched.
+                for span in RunLanesModel.merged(lane.bars) {
+                    ctx.fill(bar(.init(kind: .done, start: span.lowerBound, end: span.upperBound)).1, t.ink.fade(t.isDark ? 0.26 : 0.18))
+                }
+                for b in lane.bars where b.kind == .failed {
+                    let (_, shape) = bar(b)
+                    let c = RunCardRenderer.failure(t)
+                    ctx.fill(shape, c.fade(0.3))
+                    RunCardRenderer.hatch(shape, color: c.fade(0.85), spacing: 3, lineWidth: 1, ctx: ctx)
+                }
+                // A dot per task only while they can be told apart.
+                for b in lane.bars where lane.bars.count <= RunLanesModel.dotCap {
+                    let ex = max(px(b.end) - trackH / 2, px(b.start) + trackH / 2)
+                    let dot = CGMutablePath(); dot.addEllipse(in: CGRect(x: ex - 2, y: track.midY - 2, width: 4, height: 4))
+                    ctx.fill(dot, b.kind == .failed ? RunCardRenderer.failure(t) : t.ink.fade(t.isDark ? 0.7 : 0.55))
+                }
+                continue
+            }
             for b in lane.bars {
-                let r = CGRect(x: px(b.start), y: top + barOffset, width: max(px(b.end) - px(b.start), 3), height: barH)
-                let shape = rounded(r, barH / 2)
+                let (r, shape) = bar(b)
                 switch b.kind {
                 case .done:
                     ctx.fill(shape, t.ink.fade(t.isDark ? 0.42 : 0.30))
                 case .running:
-                    ctx.glow(shape, color: pc.glow, blur: 7, base: pc.bottom)
+                    ctx.glow(shape, color: pc.glow, blur: 6, base: pc.bottom)
                     ctx.fillLinear(shape, [pc.bottom, pc.top], from: CGPoint(x: r.minX, y: r.midY), to: CGPoint(x: r.maxX, y: r.midY))
                 case .asking:
-                    ctx.glow(shape, color: rose.glow, blur: 7, base: rose.bottom)
+                    ctx.glow(shape, color: rose.glow, blur: 6, base: rose.bottom)
                     ctx.fillLinear(shape, [rose.bottom, rose.top], from: CGPoint(x: r.minX, y: r.midY), to: CGPoint(x: r.maxX, y: r.midY))
                 case .held:
                     ctx.fillLinear(shape, [amber.bottom, amber.top], from: CGPoint(x: r.minX, y: r.midY), to: CGPoint(x: r.maxX, y: r.midY))
@@ -602,32 +685,24 @@ enum RunPageRenderer {
                     ctx.fill(shape, c.fade(0.35))
                     RunCardRenderer.hatch(shape, color: c.fade(0.9), spacing: 3, lineWidth: 1, ctx: ctx)
                 case .forecast:
-                    ctx.fill(shape, t.cardSolid.fade(0.6))
-                    ctx.stroke(rounded(r.insetBy(dx: 0.5, dy: 0.5), barH / 2 - 0.5), t.azure.fade(0.7), width: 1)
+                    ctx.fill(shape, t.azure.fade(t.isDark ? 0.16 : 0.12))
+                    ctx.stroke(rounded(r.insetBy(dx: 0.5, dy: 0.5), trackH / 2 - 0.5), t.azure.fade(0.75), width: 1)
                 case .planned:
-                    ctx.fill(shape, t.cardSolid.fade(0.6))
-                    ctx.stroke(rounded(r.insetBy(dx: 0.5, dy: 0.5), barH / 2 - 0.5), t.ink.fade(0.3), width: 1, dash: [2.5, 2])
+                    ctx.fill(shape, t.cardSolid.fade(0.7))
+                    ctx.stroke(rounded(r.insetBy(dx: 0.5, dy: 0.5), trackH / 2 - 0.5), t.ink.fade(0.4), width: 1, dash: [2.5, 2])
                 }
             }
         }
-        // Now: a line through each lane's bars, clear of the labels, down to the axis.
-        let nx = px(l.now)
-        let nowLine = CGMutablePath()
-        for i in l.lanes.indices {
-            let top = y + CGFloat(i) * laneHeight
-            nowLine.move(to: CGPoint(x: nx, y: top + barOffset - 4))
-            nowLine.addLine(to: CGPoint(x: nx, y: i == l.lanes.count - 1 ? y + lanesH : top + laneHeight - 1))
-        }
+
+        // Now: a playhead from the axis down through every lane, stepping around labels.
         ctx.withState {
-            if t.isDark { ctx.setShadow(offset: .zero, blur: 5, color: white(0.45).cgColor) }
-            ctx.stroke(nowLine, t.ink.fade(0.9), width: 1.5, cap: .round)
+            if t.isDark { ctx.setShadow(offset: .zero, blur: 5, color: white(0.4).cgColor) }
+            ctx.stroke(through(nx, from: chartTop - 1, to: lanesBottom + 4), t.ink.fade(0.9), width: 1.5, cap: .round)
         }
-        // Axis.
-        let axisTop = y + lanesH + 1
-        ctx.fill(CGPath(rect: CGRect(x: x, y: axisTop, width: w, height: 0.5), transform: nil), t.separator)
-        drawTicks(l.ticks, x: x, w: w, mid: axisTop + 10, theme: t, ctx: ctx)
+        drawTicks(l.ticks, x: x, w: w, mid: y + headerH / 2, theme: t, ctx: ctx)
+
         // Legend.
-        var yy = axisTop + axisH - 1
+        var yy = lanesTop + lanesH
         if legendH > 0 {
             yy += 6
             for (text, pause, at) in placed {
@@ -641,35 +716,43 @@ enum RunPageRenderer {
             yy += legendH
         }
         if l.moreLanes > 0 {
-            Text("+ \(l.moreLanes) more task\(l.moreLanes == 1 ? "" : "s") in the list below", F.sf(11.5, 500), t.muted).draw(x: x, capCenter: yy + 8, in: ctx)
+            Text("+ \(l.moreLanes) more task\(l.moreLanes == 1 ? "" : "s") in the list below", F.sf(11.5, 500), t.muted).draw(x: x, capCenter: yy + 10, in: ctx)
         }
         return h
     }
 
-    /// Axis labels: now, the limit and the finish first, then the hours where they fit.
+    /// The axis along the top: now as a filled tag, then the limit, the finish, the start and the
+    /// hours where they fit. Each important one keeps a mark even when its label gives way.
     static func drawTicks(_ ticks: [RunLanesModel.Tick], x: CGFloat, w: CGFloat, mid: CGFloat, theme t: Theme, ctx: CGContext) {
         let ranked = ticks.sorted { rank($0.kind) < rank($1.kind) }
         var taken: [ClosedRange<CGFloat>] = []
         var said: Set<String> = []
         for tick in ranked {
-            let color: NSColor = switch tick.kind {
-            case .now: t.ink
-            case .limit: t.amber
-            case .finish: t.ink.fade(0.8)
-            case .plain: t.muted2
-            }
-            let label = Text(tick.label, F.sf(9.5, tick.kind == .plain ? 600 : 700, tabular: true), color, kern: tick.kind == .now ? 0.6 : 0.2)
             let cx = x + CGFloat(min(max(tick.at, 0), 1)) * w
-            // The important ones keep a mark on the axis even when their label gives way.
-            if tick.kind != .plain {
-                let mark = CGMutablePath(); mark.move(to: CGPoint(x: cx, y: mid - 10)); mark.addLine(to: CGPoint(x: cx, y: mid - 6.5))
-                ctx.stroke(mark, color, width: 1.2, cap: .round)
+            if tick.kind == .now {
+                let label = Text("NOW", F.sf(9, 750), t.cardSolid, kern: 0.7)
+                let tagW = label.width + 10
+                let left = min(max(cx - tagW / 2, x), x + w - tagW)
+                let tag = CGRect(x: left, y: mid - 7.5, width: tagW, height: 15)
+                ctx.fill(rounded(tag, 7.5), t.ink.fade(0.92))
+                label.draw(x: left + 5, capCenter: mid, in: ctx)
+                taken.append((tag.minX - 4)...(tag.maxX + 4))
+                continue
             }
-            let left = min(max(cx - label.width / 2, x), x + w - label.width)
-            let span = (left - 3)...(left + label.width + 3)
+            let color: NSColor = switch tick.kind {
+            case .limit: t.amber
+            case .finish: t.ink.fade(0.85)
+            case .start, .plain, .now: t.muted2
+            }
+            let label = Text(tick.label, F.sf(9.5, tick.kind == .plain || tick.kind == .start ? 600 : 700, tabular: true), color, kern: 0.2)
             // An hour that would repeat a label already on the axis (a span of days) says nothing new.
-            guard !taken.contains(where: { $0.overlaps(span) }), tick.kind != .plain || !said.contains(tick.label) else { continue }
-            taken.append(span)
+            guard tick.kind != .plain || !said.contains(tick.label) else { continue }
+            // Centred on its line; an important one slides to either side of it before giving way.
+            let clamp = { (l: CGFloat) in min(max(l, x), x + w - label.width) }
+            let tries = tick.kind == .start ? [x] : tick.kind == .plain ? [clamp(cx - label.width / 2)]
+                : [clamp(cx - label.width / 2), clamp(cx - 1), clamp(cx - label.width + 1)]
+            guard let left = tries.first(where: { l in !taken.contains { $0.overlaps((l - 3)...(l + label.width + 3)) } }) else { continue }
+            taken.append((left - 3)...(left + label.width + 3))
             said.insert(tick.label)
             label.draw(x: left, capCenter: mid, in: ctx)
         }
@@ -680,7 +763,8 @@ enum RunPageRenderer {
         case .now: 0
         case .limit: 1
         case .finish: 2
-        case .plain: 3
+        case .start: 3
+        case .plain: 4
         }
     }
 

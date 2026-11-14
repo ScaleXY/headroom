@@ -129,19 +129,29 @@ public struct RunLanesModel: Sendable, Hashable {
     public struct Lane: Sendable, Hashable, Identifiable {
         public var id: String
         public var title: String
-        /// "1/3 · 2 agents", "asks · 14m", "optional".
+        /// "1/3 · 2 agents", "optional": what the task is, beside its title.
         public var meta: String?
+        /// Where it stands, on the right: "~10:14", "Asks you · 4m", "Quiet 18m", "Back 10:48", "Not started", "1 failed".
+        public var status: String?
+        /// The status's colour; `.neutral` reads as a plain figure.
+        public var statusTone: RunTone
         public var tone: RunTone
         public var glyph: RunGlyph
         public var mustHave: Bool
         public var bars: [Bar]
-        public init(id: String, title: String, meta: String? = nil, tone: RunTone, glyph: RunGlyph, mustHave: Bool = false, bars: [Bar]) {
-            self.id = id; self.title = title; self.meta = meta; self.tone = tone; self.glyph = glyph; self.mustHave = mustHave; self.bars = bars
+        public init(id: String, title: String, meta: String? = nil, status: String? = nil, statusTone: RunTone = .neutral, tone: RunTone,
+                    glyph: RunGlyph, mustHave: Bool = false, bars: [Bar]) {
+            self.id = id; self.title = title; self.meta = meta; self.status = status; self.statusTone = statusTone
+            self.tone = tone; self.glyph = glyph; self.mustHave = mustHave; self.bars = bars
         }
+
+        /// The lane that holds every finished task.
+        public var isFinished: Bool { id == "~done" }
     }
 
     public struct Tick: Sendable, Hashable {
-        public enum Kind: Sendable, Hashable { case plain, now, limit, finish }
+        /// `start`: when the run began, at the left edge. `limit`: the pause's two edges.
+        public enum Kind: Sendable, Hashable { case plain, start, now, limit, finish }
         public var label: String
         public var at: Double
         public var kind: Kind
@@ -151,14 +161,32 @@ public struct RunLanesModel: Sendable, Hashable {
     public var lanes: [Lane]
     /// Where now sits, 0…1.
     public var now: Double
-    /// The limit's pause, as fractions.
+    /// The limit's pause, as fractions; it may hold now, when the run is paused already.
     public var pause: ClosedRange<Double>?
+    /// The forecast finish, when there is one past now.
+    public var finish: Double?
     public var ticks: [Tick]
     /// Open lanes past the ones drawn.
     public var moreLanes: Int
 
-    public init(lanes: [Lane], now: Double, pause: ClosedRange<Double>? = nil, ticks: [Tick], moreLanes: Int = 0) {
-        self.lanes = lanes; self.now = now; self.pause = pause; self.ticks = ticks; self.moreLanes = moreLanes
+    public init(lanes: [Lane], now: Double, pause: ClosedRange<Double>? = nil, finish: Double? = nil, ticks: [Tick], moreLanes: Int = 0) {
+        self.lanes = lanes; self.now = now; self.pause = pause; self.finish = finish; self.ticks = ticks; self.moreLanes = moreLanes
+    }
+
+    /// The finished lane marks where each task ended up to this many tasks; past it, the dots blur.
+    public static let dotCap = 24
+
+    /// The bars' spans with overlaps joined: where any of them ran.
+    public static func merged(_ bars: [Bar]) -> [ClosedRange<Double>] {
+        var out: [ClosedRange<Double>] = []
+        for b in bars.sorted(by: { $0.start < $1.start }) {
+            if let last = out.last, b.start <= last.upperBound + 0.004 {
+                out[out.count - 1] = last.lowerBound...max(last.upperBound, b.end)
+            } else {
+                out.append(b.start...max(b.end, b.start))
+            }
+        }
+        return out
     }
 }
 
@@ -392,24 +420,42 @@ extension RunsPresenter {
     // MARK: Lanes
 
     /// The run from its start to its forecast finish (or now): a lane per open task, most pressing
-    /// first, and one for everything finished. Nil before anything has a time.
+    /// first, and one for everything finished. A task that stopped moving shows when: its bar runs
+    /// in blue while it worked, then turns rose from the question, or amber from when it went
+    /// quiet or hit the limit. A pause at the limit, coming or under way, is a band that work
+    /// forecast past it skips. Nil before anything has a time.
     public func lanes(_ r: TaskRun) -> RunLanesModel? {
         let leaves = pageLeaves(r)
         let start = min(r.startedAt, leaves.compactMap(\.startedAt).min() ?? r.startedAt)
-        let tl = timeline(r)
         let outlook = r.limitOutlook
-        var finish: Date?
-        if tl != nil, let f = outlook?.finishAt { finish = f }
-        else if r.state == .running, !r.stale, let eta = r.etaHighSeconds ?? r.etaSeconds { finish = now.addingTimeInterval(eta) }
         let nowAt = max(now, start.addingTimeInterval(60))
-        let end = max(finish ?? nowAt, nowAt.addingTimeInterval(nowAt.timeIntervalSince(start) * 0.12))
+
+        // The pause: coming (the timeline's forecast), or under way (blocked now, until it resets).
+        var pauseFrom: Date?, pauseTo: Date?, finish: Date?
+        if timeline(r) != nil, let o = outlook {
+            pauseFrom = o.pauseAt; pauseTo = o.resumeAt; finish = o.finishAt
+        } else if let o = outlook, let p = o.pauseAt, let q = o.resumeAt, p <= now, q > now,
+                  r.state == .waiting, r.waitReason == .limit {
+            // It paused when it last moved: the outlook only knows it's paused as of now.
+            pauseFrom = max(start, min(p, r.updatedAt)); pauseTo = q; finish = o.finishAt.flatMap { $0 > q ? $0 : nil }
+        } else if r.state == .running, !r.stale, let eta = r.etaHighSeconds ?? r.etaSeconds {
+            finish = now.addingTimeInterval(eta)
+        }
+        let farthest = [finish, pauseTo].compactMap { $0 }.max() ?? nowAt
+        // Room past the last thing drawn, so now (or the resume) never sits on the edge.
+        let lead = finish == nil ? 0.14 : 0.04
+        let end = max(farthest, nowAt).addingTimeInterval(max(max(farthest, nowAt).timeIntervalSince(start) * lead, 60))
         let span = end.timeIntervalSince(start)
         guard span > 0 else { return nil }
         func at(_ d: Date) -> Double { min(max(d.timeIntervalSince(start) / span, 0), 1) }
+        func clock(_ d: Date) -> String {
+            TimeFormat.clock(d, calendar: calendar, locale: locale).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: "")
+        }
         let nowF = at(nowAt)
         var pause: ClosedRange<Double>?
-        if tl != nil, let p = outlook?.pauseAt, let q = outlook?.resumeAt, p < q { pause = at(p)...at(q) }
-        let forecastEnd = finish.map(at) ?? nowF
+        if let a = pauseFrom, let b = pauseTo, a < b { pause = at(a)...at(b) }
+        let finishF = finish.map(at)
+        let forecastEnd = finishF ?? nowF
         /// Where `share` of the working time left ends, skipping the pause.
         func workingEnd(_ share: Double) -> Double {
             let pauseLen = pause.map { max(0, min($0.upperBound, forecastEnd) - max($0.lowerBound, nowF)) } ?? 0
@@ -417,8 +463,7 @@ extension RunsPresenter {
             guard let p = pause, nowF + need > p.lowerBound, p.upperBound > nowF else { return nowF + need }
             return min(p.upperBound + (need - max(0, p.lowerBound - nowF)), forecastEnd)
         }
-
-        /// Forecast from now to `to`, broken by the pause.
+        /// Forecast from `from` to `to`, broken by the pause.
         func ahead(_ kind: RunLanesModel.BarKind, from: Double, to: Double) -> [RunLanesModel.Bar] {
             guard to > from + 0.002 else { return [] }
             if let p = pause, p.lowerBound < to, p.upperBound > from {
@@ -429,6 +474,12 @@ extension RunsPresenter {
             }
             return [.init(kind: kind, start: from, end: to)]
         }
+        /// Worked from `began` until `turned`, then `kind` until now.
+        func worked(from began: Double, turned: Double?, then kind: RunLanesModel.BarKind) -> [RunLanesModel.Bar] {
+            let stop = max(nowF, began + 0.01)
+            guard let turned, turned > began + 0.004, turned < stop - 0.004 else { return [.init(kind: kind, start: began, end: stop)] }
+            return [.init(kind: .running, start: began, end: turned), .init(kind: kind, start: turned, end: stop)]
+        }
 
         let open = leaves.filter { !$0.state.isTerminal }
             .enumerated().sorted { ($0.element.attention, $0.offset) < ($1.element.attention, $1.offset) }.map(\.element)
@@ -437,61 +488,76 @@ extension RunsPresenter {
             let (glyph, tone) = Self.look(n)
             var bars: [RunLanesModel.Bar] = []
             var meta: [String] = []
+            var status: String?, statusTone = tone
             if let s = n.steps { meta.append("\(s.done)/\(s.total)") }
             if n.attempts.active > 1 { meta.append("\(n.attempts.active) agents") }
+            if n.importance == .optional { meta.append("optional") }
             let began = n.startedAt.map(at)
+            let left = 1 - min(max(n.progress.estimate, 0), 0.95)
             switch n.state {
-            case .running, .waiting:
-                let kind: RunLanesModel.BarKind = n.state == .waiting && n.waitReason == .input ? .asking
-                    : (n.stale || n.state == .waiting) ? .held : .running
-                if let b = began { bars.append(.init(kind: kind, start: b, end: max(nowF, b + 0.01))) }
-                if kind == .asking {
-                    // How long it has waited: since the question, else since it last moved.
-                    let since = r.question.flatMap { $0.task == n.id || $0.task == nil ? $0.askedAt : nil } ?? n.lastActivityAt
-                    meta.append("asks" + (since.map { " · " + TimeFormat.compact(now.timeIntervalSince($0)) } ?? ""))
-                } else if kind == .held, n.stale {
-                    meta.append("quiet")
-                }
+            case .running where !n.stale:
+                if let b = began { bars.append(.init(kind: .running, start: b, end: max(nowF, b + 0.01))) }
                 // What's left of it: as far as it has to go, by its own progress, within the run's forecast.
-                if kind == .running, forecastEnd > nowF {
-                    let left = 1 - min(max(n.progress.estimate, 0), 0.95)
-                    bars += ahead(.forecast, from: nowF, to: workingEnd(left))
+                if forecastEnd > nowF {
+                    let to = workingEnd(left)
+                    bars += ahead(.forecast, from: nowF, to: to)
+                    status = "~" + clock(start.addingTimeInterval(to * span)); statusTone = .neutral
+                } else {
+                    status = "Running"
+                }
+            case .waiting where n.waitReason == .input:
+                // Rose from the question (for this task, or the run's own), else from when it last moved.
+                let asked = r.question.flatMap { $0.task == n.id || $0.task == nil ? $0.askedAt : nil } ?? n.lastActivityAt
+                if let b = began { bars += worked(from: b, turned: asked.map(at), then: .asking) }
+                status = "Asks you" + (asked.map { " · " + TimeFormat.compact(now.timeIntervalSince($0)) } ?? "")
+            case .waiting where n.waitReason == .limit:
+                if let b = began { bars += worked(from: b, turned: (pauseFrom ?? n.lastActivityAt).map(at), then: .held) }
+                if let p = pause, forecastEnd > p.upperBound { bars += ahead(.forecast, from: nowF, to: workingEnd(left)) }
+                status = pauseTo.map { "Back " + clock($0) } ?? "At the limit"
+            case .running, .waiting:
+                // Quiet, or waiting on something else: amber from when it last moved.
+                if let b = began { bars += worked(from: b, turned: n.lastActivityAt.map(at), then: .held) }
+                if n.stale {
+                    status = "Quiet" + (n.lastActivityAt.map { " " + TimeFormat.compact(now.timeIntervalSince($0)) } ?? "")
+                } else {
+                    status = "Waiting"; statusTone = .quiet
                 }
             case .parked:
                 if let b = began { bars.append(.init(kind: .held, start: b, end: max(n.lastActivityAt.map(at) ?? b, b + 0.01))) }
+                status = "Parked"; statusTone = .quiet
             default:
                 // Not started: the stretch it's forecast to need, at the end of the forecast.
                 if forecastEnd > nowF {
                     let width = max((forecastEnd - nowF) * 0.18, 0.04)
                     bars += ahead(.planned, from: max(nowF, forecastEnd - width), to: forecastEnd)
                 }
+                status = "Not started"; statusTone = .quiet
             }
-            if n.importance == .optional { meta.append("optional") }
-            lanes.append(.init(id: n.id, title: n.title, meta: meta.isEmpty ? nil : meta.joined(separator: " · "), tone: tone, glyph: glyph,
-                               mustHave: n.importance == .critical, bars: bars))
+            lanes.append(.init(id: n.id, title: n.title, meta: meta.isEmpty ? nil : meta.joined(separator: " · "), status: status,
+                               statusTone: statusTone, tone: tone, glyph: glyph, mustHave: n.importance == .critical, bars: bars))
         }
         let closed = leaves.filter(\.state.isTerminal)
         if !closed.isEmpty {
+            var failed = 0
             let bars: [RunLanesModel.Bar] = closed.compactMap { n in
+                let broke = n.state == .failed && n.replacedBy == nil
+                if broke { failed += 1 }
                 guard let s = n.startedAt else { return nil }
                 let e = n.endedAt ?? n.lastActivityAt ?? s
-                let kind: RunLanesModel.BarKind = n.state == .failed && n.replacedBy == nil ? .failed : .done
-                return .init(kind: kind, start: at(s), end: max(at(e), at(s) + 0.008))
+                return .init(kind: broke ? .failed : .done, start: at(s), end: max(at(e), at(s) + 0.008))
             }
             let count = closed.count + (r.finishedEarlier ?? 0)
-            lanes.append(.init(id: "~done", title: "\(count) finished", tone: .quiet, glyph: .done, bars: bars))
+            lanes.append(.init(id: "~done", title: "\(count) finished", status: failed > 0 ? "\(failed) failed" : nil,
+                               statusTone: .alert, tone: .quiet, glyph: failed > 0 ? .failed : .done, bars: bars))
         }
 
         // Ticks: the start, each hour between, now, the pause, the finish. Hours give way to the rest.
-        func clock(_ d: Date) -> String {
-            TimeFormat.clock(d, calendar: calendar, locale: locale).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: "")
-        }
-        var ticks: [RunLanesModel.Tick] = [.init(label: "NOW", at: nowF, kind: .now)]
-        if let p = pause, let a = outlook?.pauseAt, let b = outlook?.resumeAt {
+        var ticks: [RunLanesModel.Tick] = [.init(label: "NOW", at: nowF, kind: .now), .init(label: clock(start), at: 0, kind: .start)]
+        if let p = pause, let a = pauseFrom, let b = pauseTo {
             ticks.append(.init(label: clock(a), at: p.lowerBound, kind: .limit))
             ticks.append(.init(label: clock(b), at: p.upperBound, kind: .limit))
         }
-        if let f = finish, forecastEnd > nowF { ticks.append(.init(label: clock(f), at: forecastEnd, kind: .finish)) }
+        if let f = finish, let ff = finishF, ff > nowF { ticks.append(.init(label: "~" + clock(f), at: ff, kind: .finish)) }
         var hours: [RunLanesModel.Tick] = []
         // At most about five: whole hours, or whole days (named) for a run that spans days.
         let stepHours = [1, 2, 3, 6, 12, 24, 48, 168].first { span / Double($0 * 3600) <= 5 } ?? 168
@@ -503,10 +569,10 @@ extension RunsPresenter {
                 h = calendar.date(byAdding: .hour, value: stepHours, to: h) ?? h.addingTimeInterval(Double(stepHours) * 3600)
             }
         }
-        if hours.isEmpty { hours.append(.init(label: clock(start), at: 0)) }
         // A label needs about 9% of the width; keep the important ones.
         for t in hours where !ticks.contains(where: { abs($0.at - t.at) < 0.1 }) { ticks.append(t) }
         ticks.sort { $0.at < $1.at }
-        return RunLanesModel(lanes: lanes, now: nowF, pause: pause, ticks: ticks, moreLanes: max(0, open.count - Self.laneCap))
+        return RunLanesModel(lanes: lanes, now: nowF, pause: pause, finish: finishF.flatMap { $0 > nowF ? $0 : nil }, ticks: ticks,
+                             moreLanes: max(0, open.count - Self.laneCap))
     }
 }
