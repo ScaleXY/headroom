@@ -209,9 +209,11 @@ public struct GlideChartView: View {
     private static let formatterLock = NSLock()
 
     /// A formatter for the template, made once. A formatter takes the locale, time zone and calendar
-    /// current when it is made, so those are part of the key and a change of any of them makes a new one.
+    /// current when it is made, so those are part of the key and a change of any of them makes a new
+    /// one. So is the 12- or 24-hour choice in System Settings, which the locale's identifier leaves out.
     private static func formatter(_ template: String) -> DateFormatter {
-        let key = [template, Locale.current.identifier, TimeZone.current.identifier, "\(Calendar.current.identifier)"].joined(separator: "|")
+        let locale = Locale.current
+        let key = [template, locale.identifier, "\(locale.hourCycle)", TimeZone.current.identifier, "\(Calendar.current.identifier)"].joined(separator: "|")
         formatterLock.lock()
         defer { formatterLock.unlock() }
         if let f = formatters[key] { return f }

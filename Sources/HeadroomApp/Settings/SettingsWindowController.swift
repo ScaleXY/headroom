@@ -50,6 +50,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             // Draw now, so the window never comes up empty.
             released = false
             view.updateLayer()
+            view.needsDisplay = true
         }
         NSApp.activate()
         showWindow(nil)
