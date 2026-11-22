@@ -29,7 +29,7 @@ These are drafts for the product page fields. Edit them before pasting.
 
 **Name** (30): Agent Headroom
 
-**Subtitle** (30): Pace your Claude & Codex limits
+**Subtitle** (30): Pace your Claude & Codex usage
 
 **Promotional text** (170):
 See how much of your Claude and Codex allowance is left against the time left, with a clear warning before the 5-hour session runs out.

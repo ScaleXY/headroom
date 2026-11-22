@@ -437,7 +437,9 @@ jobs:
           sed -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
               -e "s/^  sha256 .*$/  sha256 \"$SHA256\"/" \
               Packaging/ai-headroom.rb > tap/Casks/ai-headroom.rb
-          grep -q "version \"$VERSION\"" tap/Casks/ai-headroom.rb && grep -q "sha256 \"$SHA256\"" tap/Casks/ai-headroom.rb
+          # One check per line: in `a && b`, a failing `a` doesn't stop a `bash -e` script.
+          grep -q "version \"$VERSION\"" tap/Casks/ai-headroom.rb
+          grep -q "sha256 \"$SHA256\"" tap/Casks/ai-headroom.rb
           # The cask was first published as "headroom"; the rename moves those installs over.
           rm -f tap/Casks/headroom.rb
           printf '{\n  "headroom": "ai-headroom"\n}\n' > tap/cask_renames.json

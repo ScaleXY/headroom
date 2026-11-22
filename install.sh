@@ -29,7 +29,10 @@ uninstall=0
 purge=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) version="${2:-}"; shift 2 ;;
+    --version)
+      # `shift 2` with nothing after --version would end the script silently under set -e.
+      [ $# -ge 2 ] || { echo "--version needs a release, like --version v0.1.0" >&2; exit 64; }
+      version=$2; shift 2 ;;
     --uninstall) uninstall=1; shift ;;
     --purge) purge=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 64 ;;
@@ -185,9 +188,18 @@ quit_app() {
   pkill -x HeadroomApp >/dev/null 2>&1 || true
 }
 
+# Another vendor's app is also installed as Headroom.app (it's why the Homebrew cask is named
+# ai-headroom): a bundle whose identifier says it's something else is never replaced or removed.
+# A bundle with no readable identifier (a broken copy of this one) still counts as Headroom.
+is_headroom() { # app
+  local id
+  id=$(plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null) || return 0
+  [ "$id" = "$BUNDLE_ID" ] || [ "$id" = "$LEGACY_BUNDLE_ID" ]
+}
+
 installed_app() {
   for dir in /Applications "$HOME/Applications"; do
-    [ -d "$dir/$APP_NAME" ] && { echo "$dir/$APP_NAME"; return 0; }
+    [ -d "$dir/$APP_NAME" ] && is_headroom "$dir/$APP_NAME" && { echo "$dir/$APP_NAME"; return 0; }
   done
   return 1
 }
@@ -201,12 +213,14 @@ if [ "$uninstall" = 1 ]; then
     quit_app & await $! || true
     done_ "Quit Headroom"
   fi
-  if app=$(installed_app); then
+  # Every copy: one in /Applications and another in ~/Applications would otherwise leave one behind.
+  removed=0
+  while app=$(installed_app); do
     rm -rf "$app"
     done_ "Removed the app" "$(tilde "$app")"
-  else
-    done_ "No app to remove" "not in Applications"
-  fi
+    removed=1
+  done
+  [ "$removed" = 1 ] || done_ "No app to remove" "not in Applications"
   rm -f "$BIN_DIR/headroom" "$MAN_DIR/headroom.1"
   done_ "Removed the headroom command" "$(tilde "$BIN_DIR/headroom")"
   if [ "$purge" = 1 ]; then
@@ -231,7 +245,9 @@ mark "Will this week's allowance last?"
 
 begin "Checking this Mac"
 [ "$(uname -s)" = "Darwin" ] || fail "Headroom runs on macOS" "This computer runs $(uname -s)."
-[ "$(uname -m)" = "arm64" ] || fail "Headroom needs a Mac with Apple silicon" "This Mac has an Intel processor."
+# A shell running under Rosetta reports x86_64 on Apple silicon; hw.optional.arm64 is 1 either way.
+[ "$(uname -m)" = "arm64" ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] \
+  || fail "Headroom needs a Mac with Apple silicon" "This Mac has an Intel processor."
 os=$(sw_vers -productVersion)
 major=${os%%.*}
 [ "$major" -ge 15 ] || fail "Headroom needs macOS 15 or later" "This Mac runs macOS $os. Update it in System Settings › General › Software Update."
@@ -247,8 +263,12 @@ else
   begin "Finding the latest release"
   api="https://api.github.com/repos/$REPO/releases?per_page=1"
 fi
-fetch -H "Accept: application/vnd.github+json" "$api" -o "$tmp/release.json" 2>/dev/null & await $! \
-  || fail "Couldn't reach GitHub" "Check your connection and run the installer again in a minute."
+fetch -H "Accept: application/vnd.github+json" "$api" -o "$tmp/release.json" -w '%{http_code}' >"$tmp/status" 2>/dev/null & await $! || {
+  # A named release that doesn't exist is GitHub answering 404, not a connection problem.
+  [ -n "$version" ] && [ "$(cat "$tmp/status" 2>/dev/null)" = 404 ] \
+    && fail "Couldn't find Headroom $version" "Check the release's name at github.com/$REPO/releases and run the installer again."
+  fail "Couldn't reach GitHub" "Check your connection and run the installer again in a minute."
+}
 # Each asset lists its size just before its download URL; pair them and keep the app zip.
 size="" url=""
 read -r size url < <(grep -oE '"(size|browser_download_url)": *("[^"]*"|[0-9]+)' "$tmp/release.json" \
@@ -262,7 +282,7 @@ done_ "Found Headroom ${tag#v}" "${released:+released $released · }$(megabytes 
 # The live detail while downloading: an LED meter whose leading cell is the bright "now" cell.
 progress() {
   local got total=${size:-0} width lit i bar=""
-  got=$(stat -f%z "$tmp/Headroom.zip" 2>/dev/null || echo 0)
+  got=$(/usr/bin/stat -f%z "$tmp/Headroom.zip" 2>/dev/null || echo 0)
   [ "$got" -gt 0 ] || { printf 'Connecting to GitHub…'; return; }
   [ "$total" -gt 0 ] 2>/dev/null || { megabytes "$got"; return; }
   width=$((cols - LABEL - 22)); [ "$width" -gt 24 ] && width=24
@@ -280,7 +300,9 @@ begin "Downloading"
 # One curl for both files: the checksum reuses the zip's connection instead of opening its own.
 # Its exit status reflects whichever transfer failed last, so judge the files instead.
 download "$url" -o "$tmp/Headroom.zip" "$url.sha256" -o "$tmp/Headroom.zip.sha256" 2>/dev/null & await $! progress || true
-got=$(stat -f%z "$tmp/Headroom.zip" 2>/dev/null || echo 0)
+# /usr/bin/stat by path: GNU stat, when Homebrew's coreutils come first on PATH, rejects -f%z,
+# and every download would read as 0 bytes.
+got=$(/usr/bin/stat -f%z "$tmp/Headroom.zip" 2>/dev/null || echo 0)
 if [ "$got" -eq 0 ] || { [ -n "$size" ] && [ "$got" -ne "$size" ]; }; then
   fail "The download stalled" "Check your connection and run the installer again. Nothing was changed."
 fi
@@ -314,6 +336,8 @@ xattr -dr com.apple.quarantine "$tmp/unzipped/$APP_NAME" 2>/dev/null || true
 dest_dir=/Applications
 [ -w "$dest_dir" ] || { dest_dir="$HOME/Applications"; mkdir -p "$dest_dir"; }
 app="$dest_dir/$APP_NAME"
+[ ! -d "$app" ] || is_headroom "$app" || fail "A different app named $APP_NAME is in $(tilde "$dest_dir")" \
+  "It was left alone. Move or rename it, then run the installer again."
 begin "Installing"
 quit_app & await $! || true
 rm -rf "$app"
@@ -331,7 +355,7 @@ open "$app" 2>/dev/null || fail "Headroom is installed but didn't open" "Open it
 done_ "Opened Headroom"
 
 printf '\n  %sHeadroom is in your menu bar.%s\n' "$BOLD" "$RESET"
-printf '  %sTo start it with your Mac, turn on Launch at login in its Settings.%s\n' "$DIM" "$RESET"
+printf '  %sTo start it with your Mac, turn on Open at login in its Settings.%s\n' "$DIM" "$RESET"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
