@@ -36,9 +36,9 @@ public enum DemoRecords {
         if scenario == .showcase { desktop[Provider.codex.rawValue] = codexWork }
         out.devices = [
             device(laptopID, name: "MacBook Pro", model: "Mac15,7", now: now,
-                   current: [Provider.claude.rawValue: personal, Provider.codex.rawValue: codexKey], runs: runs(now: now, names: true)),
+                   current: [Provider.claude.rawValue: personal, Provider.codex.rawValue: codexKey], runs: runs(now: now, names: true, set: .laptop)),
             device(desktopID, name: "Mac Studio", model: "Mac14,13", now: now.addingTimeInterval(-6 * 60), current: desktop,
-                   runs: runs(now: now, names: false)),
+                   runs: runs(now: now, names: true, set: .desktop)),
         ]
 
         add(&out, claude, key: personal, email: "you@example.com", device: laptopID, now: now)
@@ -124,12 +124,16 @@ public enum DemoRecords {
                                               state: .awake, syncSince: now.addingTimeInterval(-30 * 86400), runs: runs))
     }
 
-    /// The Mac's run fixtures as each Mac would sync them: the laptop with task names included
-    /// (a run waiting on an answer, a plan under way, one finished this morning), the desktop
-    /// without (agents a session spawned, a release that failed last night).
-    public static func runs(now: Date, names: Bool) -> [RunSummaryPayload]? {
-        let runs = names ? [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.finishedRun(now: now)]
-                         : [Demo.observedRun(now: now), Demo.failedRun(now: now)]
+    /// Which Mac's runs: the laptop's (a run waiting on an answer, a plan under way, one finished
+    /// this morning) or the desktop's (agents a session spawned, a release that failed last night).
+    public enum RunSet: Sendable { case laptop, desktop }
+
+    /// A Mac's run fixtures as it would sync them, with task names included or not. Both sample
+    /// Macs include them, so every run reads by what it's doing.
+    public static func runs(now: Date, names: Bool, set: RunSet? = nil) -> [RunSummaryPayload]? {
+        let laptop = set.map { $0 == .laptop } ?? names
+        let runs = laptop ? [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.finishedRun(now: now)]
+                          : [Demo.observedRun(now: now), Demo.failedRun(now: now)]
         return RunSummaryBuilder.summaries(runs.map { detailed($0, now: now) }, includeNames: names, includeQuestion: names, now: now)
     }
 

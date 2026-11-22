@@ -337,6 +337,7 @@ private struct DevicePayloadBeforeRuns: Decodable {
         let runs = AccountReader(now: now).read(DemoRecords.make(now: now)).runs
         #expect(Set(runs.map(\.mac)) == ["MacBook Pro", "Mac Studio"])
         #expect(runs.first?.needsInput == true)
-        #expect(runs.contains { $0.includesNames } && runs.contains { !$0.includesNames })
+        // Both sample Macs share task names, so every run reads by what it's doing.
+        #expect(runs.allSatisfy { $0.includesNames && $0.title != nil })
     }
 }
