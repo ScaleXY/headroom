@@ -71,6 +71,10 @@ struct TimeFormatTests {
         #expect(TimeFormat.clock(six, calendar: cal, locale: loc) == "6:00 AM")
         #expect(TimeFormat.shortClock(six, calendar: cal, locale: loc) == "6 AM")
         #expect(TimeFormat.shortClock(halfPast, calendar: cal, locale: loc) == "12:30 PM")
+        // A 24-hour clock keeps its minutes on the hour; a bare "15" reads as a date.
+        var gb = cal
+        gb.locale = Locale(identifier: "en_GB")
+        #expect(TimeFormat.shortClock(PT.date(2026, 10, 21, 15, 0), calendar: gb, locale: Locale(identifier: "en_GB")) == "15:00")
         #expect(TimeFormat.weekdayShort(six, calendar: cal, locale: loc) == "Wed")
         #expect(TimeFormat.weekdayLong(six, calendar: cal, locale: loc) == "Wednesday")
         #expect(TimeFormat.monthDay(six, calendar: cal, locale: loc) == "Oct 21")

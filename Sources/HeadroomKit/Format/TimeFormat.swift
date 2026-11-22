@@ -74,7 +74,9 @@ public enum TimeFormat {
 
     /// "6 AM" on the hour, otherwise "6:30 AM".
     public static func shortClock(_ date: Date, calendar: Calendar, locale: Locale) -> String {
-        if calendar.component(.minute, from: date) == 0 {
+        // A 24-hour clock keeps its minutes on the hour: a bare "15" reads as a date, not a time.
+        let hourFormat = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? "h a"
+        if calendar.component(.minute, from: date) == 0, hourFormat.contains("a") {
             return clean(date.formatted(style(calendar, locale).hour(.defaultDigits(amPM: .abbreviated))))
         }
         return clock(date, calendar: calendar, locale: locale)
