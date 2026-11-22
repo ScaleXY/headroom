@@ -1,0 +1,21 @@
+Headroom brings your Claude and Codex limits from your Mac to your iPhone, iPad and Apple Watch, and answers one question: do you have room to spare this week, are you on track, or should you slow down?
+
+THE RESERVOIR
+One level, filled to what's left this week, with when it renews right beside it. Under it, the week's graph and each 5-hour session as a bar on the same time axis, so a run of near-misses stands out.
+
+THE LIMIT YOU HIT FIRST
+The 5-hour session gets a warning from 75% (or the level you set on your Mac), a Live Activity that counts down to the reset, and a note when it will run out before then. At the limit, it tells you exactly when you're back.
+
+YOUR AGENT RUNS, AWAY FROM THE DESK
+Follow your Claude Code and Codex runs from every Mac: which one needs you, how far along each is, and when it should finish. Get told when a run needs your input, stops with work left, or finishes.
+
+ON YOUR WRIST AND HOME SCREEN
+Complications, a watch app, Home Screen and Lock Screen widgets in every size.
+
+SEE WHERE THE TOKENS GO
+Activity by hour and by model, what your usage is worth at API prices, and every past week.
+
+PRIVATE BY DESIGN
+Readings travel from your Mac through your own private iCloud, end-to-end encrypted. There is no Headroom server and no sign-up. Prompts, project names and file paths never leave your Mac.
+
+Requires Headroom on a Mac with Claude Code or Codex signed in to a subscription, and iCloud sync turned on there.

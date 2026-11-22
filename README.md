@@ -14,7 +14,7 @@
 
 <p align="center">
   Headroom sits in your menu bar and answers one question for your Claude and Codex plans:<br>
-  <b>do you have room to spare this week, are you on pace, or should you slow down?</b>
+  <b>do you have room to spare this week, are you on track, or should you slow down?</b>
 </p>
 
 <br>
@@ -51,7 +51,7 @@ A five-step welcome lets you choose which tools to watch, what the menu bar show
 
 <img src="media/menubar.png" alt="Headroom's menu bar meters on dark, light and busy wallpapers">
 
-Each provider gets five cells in your menu bar. **Blue** means you have room to spare, **white** means you're on pace, **amber** and **rose** mean slow down. An hourglass shows when unused allowance is about to renew, and a countdown appears when your 5-hour session is nearly used up.
+Each provider gets five cells in your menu bar. **Blue** means you have room to spare, **white** means you're on track, **amber** and **rose** mean slow down. An hourglass shows when unused allowance is about to renew, and a countdown appears when your 5-hour session is nearly used up.
 
 ## Make it yours
 
@@ -139,7 +139,7 @@ Fan speeds can only be set as root, so Headroom ships a small helper for it. The
 
 ## On your iPhone, iPad and Apple Watch
 
-Turn on **Settings → iPhone & Watch** and Headroom on iPhone, iPad and Apple Watch shows the same Pace card, 5-hour panel, Burn-o-meter and Activity, with Home Screen widgets, Lock Screen and watch-face complications, and a Live Activity that counts down your 5-hour session. Several Macs, or several Claude and Codex accounts? Each account is one card, however many Macs report it, and its activity adds up across them.
+Turn on **Settings → iPhone & Watch** and Headroom on iPhone, iPad and Apple Watch shows the same Limits card, Reservoir, Burn-o-meter and Activity, with Home Screen widgets, Lock Screen and watch-face complications, and a Live Activity that counts down your 5-hour session. Several Macs, or several Claude and Codex accounts? Each account is one card, however many Macs report it, and its activity adds up across them.
 
 Long agent runs come along too, with the same list styles and run pages: Now shows each Mac's live runs (percent done or agent counts, and what needs you), the watch lists them, a Live Activity follows the most pressing one, and the phone can tell you when a run needs your input, stops with work left, or finishes. Only state and progress sync unless you turn on **Include task names**, which adds run and task titles.
 

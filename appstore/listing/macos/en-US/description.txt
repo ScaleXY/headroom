@@ -1,19 +1,19 @@
-Headroom sits in your menu bar and answers one question about your Claude and Codex plans: do you have room to spare this week, are you on pace, or should you slow down?
+Headroom sits in your menu bar and answers one question about your Claude and Codex plans: do you have room to spare this week, are you on track, or should you slow down?
 
-PACE, NOT JUST A PERCENTAGE
-82% left sounds great until you notice it renews tomorrow. Headroom compares what's left with the time left, draws your week so far, and tells you in one sentence whether to use more, keep going or ease off, and roughly when you'd run out.
+NOT JUST A PERCENTAGE
+82% left sounds great until you notice it renews tomorrow. The Limits tab fills one Reservoir to what's left this week, with when it renews beside it, draws your week so far, and tells you in one sentence whether to use more, keep going or ease off, and roughly when you'd run out.
 
 YOUR WEEK AT A GLANCE
-Each tool gets five cells in the menu bar. Blue means room to spare, white means on pace, amber and rose mean slow down. An hourglass shows when unused allowance is about to renew, and a countdown appears when your 5-hour session is nearly used.
+Each tool gets five cells in the menu bar. Blue means room to spare, white means on track, amber and rose mean slow down. An hourglass shows when unused allowance is about to renew, and a countdown appears when your 5-hour session is nearly used.
 
 THE 5-HOUR SESSION, FRONT AND CENTER
-The 5-hour session is usually the limit you hit first, so it gets its own panel: five cells with even pace marked, a graph of the session so far and where it's heading, and a forecast from your recent pace. Past your warning level (75% by default) it turns amber, then rose. At the limit it tells you exactly when you're back.
+The 5-hour session is usually the limit you hit first. Each session is a bar under the week's graph, on the same time axis, with where the running one is heading and a note when it will run out before the reset. Past your warning level (75% by default) it turns amber, then rose. At the limit it tells you exactly when you're back.
 
 SEE WHERE THE TOKENS GO
-The Activity tab shows tokens and cost by hour and by model, every past week, and your recent 5-hour sessions, so a run of near-misses stands out.
+The Activity tab opens with what your usage is worth at API rates, then tokens and cost by hour and by model, and every past week with the sessions that hit the limit.
 
 FOLLOW LONG AGENT RUNS
-The Runs tab follows your Claude Code and Codex agent runs: the ones waiting on you first, then the live ones, then what finished today. Each run opens its own page with what it's working on, how far along it is and when it should be done, including when it will pause at your 5-hour limit. When an agent stops to ask you something, the question comes first.
+The Runs tab follows your Claude Code and Codex agent runs: the ones waiting on you first, then the live ones, then what finished today. Each run opens its own page with what it's working on, how far along it is and when it should be done, including when it will pause at your 5-hour limit. When an agent stops to ask you something, the question comes first. With iCloud sync on, the runs on your other Macs appear in the same list.
 
 NO SURPRISES
 Headroom flags when a single model's weekly cap is the one to watch, notices early resets, and highlights reset credits before they lapse.
