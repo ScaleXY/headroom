@@ -328,11 +328,13 @@ def read_live(client, listing, version=None, create=False, screenshots=True, pul
     app = apps[0]['id']
     versions = client.all('/v1/apps/%s/appStoreVersions?%s' % (app, urllib.parse.urlencode({'filter[platform]': config['platform']})))
     if pull:
-        selected = next((v for v in versions if state(v) in LIVE), None)
+        # The version being prepared when there is one: it holds the newest text, which the repo
+        # should start from rather than overwrite with what's live.
+        selected = next((v for v in versions if state(v) in EDITABLE), None) or next((v for v in versions if state(v) in LIVE), None)
         if not selected:
-            raise APIError('No live version to pull for ' + config['platform'])
+            raise APIError('No editable or live version to pull for ' + config['platform'])
         if version and selected['attributes']['versionString'] != version:
-            raise ConfigError('--version does not match the live version')
+            raise ConfigError('--version does not match the version being pulled')
         editable, creating = False, False
     else:
         selected, editable, creating = pick_version(versions, version, create)
@@ -340,7 +342,7 @@ def read_live(client, listing, version=None, create=False, screenshots=True, pul
             selected = max(versions, default=None,
                            key=lambda v: (state(v) in LIVE, v['attributes'].get('createdDate') or ''))
     infos = client.all('/v1/apps/%s/appInfos' % app)
-    info = next((i for i in infos if state(i) in (LIVE if pull else EDITABLE)), None)
+    info = next((i for i in infos if state(i) in EDITABLE), None)
     info_editable = bool(info and state(info) in EDITABLE)
     if not info:
         info = next((i for i in infos if state(i) in LIVE), None)
@@ -573,7 +575,7 @@ def render(changes, notes):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--mode', choices=('diff', 'apply', 'pull'), default='diff', help='compare (default), update, or export live text')
+    parser.add_argument('--mode', choices=('diff', 'apply', 'pull'), default='diff', help='compare (default), update, or export the text (of the version being prepared, else the live one)')
     parser.add_argument('--platform', choices=('ios', 'macos'), default='ios', help='platform directory (default: ios)')
     parser.add_argument('--listing', default=str(ROOT / 'appstore/listing'), help='listing root (default: appstore/listing)')
     parser.add_argument('--version', help='version string to edit or create')

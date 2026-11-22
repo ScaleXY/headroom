@@ -467,6 +467,33 @@ class ListingTests(unittest.TestCase):
             self.assertEqual(json.loads((out / 'ios/listing.json').read_text())['screenshots'], [])
         self.assertEqual({(method, path) for method, path, _ in transport.calls}, set(transport.responses))
 
+    def test_pull_prefers_the_version_being_prepared(self):
+        # The version in preparation holds the newest text; the live one is older.
+        transport = FakeTransport({
+            ('GET', '/v1/apps'): (200, {'data': [resource('apps', 'app')]}),
+            ('GET', '/v1/apps/app/appStoreVersions'): (200, {'data': [
+                resource('appStoreVersions', 'live', appVersionState='READY_FOR_DISTRIBUTION', versionString='1.0'),
+                resource('appStoreVersions', 'next', appVersionState='PREPARE_FOR_SUBMISSION', versionString='1.1')]}),
+            ('GET', '/v1/apps/app/appInfos'): (200, {'data': [
+                resource('appInfos', 'info-live', state='READY_FOR_DISTRIBUTION'),
+                resource('appInfos', 'info-next', state='PREPARE_FOR_SUBMISSION')]}),
+            ('GET', '/v1/appInfos/info-next/appInfoLocalizations'): (200, {'data': [
+                resource('appInfoLocalizations', 'il', locale='en-US', name='Next name')]}),
+            ('GET', '/v1/appStoreVersions/next/appStoreVersionLocalizations'): (200, {'data': [
+                resource('appStoreVersionLocalizations', 'loc', locale='en-US', description='Prepared copy')]}),
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'listing' / 'ios'
+            source.mkdir(parents=True)
+            (source / 'listing.json').write_text('{"bundleId":"example","platform":"IOS"}')
+            out = Path(directory) / 'out'
+            with mock.patch.object(a, 'Client', return_value=transport.client()), mock.patch.dict(os.environ, CREDS), \
+                    mock.patch.object(a.Token, 'get', return_value='token'), mock.patch('sys.stdout', new_callable=io.StringIO):
+                self.assertEqual(a.main(['--mode', 'pull', '--listing', str(source.parent), '--out', str(out)]), 0)
+            self.assertEqual((out / 'ios/en-US/description.txt').read_text(), 'Prepared copy\n')
+            self.assertEqual((out / 'ios/en-US/name.txt').read_text(), 'Next name\n')
+        self.assertTrue(all(method == 'GET' for method, _, _ in transport.calls))
+
     def test_diff_has_no_writes(self):
         desired,live=fixture(); desired['locales']['en-US']['fields']={'name':'Changed'}
         with mock.patch.object(a,'load_listing',return_value=desired), mock.patch.object(a,'read_live',return_value=live), mock.patch.object(a.Token,'get',return_value='token'), mock.patch.object(a,'http_transport',side_effect=AssertionError('No HTTP expected')), mock.patch.object(a,'apply',side_effect=AssertionError('No apply allowed')), mock.patch.dict(os.environ,{'ASC_KEY':'-----BEGIN PRIVATE KEY-----','ASC_KEY_ID':'id','ASC_ISSUER_ID':'issuer'}), mock.patch('sys.stdout',new_callable=io.StringIO):
