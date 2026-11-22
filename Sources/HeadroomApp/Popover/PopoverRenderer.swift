@@ -7,7 +7,8 @@ import HeadroomPresent
 enum PopoverChrome {
     static let width: CGFloat = 384
     static let pad: CGFloat = 12
-    static let radius: CGFloat = 26
+    /// A Mac menu bar panel's corner, not a phone's.
+    static let radius: CGFloat = 14
     static let headerHeight: CGFloat = 42
     static let footerHeight: CGFloat = 31
 
@@ -27,15 +28,27 @@ enum PopoverChrome {
         }
     }
 
-    /// Header row: app tile + wordmark, segmented Pace · Activity.
+    /// Header row: a slim toolbar. The mark and name at toolbar size, desktop tabs on the right
+    /// (labels with an underline under the open one), and a hairline across the window below.
     static func drawHeader(x: CGFloat, y: CGFloat, width: CGFloat, title: String = "Headroom", tabs: [String]? = ["Limits", "Activity"], selected: Int, theme: Theme, ctx: CGContext, out: RenderOutput?) {
-        let rowTop = y + 3, mid = rowTop + 14
-        HeadroomMark.draw(in: CGRect(x: x + 3, y: mid - 13, width: 26, height: 26), ctx: ctx)
-        Text(title, F.sf(16, 650), theme.ink, kern: -0.16).draw(x: x + 3 + 26 + 9, capCenter: mid, in: ctx)
-        if let tabs {
-            let seg = Segmented(items: tabs, selected: selected, font: F.sf(12, 600), padX: 12, height: 28)
-            let r = CGRect(x: x + width - 3 - seg.width, y: mid - 14, width: seg.width, height: 28)
-            seg.draw(in: r, theme: theme, ctx: ctx, out: out) { .tab($0) }
+        let mid = y + 15, rule = y + headerHeight - 9
+        HeadroomMark.draw(in: CGRect(x: x + 4, y: mid - 9, width: 18, height: 18), ctx: ctx)
+        Text(title, F.sf(13, 650), theme.ink, kern: -0.08).draw(x: x + 4 + 18 + 7, capCenter: mid, in: ctx)
+        // Hairline under the toolbar, running to the window's edges.
+        ctx.fill(CGPath(rect: CGRect(x: x - pad, y: rule, width: width + pad * 2, height: 0.5), transform: nil), theme.separator)
+        guard let tabs else { return }
+        let font = F.sf(12.5, 600), gap: CGFloat = 16
+        let widths = tabs.map { Text($0, font, theme.ink).width }
+        var tx = x + width - 4 - (widths.reduce(0, +) + gap * CGFloat(tabs.count - 1))
+        for (i, label) in tabs.enumerated() {
+            let w = widths[i], on = i == selected
+            Text(label, font, on ? theme.ink : theme.muted).draw(x: tx, capCenter: mid, in: ctx)
+            if on {
+                // The underline sits on the hairline, like a toolbar tab strip.
+                ctx.fill(rounded(CGRect(x: tx, y: rule - 2, width: w, height: 2), 1), theme.ink)
+            }
+            out?.add(CGRect(x: tx - 8, y: y + 2, width: w + 16, height: rule - y - 2), action: .tab(i), hover: 6)
+            tx += w + gap
         }
     }
 

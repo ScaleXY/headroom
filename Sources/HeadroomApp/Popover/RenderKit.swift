@@ -135,7 +135,7 @@ enum CardChrome {
     ///     cards that belong to no provider.
     ///   - state: the Limits card's pacing state, for the top-right state glow (rule 4). Only the
     ///     Limits card passes it; every other card gets the edge light alone.
-    static func draw(_ rect: CGRect, provider: Provider?, theme: Theme, ctx: CGContext, radius: CGFloat = 20, state: PacingState? = nil) {
+    static func draw(_ rect: CGRect, provider: Provider?, theme: Theme, ctx: CGContext, radius: CGFloat = 14, state: PacingState? = nil) {
         let shape = rounded(rect, radius)
         if theme.isDark {
             ctx.fillVertical(shape, theme.cardTop, theme.cardBottom)
@@ -178,7 +178,7 @@ enum CardChrome {
 
     /// The 1.5 pt top-edge light: clear at 3% of the width, the tone at 90% (dark) or 75% (light)
     /// at 20%, clear again from 72%. Clipped to the card's corners.
-    static func drawEdgeLight(_ rect: CGRect, provider: Provider, theme: Theme, ctx: CGContext, radius: CGFloat = 20) {
+    static func drawEdgeLight(_ rect: CGRect, provider: Provider, theme: Theme, ctx: CGContext, radius: CGFloat = 14) {
         let tone = theme.providerTone(provider)
         let peak = tone.fade(CGFloat(ProviderTone.edgeLight(dark: theme.isDark)))
         ctx.withState {
