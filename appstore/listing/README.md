@@ -6,21 +6,20 @@ future Mac App Store release; the Mac currently ships as a notarized DMG.
 
 Each platform has `listing.json` and one directory per App Store locale. Only locale directories
 present here are managed. Other locales and screenshot display types are reported and left alone.
-The iOS `en-US` directory initially contains only `.gitkeep`; it manages no text until copy is added.
 
 Each UTF-8 `.txt` file holds one value. Trailing whitespace (including the final newline) is
 removed. An absent file leaves that field alone; a present empty file requests an empty value.
 Apple may reject empty required fields. A new localization needs Apple's required fields supplied.
 
-| File | API field | Maximum characters |
+| File | API field | Limit |
 | --- | --- | --- |
-| `name.txt` | App info `name` | 30 |
-| `subtitle.txt` | App info `subtitle` | 30 |
+| `name.txt` | App info `name` | 30 characters |
+| `subtitle.txt` | App info `subtitle` | 30 characters |
 | `privacy_url.txt` | App info `privacyPolicyUrl` | — |
-| `promotional_text.txt` | Version `promotionalText` | 170 |
-| `description.txt` | Version `description` | 4000 |
-| `keywords.txt` | Version `keywords` | 100 |
-| `whats_new.txt` | Version `whatsNew` | 4000 |
+| `promotional_text.txt` | Version `promotionalText` | 170 characters |
+| `description.txt` | Version `description` | 4000 characters |
+| `keywords.txt` | Version `keywords` | 100 UTF-8 bytes |
+| `whats_new.txt` | Version `whatsNew` | 4000 characters |
 | `support_url.txt` | Version `supportUrl` | — |
 | `marketing_url.txt` | Version `marketingUrl` | — |
 
@@ -28,8 +27,9 @@ Apple may reject empty required fields. A new localization needs Apple's require
 `copyright` on the version. `screenshots` is an optional list of objects with `displayType` and
 `folder` (relative to the repository root). An optional `locale` restricts a mapping to that
 locale; without it, the mapping applies to every managed locale directory. Duplicate mappings
-for a locale and display type fail validation. PNGs upload in filename order, with at most 10 per
-set. A configured folder must contain at least one PNG. Example:
+for a locale and display type fail validation. Screenshots upload in file-name order. Use
+zero-padded names like `01-…` and `02-…` to preserve that order. A configured folder must contain
+between one and ten PNGs.
 
 ```json
 {
@@ -74,7 +74,9 @@ as do invalid files. API/apply failures exit 1. A successful diff exits 0 even w
 The editable states are `PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `REJECTED`,
 `METADATA_REJECTED`, and `INVALID_BINARY`. Both `appVersionState` and the deprecated
 `appStoreState` are read. App info also supports its newer `state` attribute. An explicit version must match the editable version, or a new version
-may be created with `--create-version --version`. Without an editable version, only promotional
+may be created with `--create-version --version`. A new version starts with a copy of the previous
+version's localizations and screenshots. Diff compares against that copy, and apply reads what
+App Store Connect copied and updates only the differences. Without an editable version, only promotional
 text on an existing live localization can change. App info changes require an editable app info.
 Blocked changes make apply fail before any writes. The first version skips `whats_new` with a
 report. Uploads are checked until processing completes (up to five minutes per new asset).

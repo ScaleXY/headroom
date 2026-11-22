@@ -42,11 +42,8 @@ concurrency:
 jobs:
   listing:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
-      ASC_KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
-      ASC_KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
       MODE: ${{ inputs.mode }}
       PLATFORM: ${{ inputs.platform }}
       VERSION: ${{ inputs.version }}
@@ -54,6 +51,10 @@ jobs:
       SCREENSHOTS: ${{ inputs.screenshots }}
     steps:
       - name: Check App Store Connect secrets
+        env:
+          ASC_KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
+          ASC_KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           missing=""
           [ -n "$ASC_KEY" ] || missing="$missing APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY"
@@ -65,6 +66,10 @@ jobs:
           fi
       - uses: actions/checkout@v5
       - name: Synchronize listing
+        env:
+          ASC_KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
+          ASC_KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           args=(--mode "$MODE" --platform "$PLATFORM" --summary "$GITHUB_STEP_SUMMARY")
           [ -z "$VERSION" ] || args+=(--version "$VERSION")

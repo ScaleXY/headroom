@@ -15,6 +15,7 @@ import collections
 import difflib
 import email.utils
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,7 @@ LIMITS = {'name': 30, 'subtitle': 30, 'promotional_text': 170, 'keywords': 100,
 EDITABLE = {'PREPARE_FOR_SUBMISSION', 'DEVELOPER_REJECTED', 'REJECTED',
             'METADATA_REJECTED', 'INVALID_BINARY'}
 LIVE = {'READY_FOR_SALE', 'READY_FOR_DISTRIBUTION'}
+MATCHABLE_SCREENSHOTS = {'COMPLETE', 'UPLOAD_COMPLETE'}
 
 
 class ConfigError(Exception):
@@ -111,8 +113,11 @@ class Token:
             path = Path(directory) / 'key.p8'
             path.write_bytes(self.key)
             path.chmod(0o600)
-            result = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(path)],
-                                    input=payload.encode(), capture_output=True)
+            try:
+                result = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(path)],
+                                        input=payload.encode(), capture_output=True)
+            except FileNotFoundError as exc:
+                raise ConfigError('openssl is required to sign an ES256 JWT but was not found on PATH') from exc
         if result.returncode:
             raise ConfigError('ASC_KEY could not sign an ES256 JWT with openssl')
         try:
@@ -122,23 +127,29 @@ class Token:
         return self.value
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def http_transport(method, url, headers, data):
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return response.status, dict(response.headers), response.read()
+        response = OPENER.open(request, timeout=60)
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read()
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        # URLs for upload operations contain signatures, so never include them in errors.
-        raise APIError('HTTP connection failed (' + type(exc).__name__ + ')') from exc
+        response = exc
+    with response:
+        return response.code, dict(response.headers), response.read()
 
 
 class Client:
     def __init__(self, base, token, transport=http_transport, sleep=time.sleep):
         self.base, self.token, self.transport, self.sleep = base.rstrip('/'), token, transport, sleep
 
-    def request(self, method, path, body=None, headers=None, raw=False):
+    def request(self, method, path, body=None, headers=None, raw=False, *, expect=None):
         url = path if raw else urllib.parse.urljoin(self.base + '/', path)
         if not raw and urllib.parse.urlsplit(url)[:2] != urllib.parse.urlsplit(self.base)[:2]:
             raise APIError('Refusing API pagination to a different origin')
@@ -147,7 +158,11 @@ class Client:
             hdr = dict(headers or {})
             if not raw:
                 hdr.update({'Authorization': 'Bearer ' + self.token.get(), 'Content-Type': 'application/json'})
-            status, response_headers, response_body = self.transport(method, url, hdr, data)
+            try:
+                status, response_headers, response_body = self.transport(method, url, hdr, data)
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                # Upload URLs can contain signatures.
+                raise APIError('HTTP connection failed (' + type(exc).__name__ + ')') from exc
             if status == 429 or 500 <= status <= 599:
                 if attempt < 4:
                     retry = next((v for k, v in response_headers.items() if k.lower() == 'retry-after'), None)
@@ -162,21 +177,28 @@ class Client:
                                 pass
                     self.sleep(delay)
                     continue
-            if status >= 400:
+            if not 200 <= status < 300:
                 try:
                     details = '; '.join(e.get('detail', e.get('title', 'API error'))
                                         for e in json.loads(response_body).get('errors', []))
-                except (ValueError, TypeError):
+                except (AttributeError, ValueError, TypeError):
                     details = ''
-                if status in (401, 403):
-                    raise APIError('Key lacks access (HTTP %s): editing a listing needs an App Manager or Admin key. %s' % (status, details))
+                if status == 401:
+                    raise APIError(('Token was rejected (HTTP 401). Check the key ID, issuer ID, key itself, and clock. ' +
+                                    details).rstrip())
+                if status == 403:
+                    raise APIError(('HTTP 403: the key lacks access: editing a listing needs an App Manager or Admin key. ' +
+                                    details).rstrip())
                 raise APIError('HTTP %s: %s' % (status, details or 'request failed'))
-            if raw or not response_body:
+            if raw:
                 return {}
             try:
-                return json.loads(response_body)
+                response = json.loads(response_body) if response_body else {}
             except ValueError as exc:
-                raise APIError('API returned invalid JSON') from exc
+                raise APIError('%s %s: API returned invalid JSON' % (method, path)) from exc
+            if expect and not (isinstance(response, dict) and isinstance(response.get('data'), expect)):
+                raise APIError('%s %s: API response is missing or has invalid data' % (method, path))
+            return response
 
     def all(self, path):
         result, seen = [], set()
@@ -184,7 +206,7 @@ class Client:
             if path in seen:
                 raise APIError('API pagination repeated a page')
             seen.add(path)
-            page = self.request('GET', path)
+            page = self.request('GET', path, expect=list)
             result.extend(page['data'])
             path = page.get('links', {}).get('next')
         return result
@@ -215,13 +237,14 @@ def load_listing(directory, platform, screenshots=True, root=ROOT):
             if path.exists():
                 try:
                     value = path.read_text(encoding='utf-8').rstrip()
-                    if field in LIMITS and len(value) > LIMITS[field]:
-                        problems.append('%s: %s characters exceeds limit %s' % (path, len(value), LIMITS[field]))
+                    size, unit = (len(value.encode('utf-8')), 'bytes') if field == 'keywords' else (len(value), 'characters')
+                    if field in LIMITS and size > LIMITS[field]:
+                        problems.append('%s: %s %s exceeds limit %s' % (path, size, unit, LIMITS[field]))
                     fields[field] = value
                 except (OSError, UnicodeError) as exc:
                     problems.append('%s: %s' % (path, exc))
         locales[folder.name] = {'fields': fields, 'screenshots': {}}
-    mappings = config.get('screenshots', [])
+    mappings = config.get('screenshots', []) if screenshots else []
     if not isinstance(mappings, list):
         problems.append('listing.json: screenshots must be a list')
         mappings = []
@@ -232,8 +255,6 @@ def load_listing(directory, platform, screenshots=True, root=ROOT):
         locale = item.get('locale')
         if locale is not None and locale not in locales:
             problems.append('listing.json: screenshot locale has no folder: ' + str(locale))
-            continue
-        if not screenshots:
             continue
         folder = root / item['folder']
         if Path(item['folder']).is_absolute() or not folder.resolve().is_relative_to(root.resolve()):
@@ -289,6 +310,16 @@ def pick_version(versions, version=None, create=False):
     return live, False, False
 
 
+def read_version_locales(client, version, locales, screenshots):
+    for localized in client.all('/v1/appStoreVersions/%s/appStoreVersionLocalizations' % version['id']):
+        entry = locales.setdefault(localized['attributes']['locale'], {'screenshots': {}})
+        entry['version'] = localized
+        if screenshots:
+            for resource in client.all('/v1/appStoreVersionLocalizations/%s/appScreenshotSets' % localized['id']):
+                images = client.all('/v1/appScreenshotSets/%s/appScreenshots' % resource['id'])
+                entry['screenshots'][resource['attributes']['screenshotDisplayType']] = dict(resource, images=images)
+
+
 def read_live(client, listing, version=None, create=False, screenshots=True, pull=False):
     config = listing['config']
     apps = client.all('/v1/apps?' + urllib.parse.urlencode({'filter[bundleId]': config['bundleId']}))
@@ -305,25 +336,18 @@ def read_live(client, listing, version=None, create=False, screenshots=True, pul
         editable, creating = False, False
     else:
         selected, editable, creating = pick_version(versions, version, create)
+        if creating:
+            selected = max(versions, default=None,
+                           key=lambda v: (state(v) in LIVE, v['attributes'].get('createdDate') or ''))
     infos = client.all('/v1/apps/%s/appInfos' % app)
     info = next((i for i in infos if state(i) in (LIVE if pull else EDITABLE)), None)
     info_editable = bool(info and state(info) in EDITABLE)
     if not info:
         info = next((i for i in infos if state(i) in LIVE), None)
     info_locales = client.all('/v1/appInfos/%s/appInfoLocalizations' % info['id']) if info else []
-    version_locales = client.all('/v1/appStoreVersions/%s/appStoreVersionLocalizations' % selected['id']) if selected else []
-    locales = {}
-    for resource, group in [(r, 'info') for r in info_locales] + [(r, 'version') for r in version_locales]:
-        entry = locales.setdefault(resource['attributes']['locale'], {'screenshots': {}})
-        entry[group] = resource
-    if screenshots:
-        for entry in locales.values():
-            if 'version' not in entry:
-                continue
-            for resource in client.all('/v1/appStoreVersionLocalizations/%s/appScreenshotSets' % entry['version']['id']):
-                resource = dict(resource)
-                resource['images'] = client.all('/v1/appScreenshotSets/%s/appScreenshots' % resource['id'])
-                entry['screenshots'][resource['attributes']['screenshotDisplayType']] = resource
+    locales = {r['attributes']['locale']: {'info': r, 'screenshots': {}} for r in info_locales}
+    if selected:
+        read_version_locales(client, selected, locales, screenshots and not pull)
     return {'app': app, 'version': selected, 'info': info, 'editable': editable,
             'info_editable': info_editable, 'creating': creating,
             'first': not any(state(v) in LIVE or state(v) == 'REPLACED_WITH_NEW_VERSION' for v in versions),
@@ -333,7 +357,9 @@ def read_live(client, listing, version=None, create=False, screenshots=True, pul
 def screenshot_plan(wanted, existing):
     available = collections.defaultdict(list)
     for image in existing:
-        available[(image['attributes'].get('sourceFileChecksum') or '').lower()].append(image)
+        attrs = image['attributes']
+        if (attrs.get('assetDeliveryState') or {}).get('state') in MATCHABLE_SCREENSHOTS:
+            available[(attrs.get('sourceFileChecksum') or '').lower()].append(image)
     order, uploads = [], []
     for asset in wanted:
         matches = available[asset['checksum']]
@@ -342,7 +368,8 @@ def screenshot_plan(wanted, existing):
         else:
             order.append({'upload': len(uploads)})
             uploads.append(asset)
-    deletes = [image['id'] for images in available.values() for image in images]
+    kept = {item['id'] for item in order if 'id' in item}
+    deletes = [image['id'] for image in existing if image['id'] not in kept]
     reorder = [x.get('id') for x in order] != [x['id'] for x in existing]
     return {'uploads': uploads, 'deletes': deletes, 'order': order, 'reorder': reorder}
 
@@ -350,6 +377,9 @@ def screenshot_plan(wanted, existing):
 def plan(listing, live):
     """Pure comparison; blocked changes remain visible and make apply fail."""
     changes, notes = [], []
+    if live['creating'] and live['version']:
+        notes.append('The new version starts with a copy of the localizations and screenshots from version %s.' %
+                     live['version']['attributes']['versionString'])
     for locale in sorted(set(live['locales']) - set(listing['locales'])):
         notes.append(locale + ': unmanaged locale; left alone')
     for locale, current in live['locales'].items():
@@ -406,31 +436,43 @@ def upload(client, set_id, asset):
         raise APIError('Screenshot changed during run: ' + asset['name'])
     resource = client.request('POST', '/v1/appScreenshots', body('appScreenshots',
                               {'fileName': asset['name'], 'fileSize': len(content)},
-                              parent=('appScreenshotSet', 'appScreenshotSets', set_id)))['data']
-    for operation in resource['attributes']['uploadOperations']:
-        start, length = operation['offset'], operation['length']
-        client.request(operation['method'], operation['url'], content[start:start + length],
-                       {h['name']: h['value'] for h in operation['requestHeaders']}, raw=True)
-    client.request('PATCH', '/v1/appScreenshots/' + resource['id'], body('appScreenshots',
-                   {'uploaded': True, 'sourceFileChecksum': asset['checksum']}, resource['id']))
-    for attempt in range(60):
-        delivered = client.request('GET', '/v1/appScreenshots/' + resource['id'])['data']['attributes'].get('assetDeliveryState', {})
-        if delivered.get('state') == 'COMPLETE':
-            return resource['id']
-        if delivered.get('state') == 'FAILED':
-            raise APIError('Screenshot processing failed: ' + json.dumps(delivered.get('errors', [])))
-        client.sleep(5)
-    raise APIError('Screenshot processing timed out: ' + asset['name'])
+                              parent=('appScreenshotSet', 'appScreenshotSets', set_id)), expect=dict)['data']
+    path = '/v1/appScreenshots/' + resource['id']
+    try:
+        for operation in resource['attributes']['uploadOperations']:
+            start, length = operation['offset'], operation['length']
+            client.request(operation['method'], operation['url'], content[start:start + length],
+                           {h['name']: h['value'] for h in operation['requestHeaders']}, raw=True)
+        client.request('PATCH', path, body('appScreenshots',
+                       {'uploaded': True, 'sourceFileChecksum': asset['checksum']}, resource['id']))
+        for _ in range(60):
+            attrs = client.request('GET', path, expect=dict)['data']['attributes']
+            delivered = attrs.get('assetDeliveryState') or {}
+            if delivered.get('state') == 'COMPLETE':
+                return resource['id']
+            if delivered.get('state') == 'FAILED':
+                raise APIError('Screenshot processing failed: ' + json.dumps(delivered.get('errors', [])))
+            client.sleep(5)
+        raise APIError('Screenshot processing timed out: ' + asset['name'])
+    except APIError as exc:
+        try:
+            client.request('DELETE', path)
+        except APIError as cleanup:
+            raise APIError('%s. Could not delete screenshot %s: %s' % (exc, resource['id'], cleanup)) from cleanup
+        raise
 
 
-def apply(client, listing, live, changes, version=None):
+def apply(client, listing, live, changes, version=None, screenshots=True):
     if any(change['blocked'] for change in changes):
         raise APIError('Apply blocked: some changes need a new version or editable app info; no writes made')
     if live['creating']:
         live['version'] = client.request('POST', '/v1/appStoreVersions', body('appStoreVersions',
             {'platform': listing['config']['platform'], 'versionString': version},
-            parent=('app', 'apps', live['app'])))['data']
+            parent=('app', 'apps', live['app'])), expect=dict)['data']
         live['creating'] = False
+        live['locales'] = {locale: {'info': entry['info'], 'screenshots': {}}
+                           for locale, entry in live['locales'].items() if 'info' in entry}
+        read_version_locales(client, live['version'], live['locales'], screenshots)
         if any(c['group'] == 'info' for c in changes) and not live['info_editable']:
             # Creating a version may produce a new editable app info; never patch the live one.
             infos = client.all('/v1/apps/%s/appInfos' % live['app'])
@@ -442,7 +484,7 @@ def apply(client, listing, live, changes, version=None):
                 entry.pop('info', None)
             for localized in client.all('/v1/appInfos/%s/appInfoLocalizations' % info['id']):
                 live['locales'].setdefault(localized['attributes']['locale'], {'screenshots': {}})['info'] = localized
-            changes, _ = plan(listing, live)
+        changes, _ = plan(listing, live)
     groups = collections.defaultdict(dict)
     for change in changes:
         if change['group'] != 'screenshots':
@@ -460,7 +502,7 @@ def apply(client, listing, live, changes, version=None):
             client.request('PATCH', '/v1/' + kind + '/' + resource['id'], body(kind, attributes, resource['id']))
         else:
             entry[group] = client.request('POST', '/v1/' + kind, body(kind, dict(attributes, locale=locale),
-                         parent=(relationship, parent_kind, live[group]['id'])))['data']
+                         parent=(relationship, parent_kind, live[group]['id'])), expect=dict)['data']
     for change in changes:
         if change['group'] != 'screenshots':
             continue
@@ -468,20 +510,25 @@ def apply(client, listing, live, changes, version=None):
         if 'version' not in entry:
             entry['version'] = client.request('POST', '/v1/appStoreVersionLocalizations',
                 body('appStoreVersionLocalizations', {'locale': change['locale']},
-                     parent=('appStoreVersion', 'appStoreVersions', live['version']['id'])))['data']
+                     parent=('appStoreVersion', 'appStoreVersions', live['version']['id'])), expect=dict)['data']
         resource = entry['screenshots'].get(change['display'])
         if not resource:
             resource = client.request('POST', '/v1/appScreenshotSets', body('appScreenshotSets',
                 {'screenshotDisplayType': change['display']}, parent=('appStoreVersionLocalization',
-                 'appStoreVersionLocalizations', entry['version']['id'])))['data']
+                 'appStoreVersionLocalizations', entry['version']['id'])), expect=dict)['data']
         comparison = change['plan']
         # Remove obsolete assets first: a full set cannot reserve an eleventh screenshot.
         for resource_id in comparison['deletes']:
             client.request('DELETE', '/v1/appScreenshots/' + resource_id)
         uploaded = [upload(client, resource['id'], asset) for asset in comparison['uploads']]
         order = [item['id'] if 'id' in item else uploaded[item['upload']] for item in comparison['order']]
-        client.request('PATCH', '/v1/appScreenshotSets/' + resource['id'] + '/relationships/appScreenshots',
+        set_path = '/v1/appScreenshotSets/' + resource['id']
+        client.request('PATCH', set_path + '/relationships/appScreenshots',
                        {'data': [{'type': 'appScreenshots', 'id': x} for x in order]})
+        actual = [image['id'] for image in client.all(set_path + '/appScreenshots')]
+        if actual != order:
+            raise APIError('Screenshot order differs for set %s: expected %s, got %s' % (resource['id'], order, actual))
+    return changes
 
 
 def pull(listing, live, out, platform):
@@ -542,36 +589,38 @@ def main(argv=None):
             raise ConfigError('--create-version requires --version')
         if args.mode == 'pull' and not args.out:
             raise ConfigError('--out is required for pull')
-        listing = load_listing(args.listing, args.platform, not args.no_screenshots)
+        screenshots = not args.no_screenshots
+        listing = load_listing(args.listing, args.platform, screenshots and args.mode != 'pull')
         missing = [k for k in ('ASC_KEY', 'ASC_KEY_ID', 'ASC_ISSUER_ID') if not os.environ.get(k)]
         if missing:
             raise ConfigError('Missing credentials: ' + ', '.join(missing))
         token = Token(os.environ['ASC_KEY'], os.environ['ASC_KEY_ID'], os.environ['ASC_ISSUER_ID'])
         token.get()
         client = Client(args.api_base, token)
-        live = read_live(client, listing, args.version, args.create_version, not args.no_screenshots, args.mode == 'pull')
+        live = read_live(client, listing, args.version, args.create_version, screenshots, args.mode == 'pull')
         if args.mode == 'pull':
             pull(listing, live, args.out, args.platform)
             result = 'Exported live text to ' + args.out
         else:
             changes, notes = plan(listing, live)
-            result = render(changes, notes)
-            if live['creating']:
-                result = 'Create version ' + args.version + '\n' + result
+            prefix = 'Create version ' + args.version + '\n' if live['creating'] else ''
+            result = prefix + render(changes, notes)
             if args.mode == 'apply':
-                apply(client, listing, live, changes, args.version)
-                result += '\nApplied %s change(s).' % len(changes)
+                applied = apply(client, listing, live, changes, args.version, screenshots)
+                result = prefix + render(applied, notes) + '\nApplied %s change(s).' % len(applied)
     except ConfigError as exc:
         result += '\nError: ' + str(exc)
         code = 2
     except (APIError, OSError, ValueError) as exc:
         result += '\nError: ' + str(exc)
         code = 1
-    print(result)
-    if args.summary:
-        # Four-space indentation keeps arbitrary listing text from becoming Markdown markup.
-        Path(args.summary).write_text('App Store listing: ' + args.mode + '\n\n' +
-                                     '\n'.join('    ' + line for line in result.splitlines()) + '\n', encoding='utf-8')
+    try:
+        print(result)
+    finally:
+        if args.summary:
+            # Four-space indentation keeps arbitrary listing text from becoming Markdown markup.
+            Path(args.summary).write_text('App Store listing: ' + args.mode + '\n\n' +
+                                         '\n'.join('    ' + line for line in result.splitlines()) + '\n', encoding='utf-8')
     return code
 
 
