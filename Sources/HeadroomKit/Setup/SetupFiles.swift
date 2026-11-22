@@ -44,8 +44,9 @@ enum SetupFiles {
 
     /// `~/x` and `$HOME/x` against `userHome`; anything else as given.
     static func expand(_ path: String, userHome: URL) -> URL {
-        if path == "~" { return userHome }
+        if path == "~" || path == "$HOME" { return userHome }
         if path.hasPrefix("~/") { return userHome.appendingPathComponent(String(path.dropFirst(2))) }
+        if path.hasPrefix("$HOME/") { return userHome.appendingPathComponent(String(path.dropFirst(6))) }
         return URL(fileURLWithPath: path, relativeTo: userHome).standardizedFileURL
     }
 }

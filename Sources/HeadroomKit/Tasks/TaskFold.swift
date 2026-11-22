@@ -219,6 +219,8 @@ struct RunBuilder {
         var markAt: Date
         var attemptKeys: [String] = []
         var retries = 0
+        /// A `start` reopened it and counted the retry: the agent that picks it up is that retry.
+        var restarted = false
         var startedAt: Date?
         var lastActivity: Date
         /// The orchestrator's tokens spent while it was doing this task itself.
@@ -349,7 +351,7 @@ struct RunBuilder {
             touch(spec.id, at: e.at, work: false)
         case .start(let t):
             guard ensure(t, at: e.at, declared: true) else { return }
-            if case .terminal = tasks[t]!.mark { tasks[t]!.retries += 1 }
+            if case .terminal = tasks[t]!.mark { tasks[t]!.retries += 1; tasks[t]!.restarted = true }
             // Back on it: nothing replaces it any more.
             tasks[t]!.replacedBy = nil
             setMark(t, .started, at: e.at)
@@ -679,9 +681,11 @@ struct RunBuilder {
         let prior = tasks[task]?.attemptKeys.compactMap { attempts[$0]?.attempt } ?? []
         let afterEnd = !prior.isEmpty && prior.allSatisfy { a in a.endedAt.map { $0 <= at } ?? (at.timeIntervalSince(a.lastActivityAt) > abandonAfter) }
         tasks[task]?.attemptKeys.append(key)
+        let restarted = tasks[task]?.restarted ?? false
+        tasks[task]?.restarted = false
         let reopened = reopen(task, at: at)
         if tasks[task] != nil {
-            if afterEnd || reopened { tasks[task]!.retries += 1 }
+            if (afterEnd && !restarted) || reopened { tasks[task]!.retries += 1 }
             tasks[task]!.startedAt = tasks[task]!.startedAt ?? at
         }
         activity(onAttempt: key, at: at)
@@ -733,7 +737,8 @@ struct RunBuilder {
         var given: Int64 = 0
         var shares = [Int64](repeating: 0, count: owners.count)
         for i in owners.indices {
-            shares[i] = total > 0 ? Int64((Double(pool) * weights[i] / total).rounded(.down)) : (i == 0 ? pool : 0)
+            // Efforts are any positive number: a share that isn't a count (the weights overflowed) is none.
+            shares[i] = total > 0 ? Int64(exactly: (Double(pool) * weights[i] / total).rounded(.down)).map { max(0, min($0, pool)) } ?? 0 : (i == 0 ? pool : 0)
             given += shares[i]
         }
         shares[0] += pool - given
@@ -1220,9 +1225,10 @@ struct RunBuilder {
         if !state.isTerminal {
             if let tpu, tpu > 0 {
                 let left = d.nodes.filter { $0.leaf && $0.counted && !$0.state.isTerminal }.reduce(0.0) { $0 + tpu * $1.effort * (1 - $1.progress.estimate) }
-                tokensToFinish = Int64(left.rounded())
+                // No figure when a declared effort puts it past what a count holds.
+                tokensToFinish = Int64(exactly: left.rounded())
             } else if progress.estimate >= 0.1, root.tokens > 0 {
-                tokensToFinish = Int64((Double(root.tokens) * (1 - progress.estimate) / progress.estimate).rounded())
+                tokensToFinish = Int64(exactly: (Double(root.tokens) * (1 - progress.estimate) / progress.estimate).rounded())
             }
         }
 

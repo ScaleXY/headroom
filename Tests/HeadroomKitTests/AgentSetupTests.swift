@@ -153,4 +153,50 @@ import Testing
         o["a"] = nil
         #expect(o.members?.map(\.key) == ["b"])
     }
+
+    /// A binary under a folder with an apostrophe is written as `'…'\''…'`: reinstalling must
+    /// still find it (it used to add another copy each time, and uninstall left them all).
+    @Test func aBinaryPathWithAnApostropheIsStillOurs() throws {
+        let binary = "/Volumes/Bob's Disk/bin/headroom"
+        let command = HookInstaller.hookCommand(binary: binary, enforce: true, harness: .claudeCode)
+        #expect(command == #"'/Volumes/Bob'\''s Disk/bin/headroom' task hook --enforce"#)
+        #expect(HookInstaller.isOurs(command))
+        #expect(!HookInstaller.isOurs(#"'/Volumes/Bob'\''s Disk/bin/other' task hook"#))
+        #expect(!HookInstaller.isOurs(#"'/a/headroom'\''x' task hook"#))
+        let f = Folder()
+        let url = f.url.appendingPathComponent("settings.json")
+        try f.write("settings.json", #"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}}"#)
+        try HookInstaller.install(.claudeCode, enforce: true, binary: binary, settings: url)
+        let once = f.text("settings.json")
+        #expect(try HookInstaller.install(.claudeCode, enforce: true, binary: binary, settings: url).contains("already installed"))
+        #expect(f.text("settings.json") == once)
+        #expect(HookInstaller.status(.claudeCode, settings: url, store: nil).installed)
+        try HookInstaller.uninstall(.claudeCode, settings: url)
+        #expect(f.text("settings.json")?.contains("headroom") == false && f.text("settings.json")?.contains("say done") == true)
+    }
+
+    /// A begin marker left behind with no end (a block cut short by hand) must not make the next
+    /// update or removal take everything from there to the real block's end with it.
+    @Test func aStrayBeginMarkerNeverCostsTheTextAfterIt() throws {
+        let f = Folder()
+        let mine = AgentInstructions.begin + "\n\n# My rules\n\nKeep these.\n"
+        try f.write(".claude/CLAUDE.md", mine)
+        _ = try AgentInstructions.add(.claudeCode, userHome: f.url, environment: [:])
+        #expect(f.text(".claude/CLAUDE.md") == mine + "\n" + AgentInstructions.snippet + "\n")
+        // An older block is brought up to date in place.
+        try f.write(".claude/CLAUDE.md", mine + "\n" + AgentInstructions.begin + "\nold words\n" + AgentInstructions.end + "\n")
+        _ = try AgentInstructions.add(.claudeCode, userHome: f.url, environment: [:])
+        #expect(f.text(".claude/CLAUDE.md") == mine + "\n" + AgentInstructions.snippet + "\n")
+        _ = try AgentInstructions.remove(.claudeCode, userHome: f.url, environment: [:])
+        #expect(f.text(".claude/CLAUDE.md") == mine)
+    }
+
+    @Test func configFoldersExpandTildeAndHOME() {
+        let home = URL(fileURLWithPath: "/Users/me")
+        #expect(SetupFiles.expand("~", userHome: home).path == "/Users/me")
+        #expect(SetupFiles.expand("~/alt", userHome: home).path == "/Users/me/alt")
+        #expect(SetupFiles.expand("$HOME/alt", userHome: home).path == "/Users/me/alt")
+        #expect(SetupFiles.expand("$HOME", userHome: home).path == "/Users/me")
+        #expect(SetupFiles.expand("/cfg/claude", userHome: home).path == "/cfg/claude")
+    }
 }

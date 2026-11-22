@@ -107,6 +107,8 @@ import HeadroomKit
         #expect(!sketchy.contains("\u{1B}[") && !sketchy.contains("#["))
         let (_, one) = run(["statusline", "--format", "plain", "--provider", "codex"], url: url)
         #expect(one == "Codex 🟨🟨🟨⬛⬛ 59%")
+        // `--flag=VALUE` reads the same as `--flag VALUE`.
+        #expect(run(["statusline", "--format=plain", "--provider=codex"], url: url).1 == one)
     }
 
     @Test func noSnapshotExitsThree() {

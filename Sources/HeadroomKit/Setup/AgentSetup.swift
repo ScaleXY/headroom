@@ -176,7 +176,9 @@ public enum HookInstaller {
     public static func isOurs(_ command: String) -> Bool {
         let c = command.trimmingCharacters(in: .whitespaces)
         var bin: Substring, rest: Substring
-        if let q = c.first, q == "'" || q == "\"", let close = c.dropFirst().firstIndex(of: q) {
+        if let q = c.first, q == "'" || q == "\"", var close = c.dropFirst().firstIndex(of: q) {
+            // `hookCommand` writes a quote inside the path as `'\''`: the path goes on after it.
+            while q == "'", c[close...].hasPrefix("'\\''"), let next = c[c.index(close, offsetBy: 4)...].firstIndex(of: q) { close = next }
             bin = c[c.index(after: c.startIndex)..<close]
             rest = c[c.index(after: close)...]
         } else {
@@ -342,7 +344,10 @@ public enum AgentInstructions {
 
     /// The block from its begin marker to the end of its end marker.
     static func block(in text: String) -> Range<String.Index>? {
-        guard let b = text.range(of: begin), let e = text.range(of: end, range: b.upperBound..<text.endIndex) else { return nil }
+        guard let first = text.range(of: begin), let e = text.range(of: end, range: first.upperBound..<text.endIndex) else { return nil }
+        // The begin nearest that end: an earlier one left without its end isn't part of the block,
+        // and what follows it is the person's own text.
+        let b = text.range(of: begin, options: .backwards, range: first.lowerBound..<e.lowerBound) ?? first
         return b.lowerBound..<e.upperBound
     }
 

@@ -5,7 +5,11 @@ import HeadroomKit
 /// outage is active. Wakes on snapshot changes (kqueue) or at the reset time. Zero CPU while waiting.
 enum WaitCommand {
     static func run(_ args: [String], style: Style, output: (String) -> Void, url: URL, now: () -> Date) -> Int32 {
-        func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
+        // `--flag VALUE` or `--flag=VALUE`, as `wait --run` and the task commands take them.
+        func value(_ flag: String) -> String? {
+            if let inline = args.first(where: { $0.hasPrefix(flag + "=") }) { return String(inline.dropFirst(flag.count + 1)) }
+            return args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        }
         let which = value("--provider") ?? "any"
         let json = args.contains("--json")
         guard let timeout = parseDuration(value("--timeout") ?? "6h") else {
@@ -63,10 +67,13 @@ enum WaitCommand {
         return "\(what) · \(TimeFormat.shortClock(until, calendar: .current, locale: .current)) (\(TimeFormat.compact(until.timeIntervalSince(now))))"
     }
 
-    /// "90s", "45m", "6h", "2d", or plain seconds.
+    /// "90s", "45m", "6h", "2d", or plain seconds. Nil for `inf` and `nan` (`Double` reads both);
+    /// capped at about 30 years, which the kqueue timeouts can hold.
     static func parseDuration(_ s: String) -> TimeInterval? {
         let units: [Character: Double] = ["s": 1, "m": 60, "h": 3600, "d": 86400]
-        if let last = s.last, let mult = units[last], let v = Double(s.dropLast()) { return v * mult }
-        return Double(s)
+        var d = Double(s)
+        if let last = s.last, let mult = units[last], let v = Double(s.dropLast()) { d = v * mult }
+        guard let d, d.isFinite else { return nil }
+        return min(d, 1e9)
     }
 }

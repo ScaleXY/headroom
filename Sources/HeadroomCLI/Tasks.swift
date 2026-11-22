@@ -106,7 +106,7 @@ enum TaskOps {
             throw Failure("bad --step '\(s)': use K/N, K steps done of N, e.g. --step 2/4")
         }
         let n = parts.count == 2 ? parts[1] : nil
-        if let n, k > n { throw Failure("bad --step '\(s)': K can't be more than N. Pass the new total if the task grew, e.g. --step \(k)/\(k + 1)") }
+        if let n, k > n { throw Failure("bad --step '\(s)': K can't be more than N. Pass the new total if the task grew, e.g. --step \(k)/\(k == .max ? k : k + 1)") }
         return (k, n)
     }
 
@@ -328,9 +328,9 @@ enum TaskOps {
                 unknown(obj, taskKeys, "task \(id)")
                 var opts: [String: String] = [:]
                 for k in ["title", "effort", "importance", "steps"] { if let v = string(obj[k]) { opts[k] = v } }
-                var spec = try spec(id, opts, plan: true)
-                spec.title = spec.title ?? TaskPath.last(id)
-                out.append(spec)
+                // No title stays none: the fold names a new task after its id, and a task planned
+                // before (named again only to nest work under it) keeps the title it has.
+                out.append(try spec(id, opts, plan: true))
                 try walk(obj["children"] ?? obj["tasks"], under: id)
             }
         }
@@ -406,7 +406,7 @@ enum TaskCommand {
            headroom task progress ID [--step K/N] [--fraction F] [--note TEXT]
            headroom task wait ID --for input|dependency|limit [--note TEXT] [--option ANSWER …]
            headroom task done ID [ID …] [--evidence TEXT] [--force]
-           headroom task fail ID [ID …] --reason TEXT [--force]
+           headroom task fail ID [ID …] --reason TEXT [--instead NEW] [--force]
            headroom task skip|cancel ID [ID …] [--reason TEXT] [--force]
            headroom task status [--titles]
            headroom task guide
@@ -561,7 +561,7 @@ enum TaskCommand {
         }
         ctx.output("Declared \(p.tasks.count) task\(p.tasks.count == 1 ? "" : "s") in run \(run). Put a task's tag in the description of the agent you spawn for it:")
         for t in p.tasks {
-            ctx.output(String(repeating: "  ", count: TaskPath.depth(t.id) + 1) + TaskRef(run: run, path: t.id).tag + "  " + (t.title ?? t.id))
+            ctx.output(String(repeating: "  ", count: TaskPath.depth(t.id) + 1) + TaskRef(run: run, path: t.id).tag + "  " + (t.title ?? TaskPath.last(t.id)))
         }
         for w in warnings { ctx.output("note: " + w) }
         if !a.has("--quiet"), let r = TaskFold.fold(before + written, now: now).first, let room = TaskEcho.room(r, ctx: ctx) { ctx.output(room) }
@@ -692,6 +692,11 @@ enum TasksCommand {
             return HeadroomCLI.Exit.usage.rawValue
         }
         let only = a["--run"].flatMap(TaskRunID.sanitize)
+        // Not every run instead, when the id names none (an empty one is no id, as everywhere).
+        if let asked = a["--run"], !asked.isEmpty, only == nil {
+            ctx.error("headroom tasks: bad --run '\(TaskText.display(asked, limit: 60))': use letters, digits, '.', '_' and '-'")
+            return HeadroomCLI.Exit.usage.rawValue
+        }
         let store = TaskStore(home: ctx.home)
         while true {
             let now = ctx.now()

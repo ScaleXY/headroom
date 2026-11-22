@@ -44,7 +44,7 @@ public enum HeadroomCLI {
             return statusline(Array(args.dropFirst()), style: Style(colors: !noColor), output: output, url: snapshotURL, now: now(), tasks: ctx)
         case "wait":
             let rest = Array(args.dropFirst())
-            if rest.contains("--run") {
+            if rest.contains(where: { $0 == "--run" || $0.hasPrefix("--run=") }) {
                 return RunWaitCommand.run(rest, ctx: ctx)
             }
             return WaitCommand.run(rest, style: style, output: output, url: snapshotURL, now: now)
@@ -105,7 +105,11 @@ public enum HeadroomCLI {
     // MARK: statusline
 
     static func statusline(_ args: [String], style: Style, output: (String) -> Void, url: URL, now: Date, tasks: TaskContext) -> Int32 {
-        func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
+        // `--flag VALUE` or `--flag=VALUE`, as `wait` takes them.
+        func value(_ flag: String) -> String? {
+            if let inline = args.first(where: { $0.hasPrefix(flag + "=") }) { return String(inline.dropFirst(flag.count + 1)) }
+            return args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        }
         let format = StatusLine.Format(rawValue: value("--format") ?? "claude") ?? .claude
         let only = value("--provider").flatMap(Provider.init(rawValue:))
         guard let s = SnapshotFile.read(from: url) else {

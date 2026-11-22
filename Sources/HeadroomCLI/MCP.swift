@@ -21,9 +21,11 @@ struct MCPServer {
     /// The reply to one line, or nil for notifications and blank lines.
     func handle(_ line: String) -> String? {
         guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        guard let msg = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else {
+        guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) else {
             return encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "parse error"]])
         }
+        // JSON, but not a request object (a batch, say, which MCP doesn't have).
+        guard let msg = json as? [String: Any] else { return error(nil, -32600, "invalid request") }
         let id = msg["id"]
         guard let method = msg["method"] as? String else {
             return id == nil ? nil : error(id, -32600, "invalid request")
@@ -142,7 +144,7 @@ struct MCPServer {
                 let written = TaskOps.withMeta(events, run: run, title: TaskText.title(args["title"] as? String), project: TaskText.title(args["project"] as? String),
                                                ctx: ctx, existing: before, place: true)
                 try ctx.append(written)
-                var lines = ["Declared \(p.tasks.count) tasks in run \(run):"] + p.tasks.map { "\(TaskRef(run: run, path: $0.id).tag)  \($0.title ?? $0.id)" }
+                var lines = ["Declared \(p.tasks.count) tasks in run \(run):"] + p.tasks.map { "\(TaskRef(run: run, path: $0.id).tag)  \($0.title ?? TaskPath.last($0.id))" }
                 lines += p.warnings.map { "note: " + $0 }
                 if let r = TaskFold.fold(before + written, now: now).first, let room = TaskEcho.room(r, ctx: ctx) { lines.append(room) }
                 return (lines.joined(separator: "\n"), false)
@@ -155,7 +157,9 @@ struct MCPServer {
             guard let action = args["action"] as? String, TaskOps.actions.contains(action) else {
                 return ("update_task needs action: one of \(TaskOps.actions.joined(separator: ", "))", true)
             }
-            let ids = (args["ids"] as? [Any])?.compactMap(TaskOps.string) ?? (args["id"].flatMap(TaskOps.string).map { [$0] } ?? [])
+            // An empty `ids` beside an `id` (callers fill unused lists with []) means the `id`.
+            let listed = (args["ids"] as? [Any])?.compactMap(TaskOps.string) ?? []
+            let ids = listed.isEmpty ? (args["id"].flatMap(TaskOps.string).map { [$0] } ?? []) : listed
             guard !ids.isEmpty else { return ("update_task needs id (or ids)", true) }
             let allowed = TaskOps.options[action] ?? []
             // The same per-action options as the command line: nothing silently dropped.
