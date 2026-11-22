@@ -65,7 +65,8 @@ public struct MergedAccount: Identifiable, Sendable {
         guard let reading else { return input }
         input.samples = history.windows.mapValues(\.samples)
         if let session = history.session { input.samples[LimitWindow.sessionID()] = session.samples }
-        let since = now.addingTimeInterval(-(Presenter.sessionTrailHours + 5) * 3600)
+        // The session trail's last day, and every session in the week for the Limits lane.
+        let since = min(now.addingTimeInterval(-(Presenter.sessionTrailHours + 5) * 3600), reading.headline?.windowStart ?? .distantFuture)
         input.pastSessions = history.finishedSessions(since: since, now: now)
         input.smoothedState = projected ? nil : smoothedState
         if let early = history.earlyResetAt, let start = reading.headline?.windowStart, early >= start { input.earlyResetAt = early }

@@ -66,7 +66,8 @@ public enum Demo {
         let sess = [0.0, 0.12, 0.30, 0.46, 0.58, 0.66, 0.70].enumerated().map { UsageSample(time: at(sStart, hours: Double($0.offset) * 0.6), used: $0.element) }
             + [UsageSample(time: now, used: 0.84)]
         return PaceInput(provider: .claude, reading: reading, samples: ["weekly": s, "session": sess],
-                         pastSessions: pastSessions([(-20.5, 0.62, 2.6), (-12.5, 1, 1.4)], now: now), weekCostMicros: 412_000_000)
+                         pastSessions: sessionsAcrossTheWeek(now: now, fromHoursAgo: 148, untilHoursAgo: 24, peaks: [0.34, 0.21, 0.52, 0.18, 0.41, 0.27, 0.78])
+                            + pastSessions([(-20.5, 0.62, 2.6), (-12.5, 1, 1.4)], now: now), weekCostMicros: 412_000_000)
     }
 
     public static func codexMockup(now: Date) -> PaceInput {
@@ -83,7 +84,8 @@ public enum Demo {
                                    plan: PlanCatalog.codex(planType: "pro"), windows: [session, weekly],
                                    resetCredits: credits, resetCreditsAvailable: 3)
         return PaceInput(provider: .codex, reading: reading, samples: ["weekly": samples(cum, start: start), "session": sessionSamples(used: 0.10, elapsedH: 0.8, now: now)],
-                         pastSessions: pastSessions([(-17, 0.38, 3.1), (-9.5, 0.71, 0.9)], now: now), weekCostMicros: 186_000_000)
+                         pastSessions: sessionsAcrossTheWeek(now: now, fromHoursAgo: 69, untilHoursAgo: 24, peaks: [0.44, 0.63, 0.29, 0.85])
+                            + pastSessions([(-17, 0.38, 3.1), (-9.5, 0.71, 0.9)], now: now), weekCostMicros: 186_000_000)
     }
 
     /// Ten-minute samples for a session `elapsedH` in, with a quiet patch and a busier stretch, ending at `used`.
@@ -186,7 +188,92 @@ public enum Demo {
         let fableHead = LimitWindow(id: LimitWindow.modelID("Fable"), kind: .modelWeekly, label: "Fable", used: 0.35, resetsAt: at(now, hours: 60), duration: 168 * 3600, isActive: true)
         let teamSession = LimitWindow(id: "session", kind: .session, used: 0.5, resetsAt: at(now, hours: 2))
         out.append(PaceScenario(name: "team-scoped", inputs: [PaceInput(provider: .claude, reading: LimitReading(provider: .claude, fetchedAt: now, source: .api, plan: PlanCatalog.claude(subscriptionType: "team", rateLimitTier: "default_claude_max_5x"), windows: [teamSession, fableHead]))], note: "No weekly_all: scoped cap headline"))
+        out += limitsScenarios(now: now)
         return out
+    }
+}
+
+// MARK: - Limits chart fixtures (the lane under the week)
+
+extension Demo {
+    /// The Limits card's one chart in each state the lane can be in (`--render limits`).
+    public static func limitsScenarios(now: Date) -> [PaceScenario] {
+        [
+            PaceScenario(name: "limits-session", inputs: [limitsSession(0.42, now: now)], note: "Session lane, a quiet session running"),
+            PaceScenario(name: "limits-amber", inputs: [limitsSession(0.84, now: now)], note: "Session lane, the running session past 75%"),
+            PaceScenario(name: "limits-runsout", inputs: [limitsRunsOut(now: now)], note: "Session lane, runs out before its reset"),
+            PaceScenario(name: "limits-blocked", inputs: [limitsSession(1, now: now)], note: "Session lane, limit hit and paused"),
+            PaceScenario(name: "limits-idle", inputs: [limitsIdle(now: now)], note: "Session lane, no session running"),
+            PaceScenario(name: "limits-daily", inputs: [limitsDaily(now: now)], note: "No 5-hour window: each day's use"),
+        ]
+    }
+
+    /// Finished sessions without samples (only their peaks are kept after a day), two a day at 9 AM and
+    /// 2:30 PM local, from `fromHoursAgo` to `untilHoursAgo`. Peaks cycle through `peaks`; a peak of 1 hits the limit.
+    public static func sessionsAcrossTheWeek(now: Date, fromHoursAgo: Double, untilHoursAgo: Double, peaks: [Double]) -> [SessionRecord] {
+        let cal = Display.calendar
+        var out: [SessionRecord] = []
+        var day = cal.startOfDay(for: at(now, hours: -fromHoursAgo - 24))
+        while day < now {
+            for hour in [9.0, 14.5] {
+                let start = day.addingTimeInterval(hour * 3600), reset = start.addingTimeInterval(5 * 3600)
+                // One overlapping the window's start is kept: the lane clips it.
+                guard reset > at(now, hours: -fromHoursAgo), reset <= at(now, hours: -untilHoursAgo) else { continue }
+                let peak = peaks[out.count % peaks.count]
+                out.append(SessionRecord(start: start, resetsAt: reset, peakUsed: peak, hitLimitAt: peak >= 1 ? start.addingTimeInterval(3.6 * 3600) : nil))
+            }
+            guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return out
+    }
+
+    /// A Max 5× week 90 hours in with a session `used` into its five hours and the week's sessions behind it.
+    public static func limitsSession(_ used: Double, now: Date) -> PaceInput {
+        var input = state(.claude, used: 0.46, elapsedH: 90, session: used, now: now)
+        input.pastSessions = sessionsAcrossTheWeek(now: now, fromHoursAgo: 90, untilHoursAgo: 20, peaks: [0.48, 0.81, 0.36, 1, 0.62, 0.28, 0.71])
+            + input.pastSessions
+        return input
+    }
+
+    /// A session 2.8 hours in at 60%, 22 points of it in the last half hour: at that rate it runs out about an hour before its reset.
+    public static func limitsRunsOut(now: Date) -> PaceInput {
+        var input = limitsSession(0.6, now: now)
+        let start = at(now, hours: -2.8)
+        input.samples["session"] = [UsageSample(time: start, used: 0)]
+            + (1...14).map { UsageSample(time: at(start, hours: Double($0) * 2.3 / 14), used: 0.38 * Double($0) / 14) }
+            + [UsageSample(time: at(now, hours: -0.25), used: 0.49), UsageSample(time: now, used: 0.6)]
+        return input
+    }
+
+    /// Between sessions: the last one reset half an hour ago and nothing has been used since.
+    public static func limitsIdle(now: Date) -> PaceInput {
+        var input = limitsSession(0.3, now: now)
+        let idle = LimitWindow(id: "session", kind: .session, used: 0, resetsAt: at(now, hours: -0.5), duration: 5 * 3600)
+        let others = input.reading?.windows.filter { $0.kind != .session } ?? []
+        input.reading?.windows = [idle] + others
+        input.samples["session"] = []
+        // The session that just reset, from the morning.
+        input.pastSessions.append(SessionRecord(start: at(now, hours: -5.5), resetsAt: at(now, hours: -0.5), peakUsed: 0.57, hitLimitAt: nil))
+        return input
+    }
+
+    /// A Max 20× week with no 5-hour window, 118 hours in: the lane shows each day's share of the week.
+    public static func limitsDaily(now: Date) -> PaceInput {
+        let elapsed = 118
+        let start = at(now, hours: -Double(elapsed))
+        let startHour = Display.calendar.component(.hour, from: start)
+        // A heavy Monday, a light weekend, and an early start this morning.
+        let cum = series(total: 0.53, nowH: elapsed, startHour: startHour, seed: 11) { h in
+            let t = at(start, hours: Double(h))
+            let day = Display.calendar.component(.weekday, from: t), hour = Display.calendar.component(.hour, from: t)
+            if day == 3 { return hour >= 7 ? 22 : 1 }
+            return day == 2 ? 1.6 : day == 1 || day == 7 ? 0.35 : 1
+        }
+        let weekly = LimitWindow(id: "weekly", kind: .weekly, used: 0.53, resetsAt: at(start, hours: 168), duration: 168 * 3600)
+        let reading = LimitReading(provider: .claude, fetchedAt: at(now, hours: -1.0 / 60), source: .api,
+                                   plan: PlanCatalog.claude(subscriptionType: "max", rateLimitTier: "default_claude_max_20x"), windows: [weekly])
+        return PaceInput(provider: .claude, reading: reading, samples: ["weekly": samples(cum, start: start)], weekCostMicros: 268_000_000)
     }
 }
 

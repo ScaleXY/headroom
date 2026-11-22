@@ -34,16 +34,8 @@ enum PaceCardRenderer {
             y += h
         }
 
-        // The detailed 5-hour panel takes the banner's place once it warns.
-        if let s = m.sessionModule, s.onTop {
-            y += 12
-            let h = sessionModuleHeight(s, width: w)
-            if let ctx { drawSessionModule(s, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx) }
-            y += h
-        }
-
-        // What's spending the 5-hour window sits with the session when the session is on top.
-        let spendOnTop = m.session != nil || m.sessionModule?.onTop == true
+        // What's spending the 5-hour window sits with the banner while the session warns.
+        let spendOnTop = m.session != nil
         func spending() {
             guard let sp = m.spending else { return }
             y += 12
@@ -81,30 +73,42 @@ enum PaceCardRenderer {
             }
         }
 
-        // 5. Glide path.
+        // 5. Keys, then one chart: the week glide with the lane under it on the same time axis.
         if let g = m.glide, m.showsGlide {
-            y += m.showsMeter ? 10 : 18
-            let h = GlideChartRenderer.height(width: w)
-            if let ctx { GlideChartRenderer.draw(g, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx) }
+            if m.keys.isEmpty {
+                y += m.showsMeter ? 10 : 18
+            } else {
+                y += m.showsMeter ? 14 : 18
+                let h = keysHeight(m.keys, width: w)
+                if let ctx { drawKeys(m.keys, x: x0, y: y, w: w, theme: theme, ctx: ctx) }
+                y += h + 8
+            }
+            let h = GlideChartRenderer.height(width: w, lane: m.lane != nil)
+            if let ctx { GlideChartRenderer.draw(g, lane: m.lane, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx, out: out) }
             y += h
         }
 
-        // 6. Verdict.
-        if let v = m.verdict {
+        // 6. Caption: only when the live session runs out before its reset, or is paused.
+        if let c = m.chartCaption {
+            y += 8
+            y += drawCaption(c, x: x0, y: y, w: w, theme: theme, ctx: ctx)
+        }
+
+        // 7. Stat strip.
+        if !m.stats.isEmpty {
             y += 10
-            y += drawVerdict(v, x: x0, y: y, w: w, theme: theme, ctx: ctx)
+            if let ctx { drawStats(m.stats, rect: CGRect(x: x0, y: y, width: w, height: statsHeight), theme: theme, ctx: ctx) }
+            y += statsHeight
         }
 
-        // The 5-hour panel while it's quiet: after the week's verdict.
-        if let s = m.sessionModule, !s.onTop {
+        // 8. Verdict.
+        if let v = m.verdict {
             y += 12
-            let h = sessionModuleHeight(s, width: w)
-            if let ctx { drawSessionModule(s, rect: CGRect(x: x0, y: y, width: w, height: h), theme: theme, ctx: ctx) }
-            y += h
+            y += drawVerdict(v, x: x0, y: y, w: w, theme: theme, ctx: ctx)
         }
         if !spendOnTop { spending() }
 
-        // 7. Callout (at most one).
+        // 9. Callout (at most one).
         if let c = m.callout, m.fault == nil {
             y += 10
             let h = calloutHeight(c, width: w)
@@ -112,7 +116,7 @@ enum PaceCardRenderer {
             y += h
         }
 
-        // 8. Detail rows.
+        // 10. Detail rows.
         if !m.rows.isEmpty {
             y += 12
             let h = CGFloat(m.rows.count) * rowHeight
@@ -468,6 +472,137 @@ enum PaceCardRenderer {
         }
         Text(h.renewCaption, F.sf(12, 500, tabular: true), theme.muted)
             .draw(x: right, baseline: baseline(top: labelTop, font: F.sf(12, 500), lineHeight: 15), align: .right, in: ctx)
+    }
+
+    // MARK: Keys, caption and stat strip
+
+    private static let keyFont = F.sf(10.5, 600)
+    private static let keyLine: CGFloat = 13, keyRowGap: CGFloat = 4, keyGap: CGFloat = 12, keyMarkGap: CGFloat = 6
+
+    private static func keyMarkWidth(_ mark: LimitsKey.Mark) -> CGFloat {
+        switch mark {
+        case .line: 14
+        case .bar: 5
+        case .dash: 12
+        case .cross: 6
+        }
+    }
+
+    /// Each key's x offset and width, laid out in lines across `width`.
+    private static func keyLines(_ keys: [LimitsKey], width: CGFloat) -> [[(key: LimitsKey, index: Int, x: CGFloat, width: CGFloat)]] {
+        var lines: [[(LimitsKey, Int, CGFloat, CGFloat)]] = [[]]
+        var x: CGFloat = 0
+        for (i, k) in keys.enumerated() {
+            let kw = keyMarkWidth(k.mark) + keyMarkGap + Text(k.text, keyFont, .black, kern: 0.21).width
+            if x > 0, x + kw > width { lines.append([]); x = 0 }
+            lines[lines.count - 1].append((k, i, x, kw))
+            x += kw + keyGap
+        }
+        return lines
+    }
+
+    static func keysHeight(_ keys: [LimitsKey], width: CGFloat) -> CGFloat {
+        let n = CGFloat(keyLines(keys, width: width).count)
+        return n * keyLine + max(0, n - 1) * keyRowGap
+    }
+
+    static func keyColor(_ tone: LimitsKey.Tone, theme: Theme) -> NSColor {
+        switch tone {
+        case .state(let s): theme.pacing(s).text
+        case .neutral: GlideChartRenderer.laneBarStrong(theme)
+        case .faint: theme.chartLabel
+        case .amber: theme.amber
+        case .rose: theme.rose
+        }
+    }
+
+    /// "━ This week  ▮ 5-hour sessions  ┄ warns at 75%  × limit hit": the first at full strength, the rest dimmed.
+    static func drawKeys(_ keys: [LimitsKey], x: CGFloat, y: CGFloat, w: CGFloat, theme: Theme, ctx: CGContext) {
+        for (row, line) in keyLines(keys, width: w).enumerated() {
+            let mid = y + CGFloat(row) * (keyLine + keyRowGap) + keyLine / 2
+            for (key, index, kx, _) in line {
+                ctx.withState {
+                    if index > 0 { ctx.setAlpha(0.62) }
+                    let c = keyColor(key.tone, theme: theme)
+                    let mx = x + kx
+                    switch key.mark {
+                    case .line:
+                        ctx.fill(rounded(CGRect(x: mx, y: mid - 1, width: 14, height: 2), 1), c)
+                    case .bar:
+                        ctx.fill(GlideChartRenderer.topRounded(mx, mid - 4.5, 5, 9, 1.5), c)
+                    case .dash:
+                        let p = CGMutablePath(); p.move(to: CGPoint(x: mx, y: mid)); p.addLine(to: CGPoint(x: mx + 12, y: mid))
+                        ctx.stroke(p, c, width: 1, dash: [2.5, 1.8])
+                    case .cross:
+                        let p = CGMutablePath()
+                        p.move(to: CGPoint(x: mx + 0.6, y: mid - 2.4)); p.addLine(to: CGPoint(x: mx + 5.4, y: mid + 2.4))
+                        p.move(to: CGPoint(x: mx + 5.4, y: mid - 2.4)); p.addLine(to: CGPoint(x: mx + 0.6, y: mid + 2.4))
+                        ctx.stroke(p, c, width: 1.6, cap: .round)
+                    }
+                    Text(key.text, keyFont, theme.ink, kern: 0.21).draw(x: mx + keyMarkWidth(key.mark) + keyMarkGap, capCenter: mid, in: ctx)
+                }
+            }
+        }
+    }
+
+    private static let captionFont = F.sf(12.5), captionLine: CGFloat = 17.25
+
+    /// A rose dot and one sentence; returns its height (measures when `ctx` is nil).
+    static func drawCaption(_ text: String, x: CGFloat, y: CGFloat, w: CGFloat, theme: Theme, ctx: CGContext?) -> CGFloat {
+        let block = TextBlock(text, captionFont, theme.ink.fade(0.9), width: w - 13, lineHeight: captionLine)
+        if let ctx {
+            let dot = CGMutablePath()
+            dot.addEllipse(in: CGRect(x: x, y: y + captionLine / 2 - 3, width: 6, height: 6))
+            ctx.fill(dot, theme.rose)
+            block.draw(x: x + 13, top: y, in: ctx)
+        }
+        return block.height
+    }
+
+    static let statsHeight: CGFloat = 9 + 10 + 4 + 19 + 1 + 12 + 8
+
+    static func statColor(_ tone: StatCell.Tone, theme: Theme) -> NSColor {
+        switch tone {
+        case .plain: theme.ink
+        case .state(let s): theme.pacing(s).text
+        case .amber: theme.amber
+        case .rose: theme.rose
+        }
+    }
+
+    /// Four cells on a recessed panel: a tiny label, a 17 pt value and a 10 pt sub-line.
+    static func drawStats(_ cells: [StatCell], rect: CGRect, theme: Theme, ctx: CGContext) {
+        let shape = rounded(rect, 12)
+        ctx.fill(shape, theme.isDark ? black(0.18) : black(0.03))
+        if theme.isDark { ctx.innerStroke(shape, white(0.06), width: 0.5) }
+        let n = CGFloat(max(cells.count, 1)), gap: CGFloat = 4
+        let cellW = (rect.width - 8 - gap * (n - 1)) / n
+        let labelFont = F.sf(8, 650), valueFont = F.sf(17, 700, tabular: true), subFont = F.sf(10, 500)
+        for (i, cell) in cells.enumerated() {
+            let cx = rect.minX + 4 + CGFloat(i) * (cellW + gap)
+            if i > 0 {
+                ctx.fill(CGPath(rect: CGRect(x: cx - gap / 2 - 0.25, y: rect.minY + 9, width: 0.5, height: rect.height - 17), transform: nil),
+                         rgb(0x808080, 0.22))
+            }
+            let tx = cx + 6, tw = cellW - 12
+            var top = rect.minY + 9
+            Text(fitted(cell.label.uppercased(), font: labelFont, kern: 0.88, width: tw), labelFont, theme.ink.fade(0.5), kern: 0.88)
+                .draw(x: tx, baseline: baseline(top: top, font: labelFont, lineHeight: 10), in: ctx)
+            top += 10 + 4
+            Text(fitted(cell.value, font: valueFont, kern: -0.34, width: tw), valueFont, statColor(cell.tone, theme: theme), kern: -0.34)
+                .draw(x: tx, baseline: baseline(top: top, font: valueFont, lineHeight: 19), in: ctx)
+            top += 19 + 1
+            Text(fitted(cell.sub, font: subFont, kern: 0, width: tw), subFont, theme.ink.fade(0.5))
+                .draw(x: tx, baseline: baseline(top: top, font: subFont, lineHeight: 12), in: ctx)
+        }
+    }
+
+    /// `s`, cut with an ellipsis to fit `width`.
+    private static func fitted(_ s: String, font: NSFont, kern: CGFloat, width: CGFloat) -> String {
+        guard Text(s, font, .black, kern: kern).width > width else { return s }
+        var t = s
+        while t.count > 1, Text(t + "…", font, .black, kern: kern).width > width { t.removeLast() }
+        return t.trimmingCharacters(in: .whitespaces) + "…"
     }
 
     // MARK: Verdict
