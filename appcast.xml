@@ -5,6 +5,15 @@
     <link>https://github.com/ScaleXY/headroom</link>
     <description>Headroom releases</description>
     <item>
+      <title>Headroom 0.7.0</title>
+      <pubDate>Sun, 22 Nov 2026 07:49:31 GMT</pubDate>
+      <sparkle:version>24</sparkle:version>
+      <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/ScaleXY/headroom/releases/tag/v0.7.0</sparkle:fullReleaseNotesLink>
+      <enclosure url="https://github.com/ScaleXY/headroom/releases/download/v0.7.0/Headroom-0.7.0.zip" type="application/octet-stream" sparkle:edSignature="YR4Kv9qss+sG1p8/nPRK8EhsL9CT+Z1cPTihqPYl5cRARnagA5znGVxIae/51OZQ4rjPSU5UeQfDWwMSTTcMCQ==" length="8115557" />
+    </item>
+    <item>
       <title>Headroom 0.6.0</title>
       <pubDate>Sun, 22 Nov 2026 06:46:27 GMT</pubDate>
       <sparkle:version>22</sparkle:version>
@@ -102,15 +111,6 @@
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://github.com/ScaleXY/headroom/releases/tag/v0.1.8</sparkle:fullReleaseNotesLink>
       <enclosure url="https://github.com/ScaleXY/headroom/releases/download/v0.1.8/Headroom-0.1.8.zip" type="application/octet-stream" sparkle:edSignature="PhwV1G2A6YcRYaeP8tHJsi/yTcSG1IZmIbL3qNeUSZTLiNb9jVdyK9DcT8VSAK57twuJTxKGtYrir7BBZSmoAA==" length="3961032" />
-    </item>
-    <item>
-      <title>Headroom 0.1.7</title>
-      <pubDate>Thu, 29 Oct 2026 10:35:42 GMT</pubDate>
-      <sparkle:version>8</sparkle:version>
-      <sparkle:shortVersionString>0.1.7</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <sparkle:fullReleaseNotesLink>https://github.com/ScaleXY/headroom/releases/tag/v0.1.7</sparkle:fullReleaseNotesLink>
-      <enclosure url="https://github.com/ScaleXY/headroom/releases/download/v0.1.7/Headroom-0.1.7.zip" type="application/octet-stream" sparkle:edSignature="uzOOq3sRIuVtMPoeBFpGWpL+7XOrzHTVhb3H0OTVHg3TYtuXgRaDaD/M0ZuClhhPeiWuAF1F1pziC1iQxhoRDw==" length="3961047" />
     </item>
   </channel>
 </rss>
