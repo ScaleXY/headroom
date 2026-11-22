@@ -786,8 +786,9 @@ enum CodexTranscript {
                 if s.key(k, is: "total_token_usage") { total = CodexLogParser.codexTotals(s, v) }
                 return true
             }
-            // input − cached + output: the tokens that weren't cache reads.
-            return total.map { (at, .tokens(max(0, $0[0] - $0[1]) + $0[2], limited: limited)) } ?? (limited ? (at, .limit) : nil)
+            // input − cached + output: the tokens that weren't cache reads. Wrapping: the totals are
+            // whatever the line holds, and a damaged number must not trap.
+            return total.map { (at, .tokens(max(0, $0[0] &- $0[1]) &+ $0[2], limited: limited)) } ?? (limited ? (at, .limit) : nil)
         case .item:
             var text: String?
             s.forEachMember(payload.start) { k, v in

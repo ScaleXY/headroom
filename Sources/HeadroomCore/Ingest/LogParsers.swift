@@ -7,6 +7,12 @@ enum Bytes {
         memmem(p, n, needle.utf8Start, needle.utf8CodeUnitCount) != nil
     }
 
+    /// A token count within what the ledger stores (`ContributionTable.Packed` keeps UInt32), so
+    /// the sums over a line's counts can't overflow on a damaged number.
+    @inline(__always) static func count(_ v: Int64?) -> Int64 {
+        min(max(v ?? 0, 0), Int64(UInt32.max))
+    }
+
     static func lastPathComponent(_ path: String) -> String? {
         let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
         guard let slash = trimmed.lastIndex(of: "/") else { return trimmed.isEmpty ? nil : trimmed }
@@ -78,16 +84,16 @@ enum ClaudeLogParser {
         var e5m: Int64?, e1h: Int64?
         var speed = Speed.standard
         let ok = s.forEachMember(span.start) { k, v in
-            if s.key(k, is: "input_tokens") { input = s.int(v) ?? 0 }
-            else if s.key(k, is: "cache_creation_input_tokens") { creation = s.int(v) ?? 0 }
-            else if s.key(k, is: "cache_read_input_tokens") { read = s.int(v) ?? 0 }
-            else if s.key(k, is: "output_tokens") { output = s.int(v) ?? 0 }
+            if s.key(k, is: "input_tokens") { input = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "cache_creation_input_tokens") { creation = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "cache_read_input_tokens") { read = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "output_tokens") { output = Bytes.count(s.int(v)) }
             else if s.key(k, is: "speed") {
                 if let raw = s.rawString(v), raw.count == 4, memcmp(raw.baseAddress!, "fast", 4) == 0 { speed = .fast }
             } else if s.key(k, is: "cache_creation") {
                 s.forEachMember(v.start) { k2, v2 in
-                    if s.key(k2, is: "ephemeral_5m_input_tokens") { e5m = s.int(v2) }
-                    else if s.key(k2, is: "ephemeral_1h_input_tokens") { e1h = s.int(v2) }
+                    if s.key(k2, is: "ephemeral_5m_input_tokens") { e5m = s.int(v2).map(Bytes.count) }
+                    else if s.key(k2, is: "ephemeral_1h_input_tokens") { e1h = s.int(v2).map(Bytes.count) }
                     return true
                 }
             }
@@ -279,10 +285,10 @@ enum CodexLogParser {
     static func codexTokens(_ s: JSONScan, _ span: ByteSpan) -> TokenCounts? {
         var input: Int64 = 0, cached: Int64 = 0, write: Int64 = 0, output: Int64 = 0
         let ok = s.forEachMember(span.start) { k, v in
-            if s.key(k, is: "input_tokens") { input = s.int(v) ?? 0 }
-            else if s.key(k, is: "cached_input_tokens") { cached = s.int(v) ?? 0 }
-            else if s.key(k, is: "cache_write_input_tokens") { write = s.int(v) ?? 0 }
-            else if s.key(k, is: "output_tokens") { output = s.int(v) ?? 0 }
+            if s.key(k, is: "input_tokens") { input = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "cached_input_tokens") { cached = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "cache_write_input_tokens") { write = Bytes.count(s.int(v)) }
+            else if s.key(k, is: "output_tokens") { output = Bytes.count(s.int(v)) }
             return true
         }
         guard ok else { return nil }

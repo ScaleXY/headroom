@@ -185,10 +185,19 @@ public struct UsageBuckets: Sendable {
     /// Seven local days in 4-hour bins (42 bins), ending with the bin containing `now`.
     public static func fourHourEdges(endingAt now: Date, days: Int = 7, calendar: Calendar = .current) -> [Date] {
         let day = calendar.startOfDay(for: now)
-        let hour = calendar.component(.hour, from: now)
-        let binEnd = calendar.date(byAdding: .hour, value: (hour / 4 + 1) * 4, to: day)!
+        let last = calendar.component(.hour, from: now) / 4 + 1
         let count = days * 6
-        return (0...count).map { calendar.date(byAdding: .hour, value: ($0 - count) * 4, to: binEnd)! }
+        // Each edge is a wall-clock hour (00, 04, …) of its own local day. Adding `.hour`s counts
+        // elapsed time, which slides every edge by an hour across a DST change.
+        return (0...count).map { i in
+            let bin = last - (count - i)
+            let d = bin >= 0 ? bin / 6 : -((5 - bin) / 6)
+            let hour = (bin - d * 6) * 4
+            let start = calendar.date(byAdding: .day, value: d, to: day)!
+            if hour == 0 { return start }
+            return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: start)
+                ?? calendar.date(byAdding: .hour, value: hour, to: start)!
+        }
     }
 
     /// `count` local-day bins ending with today.

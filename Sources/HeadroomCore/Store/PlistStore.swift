@@ -20,7 +20,11 @@ public struct PlistStore<Value: Codable & Sendable>: Sendable {
 
     public func load() -> Value? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? PropertyListDecoder().decode(Value.self, from: data)
+        if let value = try? PropertyListDecoder().decode(Value.self, from: data) { return value }
+        // The caller starts fresh and its next save replaces this file: keep the one that couldn't
+        // be read beside it, so history isn't gone for good.
+        try? data.write(to: url.appendingPathExtension("undecodable"), options: [.atomic])
+        return nil
     }
 
     public func save(_ value: Value) throws {

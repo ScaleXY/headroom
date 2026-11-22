@@ -55,14 +55,16 @@ public struct ClaudeCredentialReader: ClaudeCredentialSource {
     }
 
     public func read() async throws(ProviderFailure) -> ClaudeCredentials {
-        let result: ProcessResult
+        var result: ProcessResult
         do {
             result = try await runner.run(SecurityCommand.executable, arguments: SecurityCommand.arguments,
                                           currentDirectory: nil, timeout: 10)
         } catch {
             throw ProviderFailure(.failed(reason: "Couldn't read Claude Code's Keychain item."))
         }
+        // Take the buffer out of `result`: while both hold it, zeroing `raw` zeroes a copy.
         var raw = result.stdout
+        result.stdout = Data()
         defer { raw.resetBytes(in: 0..<raw.count) }
         if result.status == SecurityCommand.itemNotFoundStatus || (result.status == 0 && raw.isEmpty) {
             throw ProviderFailure(.signedOut)
@@ -174,6 +176,8 @@ public actor ClaudeRefresher {
     public func refreshIfAllowed(popoverOpen: Bool) async -> Outcome {
         guard canRun(popoverOpen: popoverOpen) else { return .throttled }
         guard let claude = await locateClaude() else { return .cliMissing }
+        // Locating suspends: another caller may have started the run meanwhile.
+        guard canRun(popoverOpen: popoverOpen) else { return .throttled }
         lastRun = clock.now
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("headroom-usage", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

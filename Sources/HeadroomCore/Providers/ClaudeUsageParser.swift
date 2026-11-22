@@ -106,7 +106,7 @@ public enum ClaudeUsageParser {
     static func grants(_ value: Any?) -> [ResetCredit] {
         guard let cedar = value as? [String: Any], let grants = cedar["grants"] as? [[String: Any]] else { return [] }
         return grants.compactMap { g in
-            let left = Int(number(g["resets_left"]) ?? 0)
+            let left = Int(exactly: (number(g["resets_left"]) ?? 0).rounded(.towardZero)) ?? 0
             guard left > 0 else { return nil }
             return ResetCredit(
                 expiresAt: (g["ends_at"] as? String).flatMap(ISODate.parse),

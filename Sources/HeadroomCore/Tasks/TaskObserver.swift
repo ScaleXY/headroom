@@ -233,6 +233,11 @@ public actor TaskObserver {
         let isNew = state.files[path] == nil
         var file = state.files[path] ?? TranscriptFile(role: role)
         if file.inode != st.inode || file.offset > st.size {
+            // Replaced or cut short: it is read again from the start, so what it added to its
+            // owner's tokens goes first. (Codex totals are running maximums and need no undoing.)
+            if !isNew {
+                if let key = file.agent { state.attempts[key]?.tokens = 0 } else if role == .session, let s = file.session { state.sessions[s]?.tokens = 0 }
+            }
             file = TranscriptFile(role: role)
             file.inode = st.inode
         }

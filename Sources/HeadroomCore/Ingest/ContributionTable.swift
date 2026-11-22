@@ -273,8 +273,8 @@ final class MappedLedger: @unchecked Sendable {
         }
         count = (length - 4) / LedgerCodec.recordSize
         // Records must be sorted by key for binary search; the encoder writes them that way.
+        // Every property is set by now, so failing runs `deinit`, which unmaps: no munmap here.
         for i in 1..<max(count, 1) where keyHash(at: i - 1) >= keyHash(at: i) {
-            munmap(p, length)
             return nil
         }
     }

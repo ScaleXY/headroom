@@ -194,6 +194,8 @@ final class ProcessLineChannel: JSONLineChannel, @unchecked Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        // A write to a server that has exited must throw (EPIPE), not end Headroom with SIGPIPE.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             self?.ingest(data)

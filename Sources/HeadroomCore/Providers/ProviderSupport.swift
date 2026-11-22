@@ -155,19 +155,13 @@ public struct SystemProcessRunner: ProcessRunning {
             process.standardOutput = out
             process.standardError = err
             process.standardInput = FileHandle.nullDevice
-            out.fileHandleForReading.readabilityHandler = { h in
-                let d = h.availableData
-                if !d.isEmpty { job.appendOut(d) }
-            }
-            err.fileHandleForReading.readabilityHandler = { h in
-                let d = h.availableData
-                if !d.isEmpty { job.appendErr(d) }
-            }
+            out.fileHandleForReading.readabilityHandler = { h in job.drainOut(h) }
+            err.fileHandleForReading.readabilityHandler = { h in job.drainErr(h) }
             process.terminationHandler = { p in
                 out.fileHandleForReading.readabilityHandler = nil
                 err.fileHandleForReading.readabilityHandler = nil
-                job.appendOut(out.fileHandleForReading.readDataToEndOfFile())
-                job.appendErr(err.fileHandleForReading.readDataToEndOfFile())
+                job.drainOut(out.fileHandleForReading)
+                job.drainErr(err.fileHandleForReading)
                 continuation.resume(returning: job.finish(status: p.terminationStatus))
             }
             do {
@@ -198,9 +192,26 @@ private final class RunningJob: @unchecked Sendable {
     private var err = Data()
     private var timedOut = false
 
-    func appendOut(_ d: Data) { lock.lock(); out.append(d); lock.unlock() }
-    func appendErr(_ d: Data) { lock.lock(); err.append(d); lock.unlock() }
+    func drainOut(_ h: FileHandle) { lock.lock(); Self.drain(h, into: &out); lock.unlock() }
+    func drainErr(_ h: FileHandle) { lock.lock(); Self.drain(h, into: &err); lock.unlock() }
     func markTimedOut() { lock.lock(); timedOut = true; lock.unlock() }
+
+    /// Appends what is in the pipe now and never waits for more (the lock keeps this the only
+    /// reader, so a read after `poll` can't block). Reading to the end of file instead would wait
+    /// on any background job the child left holding the pipe (a daemon started from the login
+    /// shell's profile), long after the child itself has exited, perhaps for ever.
+    private static func drain(_ handle: FileHandle, into data: inout Data) {
+        let fd = handle.fileDescriptor
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while true {
+            let ready = poll(&p, 1, 0)
+            if ready < 0, errno == EINTR { continue }
+            guard ready > 0 else { break }
+            let n = read(fd, &buffer, buffer.count)
+            if n > 0 { data.append(buffer, count: n) } else if n < 0, errno == EINTR { continue } else { break }
+        }
+    }
 
     func finish(status: Int32) -> ProcessResult {
         lock.lock()

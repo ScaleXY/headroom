@@ -83,4 +83,18 @@ struct BucketsTests {
         #expect(days.count == 31)
         #expect(cal.component(.hour, from: days[0]) == 0)
     }
+
+    /// The morning the clocks go forward (02:00 → 03:00), and the week after it.
+    @Test func fourHourBinsFollowTheWallClockAcrossDST() throws {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        for (day, hour) in [(8, 4), (10, 13)] {
+            let now = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: day, hour: hour, minute: 30)))
+            let four = UsageBuckets.fourHourEdges(endingAt: now, calendar: cal)
+            #expect(four.count == 43)
+            #expect(four.last! > now && four[four.count - 2] <= now)
+            #expect(four.allSatisfy { cal.component(.hour, from: $0) % 4 == 0 && cal.component(.minute, from: $0) == 0 })
+            #expect(zip(four, four.dropFirst()).allSatisfy { $0 < $1 })
+        }
+    }
 }

@@ -152,9 +152,11 @@ struct JSONScan {
         if i < span.end, p[i] == 0x2E || p[i] == 0x65 || p[i] == 0x45 {
             // Fractional or exponent form: parse as Double.
             let s = String(decoding: UnsafeBufferPointer(start: p + span.start, count: span.count), as: UTF8.self)
-            return Double(s).map { Int64($0) }
+            // `Int64(_:)` traps on a value out of range (`1e30`); such a number is not a count.
+            return Double(s).flatMap { Int64(exactly: $0.rounded(.towardZero)) }
         }
-        return negative ? -v : v
+        // Wrapping, like the digits above: `-v` traps when a 19-digit number wrapped to `Int64.min`.
+        return negative ? 0 &- v : v
     }
 
     func double(_ span: ByteSpan) -> Double? {

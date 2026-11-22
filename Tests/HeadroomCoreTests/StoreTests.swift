@@ -87,6 +87,23 @@ struct StoreTests {
         try Data("garbage".utf8).write(to: store.url)
         #expect(store.load() == nil)
     }
+
+    @Test func aFileThatCannotBeReadIsKeptBesideTheOneThatReplacesIt() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("headroom-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let store = PlistStore<IngestState>(url: dir.appendingPathComponent("state.plist"))
+        let kept = store.url.appendingPathExtension("undecodable")
+        // A file that reads fine leaves nothing beside it.
+        try store.save(IngestState())
+        #expect(store.load() != nil)
+        #expect(!FileManager.default.fileExists(atPath: kept.path))
+        // One that doesn't is still there after the caller starts fresh and saves.
+        try Data("a newer app's state".utf8).write(to: store.url)
+        #expect(store.load() == nil)
+        try store.save(IngestState())
+        #expect(try Data(contentsOf: kept) == Data("a newer app's state".utf8))
+    }
 }
 
 @Suite struct PackedLedgerCodecTests {
