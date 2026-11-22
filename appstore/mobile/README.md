@@ -88,13 +88,13 @@ The first three screenshots also show in search results.
 | # | Screen | Eyebrow | Headline |
 | --- | --- | --- | --- |
 | 01 | Now | Claude & Codex limits | Will this week's allowance last? |
-| 02 | Codex in full | Pace, not just a percentage | Know when to use more, or ease off. |
+| 02 | Codex in full | Not just a percentage | Know when to use more, or ease off. |
 | 03 | Claude, 5-hour warning | 5-hour sessions | The limit you hit first, front and center. |
 | 04 | Burn-o-meter, Macs | Burn-o-meter | See how fast you're burning. |
 | 05 | Past weeks, sessions | History | Every week and session, remembered. |
 | 06 | Activity, 24 hours | Activity | See where the tokens go. |
 | 07 | Activity, 7 days | At API prices | What your usage is worth. |
-| 08 | iPhone: Live Activity on the Lock Screen<br>Duo: work account, on pace | Live Activity<br>Every account | Your session, right on the Lock Screen.<br>Work and personal, each on its own pace. |
+| 08 | iPhone: Live Activity on the Lock Screen<br>Duo: work account, on track | Live Activity<br>Every account | Your session, right on the Lock Screen.<br>Work and personal, each with its own limits. |
 | 09 | Macs | Every Mac | Several Macs. One answer. |
 | 10 | Now, light | Light or dark | Easy on the eyes, day or night. |
 
@@ -103,10 +103,10 @@ The first three screenshots also show in search results.
 | # | Screen | Eyebrow | Headline |
 | --- | --- | --- | --- |
 | 01 | Now, three accounts | Claude & Codex limits | Will this week's allowance last? |
-| 02 | Codex in full | Pace, not just a percentage | Know when to use more, or ease off. |
+| 02 | Codex in full | Not just a percentage | Know when to use more, or ease off. |
 | 03 | Claude, 5-hour warning | 5-hour sessions | The limit you hit first, front and center. |
 | 04 | Burn-o-meter, Macs, history | Burn-o-meter | See how fast you're burning. |
-| 05 | Work account, on pace | Every account | Work and personal, each on its own pace. |
+| 05 | Work account, on track | Every account | Work and personal, each with its own limits. |
 | 06 | Activity, 24 hours | Activity | See where the tokens go. |
 | 07 | Activity, 30 days | At API prices | What a month of usage is worth. |
 | 08 | Codex, light | Light or dark | Easy on the eyes, day or night. |
@@ -120,11 +120,11 @@ The first three screenshots also show in search results.
 | 01 | Codex: 5-hour ring and week | Your 5-hour session, on your wrist. |
 | 02 | Claude: runs out before the reset | A heads-up before it runs out. |
 | 03 | Paused at the limit, back at a set time | Know exactly when you're back. |
-| 04 | Work account, on pace | Every account, one swipe away. |
-| 05 | Codex: week and forecast | Pace for the whole week. |
+| 04 | Work account, on track | Every account, one swipe away. |
+| 05 | Codex: week and forecast | A forecast for the whole week. |
 | 06 | Claude: plenty left | Room to spare? Spend it. |
 | 07 | Very tight week | Ease off before it runs out. |
-| 08 | On pace | Right on pace. |
+| 08 | On track | Right on track. |
 | 09 | Recent sessions | Recent sessions at a glance. |
 | 10 | Last update and source Mac | Always the latest from your Mac. |
 
