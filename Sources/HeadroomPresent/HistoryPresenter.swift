@@ -8,7 +8,12 @@ public enum HistoryPresenter {
     public static let maxSessionBars = 18
 
     /// Finished weeks (up to the last seven) beside this week so far.
+    ///
+    /// `sessions` are the account's stored 5-hour sessions when it has a 5-hour limit (nil when it
+    /// doesn't): the card then says how many of the last seven days' sessions hit the limit, in a
+    /// chip beside one other (ran out, early resets, or unused on average).
     public static func pastWeeks(_ input: PaceInput, records: [WeekRecord], sessionHitsThisWindow: Int, earlyResetAt: Date?,
+                                 sessions: [SessionRecord]? = nil,
                                  now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> PastWeeksModel {
         let p = input.provider
         guard records.count >= 1, let reading = input.reading, let headline = reading.headline, headline.resetsAt != nil else {
@@ -26,15 +31,27 @@ public enum HistoryPresenter {
         let plans = records.map(\.plan) + [reading.plan?.pill]
         for i in 1..<plans.count where plans[i] != plans[i - 1] && plans[i] != nil && plans[i - 1] != nil { change = (i - 1, plans[i] ?? "") }
         let ranOut = records.filter(\.ranOut).count
-        var chips: [(color: PastWeeksModel.ChipDot, text: String)] = [(.rose, "ran out \(ranOut) of \(records.count)")]
+        let ranOutChip: (color: PastWeeksModel.ChipDot, text: String) = (.rose, "ran out \(ranOut) of \(records.count)")
         let early = records.filter(\.earlyReset).count
+        let otherChip: (color: PastWeeksModel.ChipDot, text: String)
         if early > 0 {
-            chips.append((.spark, "\(early) early reset\(early == 1 ? "" : "s")"))
+            otherChip = (.spark, "\(early) early reset\(early == 1 ? "" : "s")")
         } else {
             let unused = records.map { max(0, 1 - $0.finalUsed) }.reduce(0, +) / Double(records.count)
-            chips.append((.azure, "\(Int((unused * 100).rounded()))% unused avg"))
+            otherChip = (.azure, "\(Int((unused * 100).rounded()))% unused avg")
         }
-        return PastWeeksModel(provider: p, weeks: cols, planChange: change, chips: chips, collecting: false)
+        let hit = sessions.flatMap { sessionsHit($0, now: now) }
+        // Two chips fit beside the name: with the sessions count, the one other that matters most.
+        let chips = hit.map { [ranOut > 0 ? ranOutChip : otherChip, $0.chip] } ?? [ranOutChip, otherChip]
+        return PastWeeksModel(provider: p, weeks: cols, planChange: change, chips: chips, collecting: false, sessionsHit: hit)
+    }
+
+    /// Finished 5-hour sessions of the last seven days and how many hit the limit; nil when there
+    /// were none.
+    public static func sessionsHit(_ sessions: [SessionRecord], now: Date) -> PastWeeksModel.SessionsHit? {
+        let week = sessions.filter { !$0.inProgress && $0.start > now.addingTimeInterval(-7 * 86400) && $0.start <= now }
+        guard !week.isEmpty else { return nil }
+        return PastWeeksModel.SessionsHit(hit: week.filter(\.hitLimit).count, total: week.count)
     }
 
     /// The 5-hour sessions card from stored sessions (newest last).
