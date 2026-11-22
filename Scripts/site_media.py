@@ -30,13 +30,18 @@ RENDERS = {
     "pace-tight": "pace-tight-dark", "pace-verytight": "pace-verytight-dark",
     "session-comfortable": "session-comfortable-dark", "session-runsout": "session-runsout-dark",
     "session-amber": "session-amber-dark", "session-rose": "session-rose-dark", "session-blocked": "session-blocked-dark",
-    "sessions": "sessions-dark", "activity-all-7d": "activity-all-7d-dark", "share-card-claude": "share-card-claude",
+    "activity-all-7d": "activity-all-7d-dark", "share-card-claude": "share-card-claude",
     "settings-2": "settings-2-dark", "onboarding-3": "onboarding-3-dark",
     # Agent runs: the list in its three styles, and a run's page in the states the page walks through.
     "runs-ledger": "runs-mixed-dark", "runs-twoline": "runs-mixed-twoline-dark", "runs-fill": "runs-mixed-fill-dark",
     "runpage-question": "runpage-input-1-briefing-dark", "runpage-briefing": "runpage-mixed-4-briefing-dark",
     "runpage-lanes": "runpage-timeline-1-lanes-dark", "runpage-limit": "runpage-limit-1-briefing-dark",
     "runpage-finished": "runpage-finished-1-briefing-dark",
+}
+# Cut from a render: site name -> (render, magick geometry to keep, size it fills). The 5-hour
+# sessions tile shows the Limits chart's session lane, from the legend to the stat row.
+CROPS = {
+    "sessions": ("pace-limits-session-dark", "768x642+0+398", (768, 660)),
 }
 # Menu bar items, drawn on a transparent background.
 STATUS_ITEMS = ["default", "percent", "session", "tighter", "urgent", "runs-one", "runs-several", "runs-input", "runs-quiet"]
@@ -77,6 +82,11 @@ def main():
 
         for name, render in RENDERS.items():
             webp(raw / f"{render}.png", IMG / f"{name}.webp")
+        for name, (render, geometry, (w, h)) in CROPS.items():
+            cut = Path(tmp) / f"{name}.png"
+            run(["magick", str(raw / f"{render}.png"), "-crop", geometry, "+repage", "-filter", "Lanczos",
+                 "-resize", f"{w}x{h}^", "-gravity", "center", "-crop", f"{w}x{h}+0+0", "+repage", str(cut)])
+            webp(cut, IMG / f"{name}.webp")
         for item in STATUS_ITEMS:
             webp(raw / f"statusitem-{item}-dark.png", IMG / f"statusitem-{item}.webp", quality=90)
 

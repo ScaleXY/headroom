@@ -296,8 +296,10 @@ def previews(work):
             clip = preview_clip(device, name)
             if not clip:
                 continue
-            for d in (normal, captioned):
-                d.mkdir(parents=True, exist_ok=True)
+            if not made:
+                for d in (normal, captioned):
+                    shutil.rmtree(d, ignore_errors=True)
+                    d.mkdir(parents=True)
             src, start, length, landscape = clip
             W, H = size
             turn = "transpose=2," if landscape else ""
@@ -528,8 +530,8 @@ def main():
         sys.exit("Google Chrome is needed to draw the captioned assets.")
     if not RAW.exists():
         sys.exit("No raw captures yet: run Scripts/mobile_appstore_capture.py first.")
-    for sub in ("1-normal", "2-captioned", "creative"):
-        shutil.rmtree(OUT / sub, ignore_errors=True)
+    # Each device's folders are replaced only when it has raw captures, so a partial capture
+    # (say, no watchOS runtime) keeps the other devices' files as they were.
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         print("Writing appstore/mobile/")
