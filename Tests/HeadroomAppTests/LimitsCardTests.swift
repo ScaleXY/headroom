@@ -29,6 +29,49 @@ import HeadroomPresent
         }
     }
 
+    @Test func measureMatchesDrawWithoutTheLevel() {
+        for s in Demo.reservoirScenarios(now: Demo.now) {
+            for input in s.inputs {
+                var m = presenter.paceCard(input)
+                m.showsMeter = false
+                let r = drawn(m, theme: .light)
+                #expect(r.measured == r.drawn, "\(s.name)")
+            }
+        }
+    }
+
+    @Test func theReservoirCarriesItsTooltip() throws {
+        let m = presenter.paceCard(Demo.state(.codex, used: 0.46, elapsedH: 92, now: Demo.now))
+        let tip = try #require(m.hero?.tooltip)
+        #expect(drawn(m).out.regions.contains { $0.tooltip == tip })
+    }
+
+    /// With the real fonts at the popover's width: at every level the number and its line stay on
+    /// one side of the fill's edge, and clear of the renewal tag.
+    @Test func reservoirTextNeverCrossesTheEdge() throws {
+        let inner = (PopoverChrome.width - PopoverChrome.pad * 2) - PaceCardRenderer.padX * 2
+        let rect = CGRect(x: 0, y: 0, width: inner, height: CGFloat(Reservoir.height))
+        var hero = try #require(presenter.paceCard(Demo.state(.claude, used: 0.18, elapsedH: 148, now: Demo.now)).hero)
+        for (renewIn, renewAt) in [("3 days", "Fri 2 PM"), ("20 hours", "tomorrow 6 AM"), ("45 min", "today 10:45 AM"), ("23 hours", "tomorrow 11:30 PM")] {
+            hero.renewIn = renewIn
+            hero.renewAt = renewAt
+            for percent in 0...100 {
+                hero.percentLeft = percent
+                let l = ReservoirRenderer.layout(hero, filled: true, rect: rect)
+                let tag = try #require(l.tag)
+                let label = Text(l.label, ReservoirRenderer.labelFont, .black).width + 1
+                let x = CGFloat(l.placement.x)
+                let end = x + max(l.numberWidth * CGFloat(l.placement.scale), label)
+                if l.placement.inside {
+                    #expect(end <= l.fill - CGFloat(Reservoir.insideMinGap) + 0.01, "\(percent)%")
+                } else {
+                    #expect(x >= l.fill + CGFloat(Reservoir.outsideGap) - 0.01, "\(percent)%")
+                }
+                #expect(end <= tag.minX - CGFloat(Reservoir.tagGap) + 0.01, "\(percent)% \(renewIn)")
+            }
+        }
+    }
+
     @Test func theLaneAddsItsHeight() {
         var with = presenter.paceCard(Demo.limitsSession(0.42, now: Demo.now))
         let tall = drawn(with).measured

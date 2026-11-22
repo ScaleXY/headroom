@@ -33,7 +33,7 @@ struct AccountDetailView: View {
                         if let w = account.reader(model) { BurnPanel(provider: w, now: model.reader.now) }
                         MacsPanel(model: model, account: account)
                         HistoryPanels(model: model, account: account)
-                        Toggle("Hide from Now", isOn: Binding(
+                        Toggle("Hide from Limits", isOn: Binding(
                             get: { model.prefs.hiddenAccounts.contains(account.id) },
                             set: { on in if on { model.prefs.hiddenAccounts.insert(account.id) } else { model.prefs.hiddenAccounts.remove(account.id) } }))
                             .padding(14)

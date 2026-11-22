@@ -205,6 +205,18 @@ extension Demo {
             PaceScenario(name: "limits-blocked", inputs: [limitsSession(1, now: now)], note: "Session lane, limit hit and paused"),
             PaceScenario(name: "limits-idle", inputs: [limitsIdle(now: now)], note: "Session lane, no session running"),
             PaceScenario(name: "limits-daily", inputs: [limitsDaily(now: now)], note: "No 5-hour window: each day's use"),
+        ] + reservoirScenarios(now: now)
+    }
+
+    /// The reservoir at each level and state: full, Plenty, On track, Getting tight, Very tight, and nearly empty.
+    public static func reservoirScenarios(now: Date) -> [PaceScenario] {
+        [
+            PaceScenario(name: "limits-full", inputs: [state(.claude, used: 0, elapsedH: 2, now: now)], note: "Just renewed: 100% left, on track"),
+            PaceScenario(name: "limits-plenty", inputs: [state(.claude, used: 0.18, elapsedH: 148, now: now)], note: "Plenty, renews in 20 hours"),
+            PaceScenario(name: "limits-ontrack", inputs: [state(.codex, used: 0.46, elapsedH: 92, now: now)], note: "On track, renews Fri"),
+            PaceScenario(name: "limits-tight", inputs: [state(.claude, used: 0.69, elapsedH: 108, now: now)], note: "Getting tight"),
+            PaceScenario(name: "limits-verytight", inputs: [state(.codex, used: 0.91, elapsedH: 58, now: now)], note: "Very tight"),
+            PaceScenario(name: "limits-empty", inputs: [state(.claude, used: 0.98, elapsedH: 138, now: now)], note: "Nearly empty: 2% left"),
         ]
     }
 

@@ -85,11 +85,17 @@ public struct Presenter {
             let state = input.smoothedState ?? a.state
             let period = a.isMonthly ? "month" : "week"
             let label = headline.kind == .modelWeekly ? "left this \(period) · \(headline.label ?? "model")" : "left this \(period)"
+            let percentLeft = Int((a.remaining * 100).rounded())
+            let renewCaption = TimeFormat.renewalCaption(a.resetsAt, now: now, calendar: calendar, locale: locale)
+            let scope = headline.kind == .modelWeekly ? (headline.label ?? "model") + " " : ""
             model.hero = HeroModel(
-                percentLeft: Int((a.remaining * 100).rounded()), label: label,
+                percentLeft: percentLeft, label: label,
                 renewValue: TimeFormat.compact(a.timeLeft),
-                renewCaption: TimeFormat.renewalCaption(a.resetsAt, now: now, calendar: calendar, locale: locale),
-                hourglass: a.hourglass
+                renewCaption: renewCaption,
+                hourglass: a.hourglass,
+                renewIn: TimeFormat.renewIn(a.timeLeft),
+                renewAt: TimeFormat.renewAt(a.resetsAt, now: now, calendar: calendar, locale: locale),
+                tooltip: "\(percentLeft)% of this \(period)'s \(scope)allowance left · \(renewCaption)"
             )
             let opacity: Double = input.fault != nil ? 0.5 : (blocked || a.rule == .exhausted ? 0.4 : 1)
             model.meter = MeterModel(state: state, cells: a.cells, caret: a.rule == .exhausted ? nil : a.evenPaceMarker, opacity: opacity)

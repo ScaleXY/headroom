@@ -39,7 +39,7 @@ done
 # ── Look ──────────────────────────────────────────────────────────────────────────────────────
 # A terminal gets the meter-H, live steps and a download meter, all drawn from the app icon:
 # azure and sky are the lit cells, the terminal's own foreground stands in for the pearl
-# crossbar, and amber and rose mean what they mean in the app. Pipes, CI and NO_COLOR get
+# crossbar cell, and amber and rose mean what they mean in the app. Pipes, CI and NO_COLOR get
 # plain lines.
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then fancy=1; else fancy=0; fi
@@ -61,14 +61,15 @@ cols=""
 [ "$fancy" = 1 ] && { cols=$(stty size 2>/dev/null </dev/tty | awk '{print $2}') || true; }
 [ "${cols:-0}" -gt 0 ] 2>/dev/null || cols=${COLUMNS:-80}
 
-# The mark: two five-cell meters, lit to the crossbar, with headroom dim above it.
+# The mark: two five-cell meters, lit to the crossbar (one more cell joining the legs), with
+# headroom dim above it.
 mark() {
   local subtitle=$1 cell="▆▆▆" gap="   "
   [ "$fancy" = 1 ] || { printf '\nHeadroom · %s\n\n' "$subtitle"; return; }
   printf '\n'
   printf '  %s%s%s%s%s\n' "$DIM$ROSE" "$cell" "$gap" "$cell" "$RESET"
   printf '  %s%s%s%s%s\n' "$DIM$AMBER" "$cell" "$gap" "$cell" "$RESET"
-  printf '  %s%s▅▅▅%s%s   %sHeadroom%s\n' "$BOLD" "$cell" "$cell" "$RESET" "$BOLD" "$RESET"
+  printf '  %s%s%s%s%s   %sHeadroom%s\n' "$BOLD" "$cell" "$cell" "$cell" "$RESET" "$BOLD" "$RESET"
   printf '  %s%s%s%s%s   %s%s%s\n' "$SKY" "$cell" "$gap" "$cell" "$RESET" "$DIM" "$subtitle" "$RESET"
   printf '  %s%s%s%s%s\n\n' "$AZURE" "$cell" "$gap" "$cell" "$RESET"
 }

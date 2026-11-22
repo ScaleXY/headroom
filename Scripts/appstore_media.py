@@ -170,7 +170,7 @@ def slides(raw):
                  hanging_popover, 0, 0, layout="free", accent=STATE["plenty"], extra=hero_extra)
 
     # 2. The four pacing states.
-    states = [("Plenty", "plenty", STATE["plenty"]), ("On pace", "onpace", STATE["onpace"]),
+    states = [("Plenty", "plenty", STATE["plenty"]), ("On track", "onpace", STATE["onpace"]),
               ("Getting tight", "tight-projection", STATE["tight"]), ("Very tight", "verytight", STATE["verytight"])]
     cards = "".join(f"<div>{label(t, c)}{crop(f'{raw}/pace-{s}-dark.png', 384, 760, fade=0.8)}</div>" for t, s, c in states)
     pace = Slide("02-pace", "blue", "Pace, not just a percentage", "Use more, keep going, or ease off.",
@@ -200,7 +200,7 @@ def slides(raw):
         <span style="font:500 18px -apple-system,system-ui,sans-serif;color:#F4F4F6;font-variant-numeric:tabular-nums">Tue 10:02</span>
         </div></div>""" for t, o in options)
     menubar = Slide("04-menubar", "violet", "Your week at a glance", "Five cells.<br>One look.",
-                    "Blue means room to spare, white means on pace, amber and rose mean slow down. An hourglass flags allowance about to renew unused.",
+                    "Blue means room to spare, white means on track, amber and rose mean slow down. An hourglass flags allowance about to renew unused.",
                     rows, 640, len(options) * 118 - 26, layout="left", accent=STATE["plenty"])
 
     # 5. Welcome window: step 3 in front of step 2.
@@ -213,7 +213,7 @@ def slides(raw):
 
     # 6. Activity: tokens and cost, past weeks, recent sessions.
     activity = Slide("06-activity", "green", "Activity", "See where the tokens go.",
-                     "Tokens and cost by hour and by model, every past week, and each recent 5-hour session.",
+                     "Tokens and cost by hour and by model, and how every past week went.",
                      f"""<div style="display:flex;gap:40px">
                        <div>{label("Tokens and cost · 24 hours")}{crop(f'{raw}/activity-all-24h-dark.png', 384, 760, fade=0.88)}</div>
                        <div>{label("Past weeks · 5-hour sessions")}{crop(f'{raw}/activity-all-7d-dark.png', 384, 760, fade=0.88, position='bottom')}</div></div>""",

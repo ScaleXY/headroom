@@ -77,6 +77,8 @@ enum HeadroomMark {
                 if i < 3 { lit.append(cell) } else { ghost.append(cell) }
             }
         }
+        // The crossbar: one more pearl cell in the "now" row, joining the legs.
+        lit.append((R(27.5, 28.2, 9, 6.2), rgb(cellColors[2])))
         // Glow: blurred copy of the lit cells at 55% (feGaussianBlur stdDeviation 1.8).
         ctx.withState {
             ctx.setAlpha(0.55)
@@ -88,7 +90,6 @@ enum HeadroomMark {
             ctx.endTransparencyLayer()
         }
         for (r, c) in lit { ctx.fill(rounded(r, 2.6 * s), c) }
-        ctx.fill(rounded(R(24, 28.8, 16, 5), 2.2 * s), rgb(0xECEDF1))
         for (r, c) in ghost { ctx.fill(rounded(r, 2.6 * s), c.alpha(0.27)) }
     }
 }

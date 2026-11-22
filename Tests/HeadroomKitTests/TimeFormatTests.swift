@@ -39,12 +39,42 @@ struct TimeFormatTests {
         #expect(TimeFormat.spokenSpan(4 * 86400) == "4 days")
     }
 
+    @Test func renewIn() {
+        #expect(TimeFormat.renewIn(76 * 3600) == "3 days")
+        #expect(TimeFormat.renewIn(166 * 3600) == "7 days")
+        #expect(TimeFormat.renewIn(36 * 3600) == "2 days")
+        #expect(TimeFormat.renewIn(30 * 3600) == "1 day")
+        #expect(TimeFormat.renewIn(24 * 3600) == "1 day")
+        #expect(TimeFormat.renewIn(20 * 3600 + 10 * 60) == "20 hours")
+        #expect(TimeFormat.renewIn(3600) == "1 hour")
+        #expect(TimeFormat.renewIn(45 * 60) == "45 min")
+        #expect(TimeFormat.renewIn(10) == "1 min")
+        #expect(TimeFormat.renewIn(-5) == "1 min")
+    }
+
+    @Test func renewalDate() {
+        // The tag's second line: the day and a short clock.
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 23, 14, 0), now: now, calendar: cal, locale: loc) == "Fri 2 PM")
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 21, 6, 0), now: now, calendar: cal, locale: loc) == "tomorrow 6 AM")
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 20, 16, 0), now: now, calendar: cal, locale: loc) == "today 4 PM")
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 23, 14, 30), now: now, calendar: cal, locale: loc) == "Fri 2:30 PM")
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 27, 8, 0), now: now, calendar: cal, locale: loc) == "Oct 27 8 AM")
+        // A 24-hour clock keeps its minutes: "Fri 14" would read as a date.
+        var gb = cal
+        gb.locale = Locale(identifier: "en_GB")
+        #expect(TimeFormat.renewAt(PT.date(2026, 10, 23, 14, 0), now: now, calendar: gb, locale: Locale(identifier: "en_GB")) == "Fri 14:00")
+    }
+
     @Test func clocks() {
         let six = PT.date(2026, 10, 21, 6, 0)
         let halfPast = PT.date(2026, 10, 20, 12, 30)
         #expect(TimeFormat.clock(six, calendar: cal, locale: loc) == "6:00 AM")
         #expect(TimeFormat.shortClock(six, calendar: cal, locale: loc) == "6 AM")
         #expect(TimeFormat.shortClock(halfPast, calendar: cal, locale: loc) == "12:30 PM")
+        // A 24-hour clock keeps its minutes on the hour; a bare "15" reads as a date.
+        var gb = cal
+        gb.locale = Locale(identifier: "en_GB")
+        #expect(TimeFormat.shortClock(PT.date(2026, 10, 21, 15, 0), calendar: gb, locale: Locale(identifier: "en_GB")) == "15:00")
         #expect(TimeFormat.weekdayShort(six, calendar: cal, locale: loc) == "Wed")
         #expect(TimeFormat.weekdayLong(six, calendar: cal, locale: loc) == "Wednesday")
         #expect(TimeFormat.monthDay(six, calendar: cal, locale: loc) == "Oct 21")

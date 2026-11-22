@@ -119,7 +119,7 @@ def hero(theme, raw, work):
     bar = "rgba(8,9,16,.42)" if dark else "rgba(255,255,255,.55)"
     chip_bg = "rgba(255,255,255,.07)" if dark else "rgba(255,255,255,.65)"
     chip_ring = "rgba(255,255,255,.08)" if dark else "rgba(22,23,27,.06)"
-    states = [("Plenty", STATE["plenty"]), ("On pace", "#ECEDF1" if dark else "#3A3D44"),
+    states = [("Plenty", STATE["plenty"]), ("On track", "#ECEDF1" if dark else "#3A3D44"),
               ("Getting tight", STATE["tight"]), ("Very tight", STATE["verytight"])]
     chips = "".join(f'<span class="chip"><i style="background:{c};box-shadow:0 0 9px {c}"></i>{t}</span>' for t, c in states)
     body = f"""
@@ -194,7 +194,7 @@ def main():
 .mb span { font: 500 13px -apple-system, system-ui; font-variant-numeric: tabular-nums; }""")
 
         # Four pacing states, 2 x 2.
-        cells = [("Plenty available", "plenty", STATE["plenty"]), ("On pace", "onpace", STATE["onpace"]),
+        cells = [("Plenty available", "plenty", STATE["plenty"]), ("On track", "onpace", STATE["onpace"]),
                  ("Getting tight", "tight-projection", STATE["tight"]), ("Very tight", "verytight", STATE["verytight"])]
         grid = "".join(f"<div>{eyebrow(t, c)}{shot(f'{raw}/pace-{s}-dark.png', 640, fade=0.82)}</div>" for t, s, c in cells)
         panel("pace", f'<div class="grid" style="grid-template-columns:1fr 1fr">{grid}</div>', 960, grid_height(2, 640), raw, work)
@@ -222,12 +222,14 @@ def main():
         panel("session", f'<div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">{grid}</div>', 960,
               round(72 + sum(30 + h for h in row_h) + 2 * 30), raw, work)
 
-        # Recent 5-hour sessions (Activity tab), dark and light.
-        sw, sh = png_size(raw / "sessions-dark.png")
-        hist_h = round(cell_w * sh / sw)
-        body = "".join(f"<div>{eyebrow(t)}<div class='shot'><img src='{raw}/sessions-{th}.png'></div></div>"
-                       for t, th in (("Activity · 5-hour sessions", "dark"), ("Light appearance", "light")))
-        panel("sessions", f'<div class="grid" style="grid-template-columns:1fr 1fr">{body}</div>', 960, grid_height(1, hist_h), raw, work)
+        # 5-hour sessions: each one's peak in the Limits chart's session lane, and the weeks they hit.
+        sw, sh = png_size(raw / "pastweeks-dark.png")
+        weeks_h = round(cell_w * sh / sw)
+        # From the card's top through the lane's day labels (the popover header and stats cut off).
+        lane = shot(f"{raw}/pace-limits-session-dark.png", weeks_h, fade=0.86, position="center 20%")
+        body = (f"<div>{eyebrow('Limits · each 5-hour session')}{lane}</div>"
+                f"<div>{eyebrow('Past weeks · sessions that hit the limit')}<div class='shot'><img src='{raw}/pastweeks-dark.png'></div></div>")
+        panel("sessions", f'<div class="grid" style="grid-template-columns:1fr 1fr">{body}</div>', 960, grid_height(1, weeks_h), raw, work)
 
         # Menu bar options.
         options = [("Default", "default"), ("Show the percentage", "percent"), ("Meter tracks the 5-hour session", "session"),
@@ -240,7 +242,7 @@ def main():
         sw, sh = png_size(raw / "settings-3-dark.png")
         set_h = round(cell_w * sh / sw)
         body = "".join(f"<div>{eyebrow(t)}<div class='shot win'><img src='{raw}/settings-{n}.png'></div></div>"
-                       for t, n in (("Pace Card · meters and graphs", "3-dark"), ("5-hour session warning", "4-light")))
+                       for t, n in (("Limits card · meter and graph", "3-dark"), ("5-hour session warning", "4-light")))
         panel("settings", f'<div class="grid" style="grid-template-columns:1fr 1fr">{body}</div>', 960, grid_height(1, set_h), raw, work,
               ".win { border-radius: 12px; box-shadow: 0 14px 34px rgba(0,0,0,.45); }")
 
@@ -309,11 +311,11 @@ pre {{ height: {snap_h}px; overflow: hidden; border-radius: 18px; padding: 22px 
         def c(t, hexc): return f'<span style="color:{hexc}">{t}</span>'
         term = (f"{c('$', '#6E7487')} <b>headroom</b>\n"
                 f"<b>Claude</b>  🟦🟦🟦🟦⬛   82% · renews in 20h ⏳\n"
-                f"  ↳ {c('plenty', '#6AA8FF')} · 80% renews unused at this pace\n"
+                f"  ↳ {c('plenty', '#6AA8FF')} · 80% renews unused at this rate\n"
                 f"  ↳ {c('⚠ 5-hour session 16% left · resets 10:48 AM · runs out ~10:41 AM, 7m early', '#FFC248')}\n"
                 f"<b>Codex</b>   🟨🟨🟨⬛⬛   59% · renews in 4d\n"
                 f"  ↳ {c('tight', '#FFC248')} · runs out Fri 4 PM, 21h early\n"
-                f"  ↳ {c('5-hour session 90% left · resets 2:12 PM · ~38% spare at this pace', '#6E7487')}\n"
+                f"  ↳ {c('5-hour session 90% left · resets 2:12 PM · ~38% spare at this rate', '#6E7487')}\n"
                 f"  ↳ {c('⏳ 1 reset credit lapses in 3d', '#8CC2FF')}\n\n"
                 f"{c('$', '#6E7487')} <b>headroom statusline</b>\n"
                 f"Claude 🟦🟦🟦🟦⬛ 82% {c('⏱48m', '#FFC248')}  Codex 🟨🟨🟨⬛⬛ 59%\n\n"

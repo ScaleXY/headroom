@@ -48,6 +48,23 @@ public enum TimeFormat {
         return "\(d) days"
     }
 
+    /// The Limits card's renewal tag: "3 days" from a day and a half out, "1 day" from a day,
+    /// then "20 hours", "1 hour", "45 min".
+    public static func renewIn(_ seconds: TimeInterval) -> String {
+        let hours = max(0, seconds) / 3600
+        if hours >= 36 {
+            let days = Int((hours / 24).rounded())
+            return "\(days) days"
+        }
+        if hours >= 24 { return "1 day" }
+        if hours >= 1 {
+            let h = Int(hours.rounded())
+            return h == 1 ? "1 hour" : "\(h) hours"
+        }
+        let minutes = max(1, Int((hours * 60).rounded()))
+        return "\(minutes) min"
+    }
+
     // MARK: Clock and day words
 
     /// "6:00 AM", "12:30 PM" (locale's 12/24 h preference).
@@ -57,7 +74,9 @@ public enum TimeFormat {
 
     /// "6 AM" on the hour, otherwise "6:30 AM".
     public static func shortClock(_ date: Date, calendar: Calendar, locale: Locale) -> String {
-        if calendar.component(.minute, from: date) == 0 {
+        // A 24-hour clock keeps its minutes on the hour: a bare "15" reads as a date, not a time.
+        let hourFormat = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? "h a"
+        if calendar.component(.minute, from: date) == 0, hourFormat.contains("a") {
             return clean(date.formatted(style(calendar, locale).hour(.defaultDigits(amPM: .abbreviated))))
         }
         return clock(date, calendar: calendar, locale: locale)
@@ -136,6 +155,21 @@ public enum TimeFormat {
         case 0: return "today " + time
         case 1: return "tomorrow " + time
         case 2...6: return weekdayLong(date, calendar: calendar, locale: locale) + " " + time
+        default: return monthDay(date, calendar: calendar, locale: locale) + " " + time
+        }
+    }
+
+    /// The Limits card's renewal tag, second line: "Fri 2 PM", "tomorrow 6 AM", "today 4 PM",
+    /// "Oct 27 8 AM" a week or more out. A 24-hour clock keeps its minutes ("Fri 14:00"), where a
+    /// bare hour would read as a date.
+    public static func renewAt(_ date: Date, now: Date, calendar: Calendar, locale: Locale) -> String {
+        let hourFormat = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? "h a"
+        let twelveHour = hourFormat.contains("a")
+        let time = twelveHour ? shortClock(date, calendar: calendar, locale: locale) : clock(date, calendar: calendar, locale: locale)
+        switch dayOffset(date, now: now, calendar: calendar) {
+        case 0: return "today " + time
+        case 1: return "tomorrow " + time
+        case 2...6: return weekdayShort(date, calendar: calendar, locale: locale) + " " + time
         default: return monthDay(date, calendar: calendar, locale: locale) + " " + time
         }
     }
