@@ -36,16 +36,22 @@ extension Demo {
             RunScenario(name: "timeline", runs: [timelineRun(now: now)], note: "Forecast to hit the 5-hour window before it finishes"),
             RunScenario(name: "limit", runs: [limitRun(now: now)], note: "Waiting on the 5-hour limit, with the warning"),
             RunScenario(name: "mirrored", runs: [mirroredRun(now: now)], note: "A plan read from the session's own todo list"),
-            RunScenario(name: "stopped", runs: [stoppedRun(now: now)], note: "The orchestrator stopped with work left"),
+            RunScenario(name: "your-turn", runs: [yourTurnRun(now: now), finished], note: "The agent ended its turn with work open, one task yours"),
+            RunScenario(name: "left", runs: [leftRun(now: now)], note: "The session ended at 95% with the must-haves done: settled, with a receipt"),
             RunScenario(name: "finished", runs: [finished], opened: [RunsPresenter.rowKey(run: finished.id, row: "bench")],
                         note: "Done, with a failed optional task: the receipt"),
             RunScenario(name: "failed", runs: [failedRun(now: now)], note: "A critical task failed"),
             RunScenario(name: "replaced", runs: [replacedRun(now: now)], opened: [RunsPresenter.rowKey(run: "demo-replaced", row: "root")],
                         note: "Done: a failed approach was worked around another way"),
-            RunScenario(name: "abandoned", runs: [abandonedRun(now: now)], note: "Given up on from the card"),
+            RunScenario(name: "closed", runs: [abandonedRun(now: now)], note: "Closed from the card"),
             RunScenario(name: "large", runs: [largeRun(now: now)], note: "A session that ran for days: 1,004 agents"),
-            RunScenario(name: "mixed", runs: mixedRuns(now: now), note: "Live runs, then the last day's finished ones"),
-            RunScenario(name: "mixed-all", runs: mixedRuns(now: now), allRecent: true, note: "Every finished run of the last day listed"),
+            RunScenario(name: "mixed", runs: mixedRuns(now: now), note: "Live runs, then the last day's settled ones"),
+            RunScenario(name: "mixed-all", runs: mixedRuns(now: now), allRecent: true, note: "Every settled run of the last day listed"),
+            RunScenario(name: "working", runs: [declaredRun(now: now), observedRun(now: now), quietRun(now: now), finished],
+                        note: "Runs at work, the lead one opened in place"),
+            RunScenario(name: "limit-lead", runs: [limitRun(now: now), timelineRun(now: now), finished],
+                        note: "The lead run paused at the 5-hour limit"),
+            RunScenario(name: "settled", runs: settledRuns(now: now), note: "Nothing running: the day's receipt, then the runs by day"),
             RunScenario(name: "other-macs", runs: [declared, finished], remote: otherMacRuns(now: now),
                         note: "This Mac's runs with the ones its other Macs synced"),
             RunScenario(name: "empty", runs: [], note: "Nothing tracked yet"),
@@ -73,9 +79,11 @@ extension Demo {
                           lastSeen: r.state.isTerminal ? nil : lastSeen)
         d.mirrored = r.mirrored
         d.abandoned = r.abandoned
+        d.left = r.left
+        d.turnSeconds = r.yourTurn ? r.turnSeconds : nil
         d.workingSeconds = r.time.working > 0 ? r.time.working : nil
-        d.finishAt = r.state.isTerminal ? nil : r.etaSeconds.map { now.addingTimeInterval($0) }
-        if r.state.isTerminal {
+        d.finishAt = r.isSettled ? nil : r.etaSeconds.map { now.addingTimeInterval($0) }
+        if r.isSettled {
             d.receipt = RunDigest.Receipt(seconds: r.updatedAt.timeIntervalSince(r.startedAt), tokensByModel: r.tokensByModel, time: r.time,
                                           scopeChanges: r.scopeChanges)
         }
@@ -83,10 +91,18 @@ extension Demo {
         return d
     }
 
-    /// Several live runs (one asking, one quiet) and five finished ones.
+    /// Several live runs (one asking, one your turn, one quiet) and settled ones: done, left,
+    /// closed, failed last night, and two short sessions.
     public static func mixedRuns(now: Date) -> [TaskRun] {
-        [inputRun(now: now), declaredRun(now: now), observedRun(now: now), quietRun(now: now), finishedRun(now: now), failedRun(now: now),
-         abandonedRun(now: now), mirroredFinishedRun(now: now), shortRun(now: now)].sortedForDisplay()
+        ([inputRun(now: now), yourTurnRun(now: now), declaredRun(now: now), observedRun(now: now), quietRun(now: now), finishedRun(now: now),
+          leftRun(now: now), failedRun(now: now), abandonedRun(now: now), mirroredFinishedRun(now: now), shortRun(now: now)] + shortSessions(now: now))
+            .sortedForDisplay()
+    }
+
+    /// A day with nothing running: the runs that settled today and last night.
+    public static func settledRuns(now: Date) -> [TaskRun] {
+        ([finishedRun(now: now), leftRun(now: now), replacedRun(now: now), abandonedRun(now: now), mirroredFinishedRun(now: now), shortRun(now: now),
+          failedRun(now: now)] + shortSessions(now: now)).sortedForDisplay()
     }
 
     /// Menu bar states: three runs going, two asking, the lead run gone quiet.
@@ -264,18 +280,63 @@ extension Demo {
                        time: TaskTimeSplit(working: mins(22), idle: mins(18)))
     }
 
-    /// The orchestrator ended its turn with tasks left.
-    public static func stoppedRun(now: Date) -> TaskRun {
+    /// The agent ended its turn with work open: one task left for it, and one only the user can do.
+    public static func yourTurnRun(now: Date) -> TaskRun {
         let nodes = [
-            task("lint", "Fix the lint errors", .done, tokens: 75_000, started: ago(now, 120), ended: ago(now, 101), share: 0.25),
-            task("types", "Tighten the types", .done, tokens: 160_000, started: ago(now, 100), ended: ago(now, 64), share: 0.25),
+            task("lint", "Fix the lint errors", .done, tokens: 75_000, started: ago(now, 70), ended: ago(now, 52), share: 0.2, working: mins(18)),
+            task("types", "Tighten the types", .done, tokens: 160_000, started: ago(now, 51), ended: ago(now, 18), share: 0.3, working: mins(30)),
             task("split", "Split the settings screen", .planned, share: 0.35),
-            task("snapshots", "Refresh the snapshots", .planned, importance: .optional, share: 0.15),
+            task("review", "Approve the new settings layout", .waiting, progress: .zero, waitReason: .you, waitNote: "Only you can sign off the design", share: 0.15),
         ]
-        return TaskRun(id: "demo-stopped", title: "Tidy the settings module", project: "mobile-app", harness: "claude-code",
-                       startedAt: ago(now, 122), updatedAt: ago(now, 58), state: .stopped,
+        return TaskRun(id: "a41f6c2d-7e3b-4a90-8c15-2d6e9f0b7a33", title: "Tidy the settings module", project: "mobile-app", harness: "claude-code",
+                       startedAt: ago(now, 72), updatedAt: ago(now, 8), state: .stopped,
                        progress: TaskProgress(done: 0.5, inFlight: 0, estimate: 0.5), tokens: 235_000, hasDeclaredTasks: true, nodes: nodes,
-                       time: TaskTimeSplit(working: mins(56), idle: mins(8)), cwd: "/Users/demo/src/mobile-app")
+                       time: TaskTimeSplit(working: mins(58), idle: mins(6)), tokensByModel: ["claude-opus-5-5": 235_000],
+                       host: "com.googlecode.iterm2", cwd: "/Users/demo/src/mobile-app", repo: "acme/mobile-app",
+                       turnEndedAt: ago(now, 8), turnSeconds: mins(24))
+    }
+
+    /// The session ended at 95% with its must-haves done: one task cut short, and one that was
+    /// the user's to do. Its third job this session.
+    public static func leftRun(now: Date) -> TaskRun {
+        let session = TaskNode(id: TaskFold.sessionID, title: TaskFold.sessionTitle, state: .done, progress: .complete, declared: false, leaf: false,
+                               counted: false)
+        func past(_ id: String, _ title: String, _ n: Int, end: Double) -> [TaskNode] {
+            var group = task(id, title, .done, leaf: false, started: ago(now, end + 50), ended: ago(now, end))
+            group.parent = TaskFold.sessionID; group.depth = 1; group.counted = false
+            return [group] + (0..<n).map { i in
+                var leaf = task("\(id)/s\(i)", "Step \(i + 1)", .done, started: ago(now, end + 50), ended: ago(now, end))
+                leaf.parent = id; leaf.depth = 2; leaf.counted = false
+                return leaf
+            }
+        }
+        var nodes = [session] + past("limits", "Limits redesign and colour system", 7, end: 300) + past("protos", "Prototypes for the meter", 3, end: 230)
+        nodes += [
+            task("logo", "Draw the new logo", .done, importance: .critical, tokens: 410_000, started: ago(now, 220), ended: ago(now, 190), share: 0.2, working: mins(28)),
+            task("merge", "Merge the redesign", .done, importance: .critical, tokens: 300_000, started: ago(now, 188), ended: ago(now, 160), share: 0.25, working: mins(24)),
+            task("release", "Release 0.6.0", .done, importance: .critical, tokens: 520_000, started: ago(now, 158), ended: ago(now, 120), share: 0.3, working: mins(36)),
+            task("tag", "Tag and ship to TestFlight", .parked, progress: TaskProgress(done: 0, inFlight: 0, estimate: 0.9), tokens: 112_000,
+                 started: ago(now, 118), share: 0.15, working: mins(12)),
+            task("submit", "Submit the iPhone app in App Store Connect", .waiting, progress: .zero, waitReason: .you,
+                 waitNote: "Only you can submit, so it never holds the run open", share: 0.1),
+        ]
+        return TaskRun(id: "c7d2e9a0-4b16-4f3e-9a58-6e1f2b3c4d50", title: "Release 0.6.0 with the new logo", project: "agent-meter", harness: "claude-code",
+                       startedAt: ago(now, 420), updatedAt: ago(now, 95), state: .stopped,
+                       progress: TaskProgress(done: 0.75, inFlight: 0, estimate: 0.95), mustHaves: TaskMustHaves(done: 3, total: 3), tokens: 5_510_000,
+                       scopeChanges: 1, hasDeclaredTasks: true, nodes: nodes,
+                       time: TaskTimeSplit(working: mins(231), waitingInput: mins(40), idle: mins(54)),
+                       tokensByModel: ["claude-opus-5-5": 5_510_000], host: "com.googlecode.iterm2", cwd: "/Users/demo/src/agent-meter",
+                       repo: "acme/agent-meter", left: true, jobs: 3)
+    }
+
+    /// Sessions that only kept a plan list for a few minutes, with no agents: folded into one line.
+    public static func shortSessions(now: Date) -> [TaskRun] {
+        [("Rename a variable", 46.0, 4.0), ("Check the lint config", 130, 6), ("Fix a typo in the README", 360, 2)].enumerated().map { i, s in
+            TaskRun(id: "demo-short-session-\(i)", title: s.0, project: "scratch", harness: "claude-code", startedAt: ago(now, s.1 + s.2 + 1),
+                    updatedAt: ago(now, s.1), state: .done, progress: .complete, tokens: 12_000 + Int64(i) * 4_000, hasDeclaredTasks: true,
+                    nodes: [task("plan-0", s.0, .done, declared: false, started: ago(now, s.1 + s.2), ended: ago(now, s.1))],
+                    time: TaskTimeSplit(working: mins(s.2)), tokensByModel: ["claude-haiku-5-5": 12_000 + Int64(i) * 4_000], mirrored: true)
+        }
     }
 
     /// Finished this morning; the optional benchmark failed.
@@ -334,12 +395,12 @@ extension Demo {
                        time: TaskTimeSplit(working: mins(50), waitingInput: mins(2), idle: mins(4)), tokensByModel: ["claude-opus-5-5": 598_000])
     }
 
-    /// Given up on from the card after it stopped half way.
+    /// Closed from the card after it stopped half way.
     public static func abandonedRun(now: Date) -> TaskRun {
         let nodes = [
             task("survey", "Survey the old endpoints", .done, tokens: 88_000, started: ago(now, 300), ended: ago(now, 280)),
-            task("port", "Port them to the new router", .cancelled, failure: "Abandoned", tokens: 140_000, started: ago(now, 279), ended: ago(now, 200)),
-            task("delete", "Delete the old router", .cancelled, failure: "Abandoned"),
+            task("port", "Port them to the new router", .cancelled, failure: "Closed", tokens: 140_000, started: ago(now, 279), ended: ago(now, 200)),
+            task("delete", "Delete the old router", .cancelled, failure: "Closed"),
         ]
         return TaskRun(id: "demo-abandoned", title: "Retire the v1 router", project: "api-gateway", harness: "claude-code",
                        startedAt: ago(now, 301), updatedAt: ago(now, 150), state: .stopped,
@@ -369,7 +430,8 @@ extension Demo {
 
     /// Two weeks of receipts for Activity's "Recent runs".
     public static func recentRunRecords(now: Date) -> [RunRecord] {
-        var out = [finishedRun(now: now), failedRun(now: now), abandonedRun(now: now), mirroredFinishedRun(now: now), shortRun(now: now)].map(RunRecord.init)
+        var out = [finishedRun(now: now), leftRun(now: now), failedRun(now: now), abandonedRun(now: now), mirroredFinishedRun(now: now),
+                   shortRun(now: now)].map(RunRecord.init)
         let older: [(String, Double, Double, TaskRunState, Int64)] = [
             ("Move search to the new index", 26, 95, .done, 1_240_000), ("Audit the billing exports", 50, 140, .partial, 610_000),
             ("Tidy the onboarding copy", 75, 25, .done, 90_000), ("Port the settings screen", 130, 210, .done, 2_050_000),

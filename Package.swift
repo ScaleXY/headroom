@@ -33,7 +33,7 @@ let package = Package(
         .target(name: "HeadroomKit", resources: [.copy("Resources/pricing.json")], swiftSettings: strict),
         // Log ingestion, provider clients, credentials, store. Never linked by the CLI.
         .target(name: "HeadroomCore", dependencies: ["HeadroomKit"], swiftSettings: strict),
-        .target(name: "HeadroomCLI", dependencies: ["HeadroomKit"], swiftSettings: strict),
+        .target(name: "HeadroomCLI", dependencies: ["HeadroomKit", "HeadroomPresent"], swiftSettings: strict),
         // Card and widget copy shared by the Mac, iOS and watchOS: the Presenter and its models. Foundation only.
         .target(name: "HeadroomPresent", dependencies: ["HeadroomKit"], swiftSettings: strict + extensionSafe),
         // iCloud sync: the SwiftData schema, payloads, and the reader that merges every Mac into one view per account.

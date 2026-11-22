@@ -216,7 +216,7 @@ func renderScreens() async -> Int {
 func runDigests(names: Bool) -> [RunDigest] {
     let laptop = [Demo.inputRun(now: now), Demo.declaredRun(now: now), Demo.observedRun(now: now), Demo.limitRun(now: now),
                   Demo.finishedRun(now: now), Demo.failedRun(now: now), Demo.largeRun(now: now)]
-    let asleep = [Demo.stoppedRun(now: now)].map { r -> TaskRun in var r = r; r.state = .running; r.title = "Index the photo archive"; r.updatedAt = now.addingTimeInterval(-131 * 60); return r }
+    let asleep = [Demo.yourTurnRun(now: now)].map { r -> TaskRun in var r = r; r.state = .running; r.title = "Index the photo archive"; r.updatedAt = now.addingTimeInterval(-131 * 60); return r }
     func device(_ id: String, _ name: String, seen: Date, state: DevicePowerState, _ runs: [TaskRun]) -> DeviceEnvelope {
         DeviceEnvelope(deviceID: id, updatedAt: seen, lastSeenAt: seen,
                        payload: DevicePayload(name: name, model: nil, appVersion: "0.5.0", enabledProviders: [.claude, .codex], currentAccounts: [:],

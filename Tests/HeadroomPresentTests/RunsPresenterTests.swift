@@ -99,7 +99,12 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         #expect(words(run(state: .waiting, wait: .limit, warning: "Claude 5-hour limit reached, back today 10:48 AM.")) == "Waiting on the 5-hour limit")
         #expect(words(run(state: .waiting, wait: .limit, warning: "Codex weekly limit reached.")) == "Waiting on the weekly limit")
         #expect(words(run(state: .waiting, wait: .dependency)) == "Waiting on another task")
-        #expect(words(run(state: .stopped)) == "Stopped with work left")
+        #expect(words(run(state: .stopped)) == "Your turn")
+        var left = run(state: .stopped)
+        left.left = true
+        #expect(words(left) == "Left at 57%")
+        left.mustHaves = TaskMustHaves(done: 2, total: 2)
+        #expect(words(left) == "Left at 57% · must-haves done")
         #expect(words(run(state: .done)) == "Done")
         #expect(words(run(state: .partial)) == "Finished with failures")
         #expect(words(run(state: .failed)) == "Failed")
@@ -152,7 +157,8 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         ])
         let rows = presenter.rows(r, expanded: false).rows
         #expect(rows.map(\.id) == ["p", "p/bench", "~finished"])
-        #expect(rows[1].marker == "optional" && rows[1].detailTone == .warn)
+        // A failed optional task is quiet: amber is only for time and limits.
+        #expect(rows[1].marker == "optional" && rows[1].detailTone == .quiet)
     }
 
     @Test func unconfirmedOnlyWhereAPlanExpectsAReport() {
@@ -196,8 +202,8 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         let runs = [run("live"), run("stopped", state: .stopped), run("fresh", state: .done, updated: -30),
                     run("old", state: .done, updated: -25 * 60), run("stuck", updated: -25 * 60)]
         let page = presenter.page(runs.sortedForDisplay())
-        // Most pressing first, as `sortedForDisplay` has them: running before stopped.
-        #expect(page.live.map(\.id) == ["live", "stopped"])
+        // Who moves next first: your turn before the agents' work.
+        #expect(page.live.map(\.id) == ["stopped", "live"] && page.leadID == "stopped")
         #expect(page.recent.map(\.id) == ["fresh"])
         #expect(!page.isEmpty && presenter.page([]).isEmpty)
         let many = (0..<6).map { run("d\($0)", state: .done, updated: -Double($0 + 1)) }

@@ -3,9 +3,10 @@ import HeadroomKit
 import HeadroomPresent
 
 /// Decides which task-run notifications are due: each once per episode, an episode being a
-/// stretch in which the condition holds (a run needing input, stopped with work left, a critical
-/// task failed, a run gone quiet, a run finished). What already held at launch is taken as seen,
-/// so a restart never repeats one. Hidden runs never alert; an abandoned run doesn't "finish".
+/// stretch in which the condition holds (a run needing input, an agent's turn ended after real
+/// work, a critical task failed, a run gone quiet, a run finished). What already held at launch is
+/// taken as seen, so a restart never repeats one. Hidden runs never alert; a closed run doesn't
+/// "finish", and a session that simply ends (a left run) says nothing.
 struct TaskAlerts {
     struct Alert: Equatable, Sendable {
         var kind: TaskNotificationKind
@@ -23,7 +24,8 @@ struct TaskAlerts {
 
     struct Mark: Equatable {
         var input = false
-        var stopped = false
+        /// The agent's turn ended with work open and the session still there.
+        var turn = false
         var stale = false
         var finished = false
         var failedCritical: Set<String> = []
@@ -79,12 +81,14 @@ struct TaskAlerts {
             if m.stale, !was.stale, watched {
                 alert(.stale, "task.stale.\(r.id).\(stamp)", RunWords.alertQuiet(name), "No agent activity for \(Self.span(quietAfter)).")
             }
-            if m.stopped, !was.stopped, !r.abandoned, watched {
+            // Only a turn that did real work is news; a quick reply, or a session ending, isn't.
+            if m.turn, !was.turn, watched, let worked = r.turnSeconds, worked >= RunsPresenter.turnAlertWork {
                 let again = lastStopped[r.id].map { now.timeIntervalSince($0) < Self.againWindow } ?? false
                 if !again {
                     lastStopped[r.id] = now
                     let (done, count) = Self.counts(r)
-                    alert(.stopped, "task.stopped.\(r.id).\(stamp)", RunWords.alertStopped(name), "\(done) of \(count) done.")
+                    alert(.stopped, "task.stopped.\(r.id).\(stamp)", RunWords.alertTurnEnded(name, after: RunsPresenter.duration(worked)),
+                          "\(done) of \(count) done.")
                 }
             }
             if m.finished, !was.finished, !r.abandoned, watched {
@@ -106,18 +110,16 @@ struct TaskAlerts {
 
     static func mark(_ r: TaskRun) -> Mark {
         Mark(input: r.needsInput || (!r.state.isTerminal && r.nodes.contains { $0.state == .waiting && $0.waitReason == .input }),
-             stopped: r.state == .stopped, stale: r.stale, finished: r.state.isTerminal,
+             turn: r.yourTurn, stale: r.stale, finished: r.state.isTerminal,
              failedCritical: Set(r.nodes.filter { $0.importance == .critical && $0.state == .failed && $0.replacedBy == nil }.map(\.id)))
     }
 
-    /// Working time that makes a plan read off the harness worth a "finished" or "stopped" alert.
-    static let mirroredMinimumWork: TimeInterval = 15 * 60
+    /// Working time that makes a plan read off the harness worth a "finished" or "turn ended" alert.
+    static let mirroredMinimumWork: TimeInterval = RunsPresenter.shortWork
 
     /// A run the agent planned (or that spawned agents) always is; a session's own plan list only
-    /// once it has had a quarter of an hour of work.
-    static func worthWatching(_ r: TaskRun) -> Bool {
-        !r.mirrored || r.time.working >= mirroredMinimumWork || r.nodes.contains { $0.attempts.count > 0 }
-    }
+    /// once it has had a quarter of an hour of work. The Runs tab folds the others away.
+    static func worthWatching(_ r: TaskRun) -> Bool { RunsPresenter.worthWatching(r) }
 
     /// What the run is asking, in its own words when known.
     static func question(_ r: TaskRun) -> String {

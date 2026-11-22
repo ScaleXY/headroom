@@ -3,9 +3,36 @@ import HeadroomPresent
 import HeadroomWidgetUI
 import SwiftUI
 
-/// The runs list in the style Settings picks (Ledger, Two-line, Fill rows), as the Mac's Runs tab
-/// draws it: what needs you under its own header, then the other live runs, then the last day's
-/// finished ones. Every line opens the run's own page.
+/// How the phone's Runs section lists runs. The Mac draws one list (a lead card and two-line
+/// rows); the phone keeps its three, picked in its own Settings.
+public enum RunsListStyle: Int, CaseIterable, Sendable {
+    /// One line per run in fixed columns: state, name, meter, figure, time.
+    case ledger
+    /// The name and figure, and under them what's happening, with a hairline of progress.
+    case twoLine
+    /// Each line is its own progress bar, tinted by state; finished runs fold into a tally.
+    case fill
+
+    public var title: String {
+        switch self {
+        case .ledger: "Ledger"
+        case .twoLine: "Two-line"
+        case .fill: "Fill rows"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .ledger: "One line per run, in columns. The densest."
+        case .twoLine: "Adds what each run is doing, under its name."
+        case .fill: "Each line fills as the run gets along."
+        }
+    }
+}
+
+/// The runs list in the style the phone's Settings picks (Ledger, Two-line, Fill rows): what needs
+/// you (a question, or your turn) under its own header, then the runs the agents are working on,
+/// then the last day's settled ones. Every line opens the run's own page.
 public struct RunsListView: View {
     var page: RunsPageModel
     var style: RunsListStyle
@@ -19,14 +46,14 @@ public struct RunsListView: View {
 
     public var body: some View {
         let p = Palette(scheme)
-        let asking = page.live.filter(\.needsInput), others = page.live.filter { !$0.needsInput }
+        let asking = page.live.filter { $0.phase != .working }, others = page.live.filter { $0.phase == .working }
         VStack(alignment: .leading, spacing: 8) {
             if !asking.isEmpty {
                 header("NEEDS YOU · \(asking.count)", color: p.rose)
                 live(asking)
             }
             if !others.isEmpty {
-                header("LIVE · \(others.count)", color: p.muted2).padding(.top, asking.isEmpty ? 0 : 6)
+                header("WORKING · \(others.count)", color: p.muted2).padding(.top, asking.isEmpty ? 0 : 6)
                 live(others)
             }
             if !page.recent.isEmpty {
@@ -278,7 +305,8 @@ struct RunFillRow: View {
     }
 }
 
-/// Finished runs as a tally (done, failures, abandoned, cost) and a chip per run.
+/// Settled runs as a tally (done, failures, left with work open, cost) and a chip per run. Closed
+/// runs count with the left ones: closing is neutral and gets no tile of its own.
 struct RunTally: View {
     var cards: [RunCardModel]
     var open: (String) -> Void
@@ -287,7 +315,7 @@ struct RunTally: View {
     var body: some View {
         let p = Palette(scheme), o = RunOutcomes(cards)
         var tiles: [(String, String, Color)] = [("\(o.done)", "DONE", p.ink), ("\(o.failed)", "FAILURES", o.failed > 0 ? p.run(.failed) : p.ink),
-                                                ("\(o.abandoned)", "ABANDONED", p.ink)]
+                                                ("\(o.left + o.closed)", "LEFT", p.ink)]
         if let cost = o.cost { tiles.append(("~" + NumberFormat.dollars(cost, style: .precise), "COST", p.ink)) } else { tiles.append(("\(cards.count)", "RUNS", p.ink)) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
@@ -327,7 +355,7 @@ struct RunTally: View {
 
 extension RunCardModel {
     var hue: RunHue { RunHue(tone, glyph: glyph) }
-    /// A settled state (done, abandoned) draws quietly.
+    /// A settled state (done, left, closed) and your turn draw quietly.
     var settled: Bool { tone == .neutral || tone == .quiet }
 }
 
@@ -407,7 +435,7 @@ struct RunFigure: View {
     }
 }
 
-/// "asks" in rose, "quiet 18m" or the pause's clock in amber, "stopped", else the time left or spent.
+/// "asks" in rose, "quiet 18m" or the pause's clock in amber, "your turn", else the time left or spent.
 struct RunStateWord: View {
     var card: RunCardModel
     @Environment(\.colorScheme) private var scheme

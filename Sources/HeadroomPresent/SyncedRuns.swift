@@ -192,6 +192,13 @@ public struct RunDigest: Sendable, Hashable, Identifiable {
     /// When the Mac's user last touched it; sent while a run waits on input.
     public var macActiveAt: Date?
 
+    // From the run lifecycle. Older Macs leave them empty: their stopped runs read as your turn.
+
+    /// Stopped and settled (`TaskRun.left`).
+    public var left = false
+    /// Seconds of work in the turn that ended, while it's the person's turn.
+    public var turnSeconds: Double?
+
     public init(id: String, mac: String, harness: String? = nil, state: TaskRunState, waitReason: TaskWaitReason? = nil, stale: Bool = false,
                 progress: TaskProgress = .zero, mustHaves: TaskMustHaves = TaskMustHaves(done: 0, total: 0), etaSeconds: Double? = nil, tokens: Int64 = 0,
                 warning: String? = nil, hasDeclaredTasks: Bool, startedAt: Date, updatedAt: Date, counts: RunCounts = RunCounts(), title: String? = nil,
@@ -203,12 +210,16 @@ public struct RunDigest: Sendable, Hashable, Identifiable {
     }
 
     /// Unfinished, on a Mac that's still heard from.
-    public var isLive: Bool { !state.isTerminal && lastSeen == nil }
+    public var isLive: Bool { !isSettled && lastSeen == nil }
     public var needsInput: Bool { isLive && state == .waiting && waitReason == .input }
-    /// Stopped with work left, on a Mac still heard from, and nobody gave up on it.
-    public var stoppedWithWorkLeft: Bool { state == .stopped && lastSeen == nil && !abandoned }
+    /// Finished, closed or left.
+    public var isSettled: Bool { state.isTerminal || abandoned || left }
+    /// The agent ended its turn with work open, on a Mac still heard from: the person moves next.
+    public var yourTurn: Bool { state == .stopped && lastSeen == nil && !abandoned && !left }
+    /// A turn that did enough work to say so ended (`RunWords.alertTurnEnded`).
+    public var turnWorthTelling: Bool { yourTurn && (turnSeconds ?? 0) >= RunsPresenter.turnAlertWork }
     public var includesNames: Bool { rows != nil }
-    public var attention: TaskAttention { TaskAttention(run: state, waitReason: waitReason, stale: stale) }
+    public var attention: TaskAttention { left ? .done : TaskAttention(run: state, waitReason: waitReason, stale: stale) }
 }
 
 /// What a phone notification about a run says.
@@ -247,8 +258,8 @@ extension RunsPresenter {
     /// must keep meaning the Mac's own runs.)
     public func page(_ digests: [RunDigest], expanded: Set<String>) -> RunsPageModel {
         let shown = digests.filter { now.timeIntervalSince($0.updatedAt) < Self.recentWindow }
-        let live = shown.filter { !$0.state.isTerminal }
-        let finished = shown.filter(\.state.isTerminal).sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
+        let live = shown.filter { !$0.isSettled }
+        let finished = shown.filter(\.isSettled).sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
         let recent = Array(finished.prefix(Self.recentCap))
         var counts: [String: Int] = [:]
         for d in live + recent { counts[baseTitle(d), default: 0] += 1 }
@@ -262,9 +273,9 @@ extension RunsPresenter {
     /// state's plain words.
     public func card(_ d: RunDigest, expanded: Bool = false, sayStart: Bool = false) -> RunCardModel {
         let declared = d.hasDeclaredTasks || d.mirrored
-        let quiet = d.lastSeen != nil && !d.state.isTerminal
+        let quiet = d.lastSeen != nil && !d.isSettled
         var (glyph, tone) = Self.look(asRun(d))
-        if quiet || d.abandoned { (glyph, tone) = (.stopped, .quiet) }
+        if quiet { (glyph, tone) = (.stopped, .quiet) }
         var figures: [String] = []
         let headline: String
         if declared {
@@ -281,7 +292,7 @@ extension RunsPresenter {
         if d.tokens > 0 { figures.append("\(NumberFormat.tokens(d.tokens)) tokens") }
         let built = rows(d, expanded: expanded)
         var card = RunCardModel(id: d.id, title: displayTitle(d, sayStart: sayStart), subtitle: subtitle(d), stateText: stateText(d), glyph: glyph,
-                            tone: tone, live: !d.state.isTerminal, declared: declared, needsInput: d.needsInput,
+                            tone: tone, live: !d.isSettled, declared: declared, needsInput: d.needsInput,
                             provider: TaskLimits.provider(named: d.harness), bar: declared ? d.progress : nil, headline: headline,
                             estimate: nil, figures: figures, warning: quiet ? nil : d.warning, rows: built.rows,
                             expandable: built.expandable, expanded: expanded && built.expandable,
@@ -291,7 +302,76 @@ extension RunsPresenter {
         card.verdict = syncedVerdict(d, quiet: quiet, timeline: card.timeline != nil)
         card.rowsTitle = !declared ? "Agents" : d.mirrored ? "Steps" : "Tasks"
         card.page = syncedPage(d, card: card)
+        card.phase = Self.phase(d)
+        card.worked = Self.worked(d)
+        card.cost = d.cost
+        card.percent = declared ? headlinePercent(d) : nil
+        card.updatedAt = d.updatedAt
+        card.line = syncedRow(d, card: card)
+        card.lead = syncedLead(d, card: card)
         return card
+    }
+
+    /// Who moves next, from what the Mac synced. A run whose Mac went quiet stays with the agent.
+    public static func phase(_ d: RunDigest) -> RunPhase {
+        if d.isSettled { return .settled }
+        if d.needsInput { return .asks }
+        return d.yourTurn ? .yourTurn : .working
+    }
+
+    /// Seconds worked: the Mac's figure, else the receipt's split, else the time open.
+    public static func worked(_ d: RunDigest) -> Double {
+        if let w = d.workingSeconds { return w }
+        if let t = d.receipt?.time, t.total > 0 { return t.working }
+        return d.receipt?.seconds ?? max(0, d.updatedAt.timeIntervalSince(d.startedAt))
+    }
+
+    func syncedRow(_ d: RunDigest, card c: RunCardModel) -> RunLineModel {
+        let open = d.counts.total - d.counts.finished
+        switch Self.phase(d) {
+        case .asks:
+            return RunLineModel(key: "Asks you", keyTone: .alert, detail: d.question.map { "“\($0.text)”" } ?? "Answer it on \(d.mac)", figure: figure(c))
+        case .yourTurn:
+            let detail = [open > 0 ? "\(open) open" : nil, d.mustHaves.total > 0 && d.mustHaves.done == d.mustHaves.total ? RunWords.mustHavesDone : nil]
+                .compactMap { $0 }.joined(separator: " · ")
+            return RunLineModel(key: RunWords.yourTurn(since: TimeFormat.compact(now.timeIntervalSince(d.updatedAt))), detail: detail.isEmpty ? nil : detail,
+                                figure: figure(c), time: Self.worked(d) >= 60 ? Self.duration(Self.worked(d)) : nil)
+        case .working:
+            let status = c.page?.status
+            let tone: RunTone = d.lastSeen != nil ? .quiet : d.stale || d.waitReason == .limit ? .warn : d.state == .running ? .progress : .neutral
+            return RunLineModel(key: status?.key ?? c.stateText, keyTone: tone, detail: status?.detail, figure: figure(c), time: c.hero?.side)
+        case .settled:
+            var parts: [String] = []
+            if d.left || d.abandoned { if open > 0 { parts.append("\(open) open") } }
+            else if d.counts.total > 0 { parts.append("\(d.counts.total) \(!(d.hasDeclaredTasks || d.mirrored) ? "agents" : d.mirrored ? "steps" : "tasks")") }
+            if Self.worked(d) >= 60 { parts.append(RunWords.working(Self.duration(Self.worked(d)))) }
+            return RunLineModel(key: c.stateText, keyTone: settledTone(c), detail: parts.isEmpty ? nil : parts.joined(separator: " · "),
+                                figure: d.cost.map { NumberFormat.dollars($0, style: .precise) },
+                                time: TimeFormat.clock(d.updatedAt, calendar: calendar, locale: locale))
+        }
+    }
+
+    func syncedLead(_ d: RunDigest, card c: RunCardModel) -> RunLeadModel? {
+        switch Self.phase(d) {
+        case .settled: return nil
+        case .asks: return RunLeadModel(badge: "Asks you", tone: .alert)
+        case .yourTurn:
+            var since = TimeFormat.compact(now.timeIntervalSince(d.updatedAt)) + " ago"
+            if let t = d.turnSeconds, t >= 60 { since += " · worked \(Self.duration(t)) this turn" }
+            let open = (d.rows ?? []).filter { !$0.state.isTerminal }
+            let rows = open.prefix(3).enumerated().map { i, row -> RunRowModel in
+                let node = TaskNode(id: "\(i)", title: row.title, state: row.state, waitReason: row.waitReason, importance: row.importance)
+                let (glyph, tone) = Self.look(node)
+                let yours = row.state == .waiting && row.waitReason == .you
+                return RunRowModel(id: "\(i)", glyph: glyph, tone: tone, title: row.title,
+                                   marker: yours ? RunWords.yours.lowercased() : row.importance == .normal ? nil : row.importance.rawValue)
+            }
+            let n = d.counts.total - d.counts.finished
+            return RunLeadModel(badge: RunWords.yourTurn, tone: .neutral, since: since, rows: rows, rowsTitle: n > 0 ? "What's left · \(n)" : nil)
+        case .working:
+            let tone: RunTone = d.lastSeen != nil ? .quiet : d.stale || d.waitReason == .limit ? .warn : .progress
+            return RunLeadModel(badge: c.page?.status.key ?? c.stateText, tone: tone, note: c.verdict?.primary)
+        }
     }
 
     /// The hero as the Mac's card has it: the percent (or agents finished) and the time left as
@@ -300,9 +380,9 @@ extension RunsPresenter {
         let declared = d.hasDeclaredTasks || d.mirrored
         func clock(_ date: Date) -> String { TimeFormat.clock(date, calendar: calendar, locale: locale) }
         var side: String?, caption: String?, hourglass = false
-        if d.state.isTerminal {
-            let s = d.receipt?.seconds ?? d.updatedAt.timeIntervalSince(d.startedAt)
-            side = Self.duration(s); caption = "start to finish"
+        if d.isSettled || d.yourTurn {
+            let w = Self.worked(d)
+            if w >= 60 { side = Self.duration(w); caption = d.isSettled ? "working" : "working so far" }
         } else if declared, !quiet, d.state == .running, !d.stale, let finish = d.limit?.finishAt ?? d.finishAt, finish > now {
             let low = d.limit?.finishAt == nil ? d.finishLow : nil, high = d.limit?.finishAt == nil ? d.finishHigh : nil
             side = "~" + TimeFormat.compact(finish.timeIntervalSince(now))
@@ -329,8 +409,8 @@ extension RunsPresenter {
         let open = d.counts.total - d.counts.finished
         var primary: String?
         if d.abandoned {
-            primary = open > 0 ? "Given up with \(open) \(open == 1 ? "task" : "tasks") open." : "Given up."
-        } else if let seen = d.lastSeen, !d.state.isTerminal {
+            primary = open > 0 ? "Closed with \(open) \(open == 1 ? "task" : "tasks") open." : "Closed."
+        } else if let seen = d.lastSeen, !d.isSettled {
             primary = "\(d.mac) stopped syncing \(TimeFormat.freshness(since: seen, now: now)) ago, so this may be out of date."
         } else {
             switch d.state {
@@ -346,9 +426,10 @@ extension RunsPresenter {
                 switch d.waitReason ?? .dependency {
                 case .input: primary = nil
                 case .limit: primary = timeline ? nil : d.warning
-                case .dependency: primary = RunWords.waitingOnTask + "."
+                case .dependency, .you: primary = RunWords.waitingOnTask + "."
                 }
-            case .stopped: primary = "\(open) \(open == 1 ? "task" : "tasks") left. Pick it up on \(d.mac)."
+            case .stopped where d.left: primary = "\(open) \(open == 1 ? "task" : "tasks") left open when the session ended. Resume it on \(d.mac)."
+            case .stopped: primary = "The agent ended its turn with \(open) \(open == 1 ? "task" : "tasks") open. Reply on \(d.mac) to go on."
             case .done:
                 let opt = d.receipt?.optionalFailed ?? 0
                 primary = opt > 0 ? "Everything that counts is done; \(opt) optional \(opt == 1 ? "task" : "tasks") failed."
@@ -379,14 +460,14 @@ extension RunsPresenter {
         if let h = Self.harnessName(d.harness), baseTitle(d) != Self.untitled(d.harness) { parts.append(h) }
         let age = TimeFormat.freshness(since: d.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
-        parts.append(d.state.isTerminal ? "finished \(ago)" : "updated \(ago)")
+        parts.append(d.left ? "settled \(ago)" : d.isSettled ? "finished \(ago)" : "updated \(ago)")
         return parts.joined(separator: " · ")
     }
 
     /// The Mac's state words; "Mac last seen 2h ago" once its Mac went quiet mid-run.
     public func stateText(_ d: RunDigest) -> String {
-        if d.abandoned { return RunWords.abandoned }
-        if let seen = d.lastSeen, !d.state.isTerminal {
+        if d.abandoned { return RunWords.closed }
+        if let seen = d.lastSeen, !d.isSettled {
             let age = TimeFormat.freshness(since: seen, now: now)
             return RunWords.macLastSeen(age == "now" ? "1m" : age)
         }
@@ -397,7 +478,7 @@ extension RunsPresenter {
     func asRun(_ d: RunDigest) -> TaskRun {
         TaskRun(id: d.id, title: d.id, harness: d.harness, startedAt: d.startedAt, updatedAt: d.updatedAt, state: d.state, waitReason: d.waitReason,
                 stale: d.stale, progress: d.progress, mustHaves: d.mustHaves, etaSeconds: d.etaSeconds, tokens: d.tokens, warning: d.warning,
-                hasDeclaredTasks: d.hasDeclaredTasks, abandoned: d.abandoned, mirrored: d.mirrored)
+                hasDeclaredTasks: d.hasDeclaredTasks, abandoned: d.abandoned, mirrored: d.mirrored, left: d.left)
     }
 
     /// Named rows as the Mac lists them (capped, then "and N more", "N finished", "finished
@@ -458,12 +539,9 @@ extension RunsPresenter {
         return s
     }
 
-    /// "1h 12m working" while live; "1h 42m" once finished, as the Mac's card has it.
+    /// "1h 12m working", live or settled, as the Mac's card has it.
     func syncedElapsed(_ d: RunDigest, quiet: Bool) -> String? {
-        if d.state.isTerminal {
-            let seconds = d.receipt?.seconds ?? d.updatedAt.timeIntervalSince(d.startedAt)
-            return seconds >= 60 ? Self.duration(seconds) : nil
-        }
+        if d.isSettled { return Self.worked(d) >= 60 ? RunWords.working(Self.duration(Self.worked(d))) : nil }
         guard !quiet, let w = d.workingSeconds, w >= 60 else { return nil }
         return "\(Self.duration(w)) working"
     }
@@ -516,7 +594,7 @@ extension RunsPresenter {
 
     /// How long, how much, how it went and where the time went, once a run is finished.
     func syncedReceipt(_ d: RunDigest) -> RunReceiptModel? {
-        guard d.state.isTerminal, let r = d.receipt else { return nil }
+        guard d.isSettled, let r = d.receipt else { return nil }
         let c = d.counts
         // Counts leave out what doesn't count toward the run; the receipt names failed optional work too.
         let optional = d.hasDeclaredTasks ? r.optionalFailed : 0
@@ -527,10 +605,12 @@ extension RunsPresenter {
         var foot: [String] = []
         if r.scopeChanges > 0 { foot.append("Plan changed \(r.scopeChanges) time\(r.scopeChanges == 1 ? "" : "s") after it started") }
         if r.retries > 0 { foot.append("\(r.retries) retr\(r.retries == 1 ? "y" : "ies")") }
-        return RunReceiptModel(duration: Self.duration(r.seconds), tokens: NumberFormat.tokens(d.tokens),
-                               cost: d.cost.map { "about " + NumberFormat.dollars($0) },
-                               tasks: "\(d.hasDeclaredTasks ? c.done : c.finished) of \(total)", tasksNote: note.joined(separator: " · "),
-                               time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
+        var rc = RunReceiptModel(duration: Self.duration(Self.worked(d)), tokens: NumberFormat.tokens(d.tokens),
+                                 cost: d.cost.map { "about " + NumberFormat.dollars($0) },
+                                 tasks: "\(d.hasDeclaredTasks ? c.done : c.finished) of \(total)", tasksNote: note.joined(separator: " · "),
+                                 time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
+        rc.open = Self.duration(r.seconds)
+        return rc
     }
 
     /// The headline percent, as the Mac's card has it: the best guess of how far along the run is
@@ -568,9 +648,9 @@ extension RunsPresenter {
         return RunAlertCopy(title: title, body: facts(d))
     }
 
-    /// A run whose agent stopped with tasks still open.
-    public func stoppedAlert(_ d: RunDigest) -> RunAlertCopy {
-        RunAlertCopy(title: RunWords.alertStopped(baseTitle(d)), body: facts(d))
+    /// A run whose agent ended a turn of real work with tasks still open.
+    public func turnEndedAlert(_ d: RunDigest) -> RunAlertCopy {
+        RunAlertCopy(title: RunWords.alertTurnEnded(baseTitle(d), after: Self.duration(d.turnSeconds ?? 0)), body: facts(d))
     }
 
     /// "On MacBook Pro. 46% done · must-haves 1 of 2 · 2.31M tokens".

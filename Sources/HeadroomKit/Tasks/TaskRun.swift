@@ -172,13 +172,29 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
     public var repo: String?
     public var branch: String?
 
+    // Added with the run lifecycle. Every one is optional on disk.
+
+    /// Stopped, and settled: its session ended, or nothing has happened for `TaskFold.leftAfterTurn`
+    /// since its turn ended, or it went silent with nothing running. A left run sits with the
+    /// finished ones ("Left at 95%"); a stopped run that isn't left is waiting on its person
+    /// ("Your turn"). Resuming the session reopens it.
+    public var left: Bool
+    /// When the orchestrator last ended its turn, while the run is stopped.
+    public var turnEndedAt: Date?
+    /// Seconds of work in the turn that ended at `turnEndedAt`.
+    public var turnSeconds: Double?
+    /// Jobs this session did, when more than one: the plan was finished and a new one began. The
+    /// title, percent and scope describe the last; the others sit under `TaskFold.sessionID`.
+    public var jobs: Int?
+
     public init(id: String, title: String, project: String? = nil, harness: String? = nil, startedAt: Date, updatedAt: Date, state: TaskRunState,
                 waitReason: TaskWaitReason? = nil, stale: Bool = false, progress: TaskProgress = .zero, mustHaves: TaskMustHaves = TaskMustHaves(done: 0, total: 0),
                 etaSeconds: Double? = nil, tokens: Int64 = 0, scopeChanges: Int = 0, warning: String? = nil, hasDeclaredTasks: Bool? = nil, nodes: [TaskNode] = [], finishedEarlier: Int? = nil,
                 hidden: Bool = false, abandoned: Bool = false, question: TaskQuestion? = nil, time: TaskTimeSplit = .zero, etaLowSeconds: Double? = nil,
                 etaHighSeconds: Double? = nil, tokensByModel: [String: Int64] = [:], recentTokensPerHour: Double? = nil, tokensToFinish: Int64? = nil,
                 limitOutlook: TaskLimitOutlook? = nil, mirrored: Bool = false, host: String? = nil, cwd: String? = nil,
-                sessionTitle: String? = nil, repo: String? = nil, branch: String? = nil) {
+                sessionTitle: String? = nil, repo: String? = nil, branch: String? = nil, left: Bool = false, turnEndedAt: Date? = nil,
+                turnSeconds: Double? = nil, jobs: Int? = nil) {
         self.id = id; self.title = title; self.project = project; self.harness = harness; self.startedAt = startedAt; self.updatedAt = updatedAt
         self.state = state; self.waitReason = waitReason; self.stale = stale; self.progress = progress; self.mustHaves = mustHaves
         self.etaSeconds = etaSeconds; self.tokens = tokens; self.scopeChanges = scopeChanges; self.warning = warning
@@ -190,9 +206,15 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
         self.recentTokensPerHour = recentTokensPerHour; self.tokensToFinish = tokensToFinish; self.limitOutlook = limitOutlook
         self.mirrored = mirrored; self.host = host; self.cwd = cwd
         self.sessionTitle = sessionTitle; self.repo = repo; self.branch = branch
+        self.left = left; self.turnEndedAt = turnEndedAt; self.turnSeconds = turnSeconds; self.jobs = jobs
     }
 
-    public var attention: TaskAttention { TaskAttention(run: state, waitReason: waitReason, stale: stale) }
+    /// A left run is settled: it ranks with the finished ones.
+    public var attention: TaskAttention { left ? .done : TaskAttention(run: state, waitReason: waitReason, stale: stale) }
+    /// Finished, given up on, or left: nothing more will happen unless the session picks it up.
+    public var isSettled: Bool { state.isTerminal || abandoned || left }
+    /// The agent ended its turn with work open and the session is still there: the person moves next.
+    public var yourTurn: Bool { state == .stopped && !left && !abandoned }
     public var needsInput: Bool { state == .waiting && waitReason == .input }
     /// Leaves that count and are running.
     public var runningCount: Int { nodes.filter { $0.leaf && $0.counted && $0.state == .running }.count }
@@ -201,7 +223,7 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
     /// `headroom tasks` shows without `--all`.
     public func isActive(now: Date) -> Bool {
         let age = now.timeIntervalSince(updatedAt)
-        return state.isTerminal ? age < 600 : age < 86400
+        return isSettled ? age < 600 : age < 86400
     }
 
     enum CodingKeys: String, CodingKey {
@@ -216,6 +238,9 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
         case finishedEarlier = "finished_earlier"
         case hidden, abandoned, question, time, mirrored, host, cwd, repo, branch
         case sessionTitle = "session_title"
+        case left, jobs
+        case turnEndedAt = "turn_ended_at"
+        case turnSeconds = "turn_seconds"
         case etaLowSeconds = "eta_low_seconds"
         case etaHighSeconds = "eta_high_seconds"
         case tokensByModel = "tokens_by_model"
@@ -252,8 +277,34 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
                   mirrored: try c.decodeIfPresent(Bool.self, forKey: .mirrored) ?? false,
                   host: try c.decodeIfPresent(String.self, forKey: .host), cwd: try c.decodeIfPresent(String.self, forKey: .cwd),
                   sessionTitle: try c.decodeIfPresent(String.self, forKey: .sessionTitle),
-                  repo: try c.decodeIfPresent(String.self, forKey: .repo), branch: try c.decodeIfPresent(String.self, forKey: .branch))
+                  repo: try c.decodeIfPresent(String.self, forKey: .repo), branch: try c.decodeIfPresent(String.self, forKey: .branch),
+                  left: try c.decodeIfPresent(Bool.self, forKey: .left) ?? false,
+                  turnEndedAt: try c.decodeIfPresent(Date.self, forKey: .turnEndedAt),
+                  turnSeconds: try c.decodeIfPresent(Double.self, forKey: .turnSeconds),
+                  jobs: try c.decodeIfPresent(Int.self, forKey: .jobs))
     }
+}
+
+extension TaskRun {
+    /// The nodes of the job the run is on: all of them, less the earlier jobs grouped under
+    /// `TaskFold.sessionID` (which follow it in display order).
+    public var jobNodes: [TaskNode] {
+        guard jobs != nil else { return nodes }
+        var past: Set<String> = []
+        return nodes.filter { n in
+            if n.id == TaskFold.sessionID || n.parent.map(past.contains) == true { past.insert(n.id); return false }
+            return true
+        }
+    }
+
+    /// The earlier jobs, as the top-level nodes under `TaskFold.sessionID`.
+    public var earlierJobs: [TaskNode] {
+        guard jobs != nil else { return [] }
+        return nodes.filter { $0.parent == TaskFold.sessionID }
+    }
+
+    /// Every critical task of the job is done.
+    public var mustHavesDone: Bool { mustHaves.total > 0 && mustHaves.done == mustHaves.total }
 }
 
 extension Array where Element == TaskRun {

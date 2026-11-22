@@ -22,7 +22,7 @@ import HeadroomKit
         let quiet = presenter.pageModel(Demo.quietRun(now: now)).status
         #expect(quiet.key.hasPrefix("Quiet ") && quiet.detail?.hasPrefix("on ") == true)
         #expect(presenter.pageModel(Demo.finishedRun(now: now)).status.key == RunWords.done)
-        #expect(presenter.pageModel(Demo.abandonedRun(now: now)).status.key == RunWords.abandoned)
+        #expect(presenter.pageModel(Demo.abandonedRun(now: now)).status.key == RunWords.closed)
     }
 
     @Test func openTasksSitUnderTheirParentsAndFinishedOnesFold() {
@@ -46,7 +46,7 @@ import HeadroomKit
         #expect(page.groupsTitle == "Didn't finish")
         #expect(page.groups.flatMap(\.rows).allSatisfy { $0.glyph != .done })
         #expect(page.lanes == nil && page.limit == nil)
-        #expect(page.facts.map(\.label).starts(with: ["Took", "Tokens"]))
+        #expect(page.facts.map(\.label).starts(with: ["Worked", "Tokens"]))
     }
 
     @Test func theLimitIsOneLineWithItsForecast() throws {

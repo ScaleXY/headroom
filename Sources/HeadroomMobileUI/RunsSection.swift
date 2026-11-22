@@ -298,6 +298,9 @@ extension RunMark {
         case .failed: .failed
         case .skipped: .skipped
         case .more: .more
+        case .yourTurn: .yourTurn
+        // Settled with work open: half done, as a parked task reads.
+        case .left: .parked
         }
     }
 }

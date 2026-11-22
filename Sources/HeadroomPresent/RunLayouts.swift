@@ -3,32 +3,6 @@ import HeadroomKit
 
 // MARK: - Styles
 
-/// How the Runs tab lists runs. Every style opens a run's own page on click.
-public enum RunsListStyle: Int, CaseIterable, Sendable {
-    /// One line per run in fixed columns: state, name, meter, figure, time.
-    case ledger
-    /// The name and figure, and under them what's happening, with a hairline of progress.
-    case twoLine
-    /// Each line is its own progress bar, tinted by state; finished runs fold into a tally.
-    case fill
-
-    public var title: String {
-        switch self {
-        case .ledger: "Ledger"
-        case .twoLine: "Two-line"
-        case .fill: "Fill rows"
-        }
-    }
-
-    public var detail: String {
-        switch self {
-        case .ledger: "One line per run, in columns. The densest."
-        case .twoLine: "Adds what each run is doing, under its name."
-        case .fill: "Each line fills as the run gets along."
-        }
-    }
-}
-
 /// How a run's own page draws it.
 public enum RunPageStyle: Int, CaseIterable, Sendable {
     /// The status, the percent and its facts, the task meter, the limit, then the open tasks.
@@ -193,7 +167,7 @@ public struct RunLanesModel: Sendable, Hashable {
 /// What a run's own page needs beyond the card: its status line, facts, limit, grouped tasks and lanes.
 public struct RunPageModel: Sendable, Hashable {
     public var status: RunStatusModel
-    /// The list's second line (Two-line): the question, the pause, what's running.
+    /// A short second line: the question, the pause, what's running.
     public var line: String?
     public var facts: [RunFactModel]
     public var limit: RunLimitModel?
@@ -220,29 +194,6 @@ public struct RunPageModel: Sendable, Hashable {
     }
 }
 
-/// How the finished runs ended, and what they cost together.
-public struct RunOutcomes: Sendable, Hashable {
-    public var done = 0, failed = 0, abandoned = 0
-    /// Summed costs in dollars, when any run is priced.
-    public var cost: Double?
-
-    public init(_ cards: [RunCardModel]) {
-        for c in cards {
-            switch c.glyph {
-            case .failed, .partial: failed += 1
-            case .skipped: abandoned += 1
-            default: done += 1
-            }
-            if let s = c.receipt?.cost, let v = Double(s.filter { $0.isNumber || $0 == "." }) { cost = (cost ?? 0) + v }
-        }
-    }
-
-    /// "3 done", "1 with failures", "1 abandoned".
-    public var words: [String] {
-        [done > 0 ? "\(done) done" : nil, failed > 0 ? "\(failed) with failures" : nil, abandoned > 0 ? "\(abandoned) abandoned" : nil].compactMap { $0 }
-    }
-}
-
 // MARK: - Building
 
 extension RunsPresenter {
@@ -259,7 +210,8 @@ extension RunsPresenter {
         let limit = finished ? nil : self.limit(r)
         let g = groups(r, showDone: showDone, opened: opened)
         return RunPageModel(status: status, line: line(r, status: status, limit: limit), facts: facts(r, limit: limit), limit: limit,
-                            groups: g.groups, groupsTitle: finished ? "Didn't finish" : r.hasDeclaredTasks ? (r.mirrored ? "Open steps" : "Open tasks") : "Agents",
+                            groups: g.groups,
+                            groupsTitle: r.left || r.yourTurn ? "What's left" : finished ? "Didn't finish" : r.hasDeclaredTasks ? (r.mirrored ? "Open steps" : "Open tasks") : "Agents",
                             openCount: g.open, doneCount: g.done, showDone: showDone && g.done > 0, moreOpen: g.more,
                             lanes: finished ? nil : lanes(r))
     }
@@ -271,7 +223,7 @@ extension RunsPresenter {
     /// agents under a declared task stay out.
     func pageLeaves(_ r: TaskRun) -> [TaskNode] {
         guard r.hasDeclaredTasks else { return r.nodes }
-        return r.nodes.filter { n in n.leaf && (n.declared || n.counted || n.replacedBy != nil) }
+        return r.jobNodes.filter { n in n.leaf && (n.declared || n.counted || n.replacedBy != nil) }
     }
 
     func status(_ r: TaskRun) -> RunStatusModel {
@@ -280,7 +232,7 @@ extension RunsPresenter {
         func titles(_ nodes: [TaskNode]) -> String? { nodes.isEmpty ? nil : nodes.map(\.title).joined(separator: ", ") }
         let noun = r.hasDeclaredTasks ? (r.mirrored ? "step" : "task") : "agent"
         func left(_ n: Int) -> String { "\(n) \(noun)\(n == 1 ? "" : "s") left" }
-        if r.abandoned { return RunStatusModel(key: RunWords.abandoned, detail: open > 0 ? left(open) + " open" : nil) }
+        if r.abandoned { return RunStatusModel(key: RunWords.closed, detail: open > 0 ? left(open) + " open" : nil) }
         switch r.state {
         case .running where r.stale:
             let quietFor = TimeFormat.compact(now.timeIntervalSince(r.updatedAt))
@@ -299,13 +251,17 @@ extension RunsPresenter {
             case .limit:
                 let resume = r.limitOutlook?.resumeAt.map { "resumes \(TimeFormat.clock($0, calendar: calendar, locale: locale))" }
                 return RunStatusModel(key: "Paused at the limit", detail: resume)
-            case .dependency:
+            case .dependency, .you:
                 let waiting = leaves.first { $0.state == .waiting }
                 return RunStatusModel(key: "Waiting", detail: waiting?.waitNote ?? waiting.map { "\($0.title) waits on another task" })
             }
         case .stopped:
-            let key = stateText(r).hasPrefix("Mac last seen") ? stateText(r) : "Stopped"
-            return RunStatusModel(key: key, detail: open > 0 ? left(open) : nil)
+            if stateText(r).hasPrefix("Mac last seen") { return RunStatusModel(key: stateText(r), detail: open > 0 ? left(open) : nil) }
+            // Must-haves done is said under the status (the verdict), not twice.
+            var detail = [open > 0 ? left(open) : nil, r.mustHavesDone && !r.left ? RunWords.mustHavesDone : nil].compactMap { $0 }
+            if r.left { detail.append("session ended") }
+            return RunStatusModel(key: r.left ? RunWords.left(at: r.hasDeclaredTasks ? shownPercent(r) : nil) : RunWords.yourTurn,
+                                  detail: detail.isEmpty ? nil : detail.joined(separator: " · "))
         case .done:
             let (tasks, note) = Self.receiptTasks(r)
             return RunStatusModel(key: RunWords.done, detail: tasks + " " + note)
@@ -345,7 +301,7 @@ extension RunsPresenter {
         var out: [RunFactModel] = []
         if Self.isFinished(r) {
             let rc = receipt(r)
-            out.append(RunFactModel(label: "Took", value: rc.duration))
+            out.append(RunFactModel(label: "Worked", value: rc.duration))
             out.append(RunFactModel(label: "Tokens", value: rc.tokens))
             if let cost = rc.cost { out.append(RunFactModel(label: "Cost", value: cost.replacingOccurrences(of: "about ", with: "~"))) }
             return out
@@ -372,7 +328,8 @@ extension RunsPresenter {
         let leaves = pageLeaves(r)
         func isDone(_ n: TaskNode) -> Bool { n.state == .done || (finished && n.state == .skipped && n.replacedBy == nil) }
         // Live: what's still open, and apart from it what failed. Finished: whatever didn't finish.
-        let listed = finished ? leaves.filter { !isDone($0) } : leaves.filter { !$0.state.isTerminal }
+        // Yours first on a run that waits on its person: that's what they can do now.
+        let listed = (finished && !r.left ? leaves.filter { !isDone($0) } : leaves.filter { !$0.state.isTerminal })
         let failed = finished ? [] : leaves.filter { $0.state.isTerminal && !isDone($0) && $0.state != .skipped && $0.state != .cancelled }
         let done = leaves.filter(isDone)
         // "Port the checkout endpoints › Rewrite the routes": the last two ancestors.
@@ -388,7 +345,9 @@ extension RunsPresenter {
         func row(_ n: TaskNode) -> RunRowModel {
             taskRow(n, depth: 0, run: r, rolled: [], opened: opened.contains(Self.rowKey(run: r.id, row: n.id)))
         }
-        let order = listed.enumerated().sorted { (a, b) in (a.element.attention, a.offset) < (b.element.attention, b.offset) }.map(\.element)
+        func yours(_ n: TaskNode) -> Int { n.state == .waiting && n.waitReason == .you && r.state == .stopped ? 0 : 1 }
+        let order = listed.enumerated().sorted { (a, b) in (yours(a.element), a.element.attention, a.offset) < (yours(b.element), b.element.attention, b.offset) }
+            .map(\.element)
         let shown = Array(order.prefix(Self.pageRowCap))
         var groups: [RunGroupModel] = []
         var index: [String: Int] = [:]
@@ -414,7 +373,28 @@ extension RunsPresenter {
         if showDone, !done.isEmpty {
             groups.append(RunGroupModel(id: "~done", title: "Done", rows: done.map(row)))
         }
+        // The jobs this session finished before this one: one row each, folded under "This session".
+        let earlier = r.earlierJobs
+        if !earlier.isEmpty {
+            groups.append(RunGroupModel(id: TaskFold.sessionID, title: "\(TaskFold.sessionTitle) · \(earlier.count + 1) jobs",
+                                        rows: earlier.map { n in
+                                            var row = row(n)
+                                            let ls = r.nodes.filter { $0.leaf && $0.depth > n.depth && isUnder($0, n.id, byID) }
+                                            if !ls.isEmpty { row.steps = "\(ls.filter { $0.state == .done }.count) of \(ls.count)" }
+                                            return row
+                                        }))
+        }
         return (groups, listed.count, done.count + (r.finishedEarlier ?? 0), listed.count - shown.count)
+    }
+
+    /// Whether `n` sits beneath the node `ancestor`.
+    func isUnder(_ n: TaskNode, _ ancestor: String, _ byID: [String: TaskNode]) -> Bool {
+        var p = n.parent, hops = 0
+        while let id = p, hops < 32 {
+            if id == ancestor { return true }
+            p = byID[id]?.parent; hops += 1
+        }
+        return false
     }
 
     // MARK: Lanes

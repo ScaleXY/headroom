@@ -32,7 +32,7 @@ enum TaskOps {
         "add": "add ID --title T [--effort xs|s|m|l|xl|N] [--importance critical|normal|optional] [--steps N]",
         "start": "start ID [ID …]",
         "progress": "progress ID [--step K/N] [--fraction F] [--note TEXT]",
-        "wait": "wait ID --for input|dependency|limit [--note TEXT] [--option ANSWER …]",
+        "wait": "wait ID --for input|dependency|limit|you [--note TEXT] [--option ANSWER …]",
         "done": "done ID [ID …] [--evidence TEXT] [--force]",
         "fail": "fail ID [ID …] --reason TEXT [--instead NEW] [--force]",
         "skip": "skip ID [ID …] [--reason TEXT] [--force]",
@@ -43,7 +43,7 @@ enum TaskOps {
         "add": "Declares a task you discovered, or changes a declared one's title, effort, importance or steps. A new task needs --title. Effort is relative among siblings: xs s m l xl (1 2 4 8 16) or a number.",
         "start": "Marks tasks as being worked on.",
         "progress": "Reports how far a task has got: --step K/N (K of N steps done; K alone once N is known), --fraction F (0 to 1), --note TEXT (up to 400 characters).",
-        "wait": "Marks a task as blocked on a person (input), another task (dependency) or a usage limit (limit). --option offers an answer the user can pick; repeat it for each.",
+        "wait": "Marks a task as blocked on a person's answer now (input), another task (dependency) or a usage limit (limit); --for you marks work only the user can do (submit, sign, approve), which never blocks you and never asks. --option offers an answer the user can pick; repeat it for each.",
         "done": "Closes tasks as finished. --evidence says what shows it: tests passing, a commit, a URL.",
         "fail": "Closes tasks you tried and couldn't finish. --reason is required. --instead NEW names the task taking over (another way to the same end), so the run isn't marked failed while NEW goes on.",
         "skip": "Closes tasks you decided aren't needed.",
@@ -77,7 +77,7 @@ enum TaskOps {
             return e(.progress(task: path, step: step, total: total, fraction: fraction, note: TaskText.note(o["note"])))
         case "wait":
             guard let r = o["for"], let reason = TaskWaitReason(rawValue: r) else {
-                throw Failure("wait needs --for input (a person), dependency (another task) or limit (a usage limit)")
+                throw Failure("wait needs --for input (a question for the user now), dependency (another task), limit (a usage limit) or you (work only the user can do)")
             }
             let offered = answers.compactMap(TaskText.title)
             return e(.wait(task: path, attempt: nil, reason: reason, note: TaskText.note(o["note"]), options: offered.isEmpty ? nil : offered))
@@ -274,6 +274,7 @@ enum TaskOps {
             if q.options["step"] != nil, let s = n?.steps { return "\(paths[0]) \(s.done)/\(s.total)" }
             if let f = n?.fraction, q.options["fraction"] != nil { return "\(paths[0]) \(Int((f * 100).rounded()))%" }
             return "\(paths[0]) noted"
+        case "wait" where q.options["for"] == "you": return "\(paths[0]) is the user's to do (it never holds you up)"
         case "wait": return "\(paths[0]) waiting on \(q.options["for"] ?? "dependency")"
         case "done": return "✓ \(names) done"
         case "fail":
@@ -404,10 +405,11 @@ enum TaskCommand {
            headroom task add ID --title T [--effort xs|s|m|l|xl|N] [--importance critical|normal|optional] [--steps N]
            headroom task start ID [ID …]
            headroom task progress ID [--step K/N] [--fraction F] [--note TEXT]
-           headroom task wait ID --for input|dependency|limit [--note TEXT] [--option ANSWER …]
+           headroom task wait ID --for input|dependency|limit|you [--note TEXT] [--option ANSWER …]
            headroom task done ID [ID …] [--evidence TEXT] [--force]
            headroom task fail ID [ID …] --reason TEXT [--instead NEW] [--force]
            headroom task skip|cancel ID [ID …] [--reason TEXT] [--force]
+           headroom task close [--reason TEXT]        (abandon works too)
            headroom task status [--titles]
            headroom task guide
            headroom task adopt RUN
@@ -437,9 +439,10 @@ enum TaskCommand {
         case "adopt": return adopt(rest, ctx: ctx)
         case "hook": return HookCommand.run(rest, ctx: ctx)
         case "plan": return plan(rest, ctx: ctx)
+        case "close", "abandon": return close(rest, ctx: ctx)
         case let a where TaskOps.actions.contains(a): return report(a, rest, ctx: ctx)
         default:
-            let near = Fuzzy.closest(action, in: TaskOps.actions + ["plan", "status", "guide", "adopt"], limit: 1)
+            let near = Fuzzy.closest(action, in: TaskOps.actions + ["plan", "status", "guide", "adopt", "close"], limit: 1)
             ctx.error("headroom task: unknown command '\(TaskText.display(action, limit: 40))'" + (near.first.map { ". Did you mean \($0)?" } ?? ""))
             ctx.output(help)
             return HeadroomCLI.Exit.usage.rawValue
@@ -626,6 +629,43 @@ enum TaskCommand {
         return ok
     }
 
+    static let closeHelp = """
+    usage: headroom task close [--run ID] [--reason TEXT] [--quiet]
+
+    Closes the run: its open tasks are set aside and it settles with the finished runs. Nothing
+    is marked failed, and the agent itself isn't stopped; resuming the session opens it again.
+    `headroom task abandon` does the same.
+    """
+
+    /// `close` (and its old name, `abandon`): `run.abandon` in the run's journal.
+    static func close(_ args: [String], ctx: TaskContext) -> Int32 {
+        let a: Args
+        do { a = try Args(args, valued: ["--run", "--reason"], flags: ["--help", "-h", "--quiet"]) } catch {
+            return usage("close: \(error.message). Usage: headroom task close [--run ID] [--reason TEXT]", ctx)
+        }
+        if a.has("--help") || a.has("-h") {
+            ctx.output(closeHelp)
+            return ok
+        }
+        guard a.positional.isEmpty else { return usage("close takes no task ids: it closes the whole run. Usage: headroom task close [--run ID]", ctx) }
+        guard let run = RunResolver.resolve(flag: a["--run"], environment: ctx.environment, home: ctx.home) else {
+            return usage("close needs a run: pass --run ID or set HEADROOM_RUN", ctx)
+        }
+        guard RunResolver.exists(run, home: ctx.home) else { return usage("no run \(run): nothing was ever reported to it. Check the id (headroom tasks --all lists runs)", ctx) }
+        let now = ctx.now()
+        do { try ctx.append([TaskEvent(at: now, run: run, source: .agent, op: .abandon(reason: TaskText.note(a["--reason"])))]) } catch {
+            ctx.error("headroom task: could not write the journal: \(error.localizedDescription)")
+            return HeadroomCLI.Exit.failure.rawValue
+        }
+        guard !a.has("--quiet") else { return ok }
+        if let r = TaskFold.fold(TaskJournal.read(run: run, home: ctx.home), now: now).first {
+            TaskEcho.status(r, now: now, titles: false).forEach(ctx.output)
+        } else {
+            ctx.output("run \(run) closed")
+        }
+        return ok
+    }
+
     static func guide(_ args: [String], ctx: TaskContext) -> Int32 {
         let a: Args
         do { a = try Args(args, valued: ["--run"], flags: ["--help", "-h"]) } catch { return usage("guide: \(error.message)", ctx) }
@@ -668,6 +708,7 @@ enum TaskCommand {
              headroom task progress api/tests --step 2/4 --note "auth cases pass"
              headroom task done api/schema api/tests --evidence "migration applied, 12 tests pass"
              headroom task wait docs --for input --note "need the staging token"
+             headroom task wait release/submit --for you --note "submit in App Store Connect"   (only the user can do it)
              headroom task add api/rate-limit --title "Rate limiting" --effort s   (work you find)
         4. Outcomes: done = finished; fail --reason = tried and couldn't; skip = not needed after
            all; cancel = dropped because the plan changed. Worked around a failure another way?

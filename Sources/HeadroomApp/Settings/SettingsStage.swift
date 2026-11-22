@@ -106,7 +106,7 @@ enum SettingsStage {
         y += height * k + 16
         let samples: [(TaskNotificationKind, String, String)] = [
             (.needsInput, RunWords.alertNeedsInput("Database upgrade"), "May I drop the unused audit table? Nothing has read it since March."),
-            (.stopped, RunWords.alertStopped("Contacts import"), "3 of 5 tasks done."),
+            (.stopped, RunWords.alertTurnEnded("Contacts import", after: "24m"), "3 of 5 tasks done."),
             (.criticalFailed, RunWords.alertCriticalFailed("Ship the 2.3 release"), "Sign and notarize"),
             (.stale, RunWords.alertQuiet("Billing jobs"), "No agent activity for \(TaskAlerts.span(settings.runQuietAfter))."),
             (.finished, RunWords.alertFinished("Speed up image uploads"), "4 tasks done."),
@@ -118,44 +118,30 @@ enum SettingsStage {
         Text("\(on.count) OF \(samples.count) ALERTS ON", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: rect.maxY - 30, align: .center, in: ctx)
     }
 
-    /// Runs › Layout: the list in the chosen style above a run's page in the chosen style, each in
-    /// a popover-sized frame, so a change shows the moment it's picked.
+    /// Runs › Layout: a run's page in the chosen style, in a popover-sized frame, so a change shows
+    /// the moment it's picked.
     private static func runLayout(_ rect: CGRect, settings: AppSettings, theme t: Theme, ctx: CGContext) {
         guard settings.taskTracking else { return runs(rect, settings: settings, theme: t, ctx: ctx) }
         let now = Demo.now
-        let presenter = RunsPresenter(now: now)
-        let runs = Demo.runScenarios(now: now).first { $0.name == "mixed" }?.runs ?? []
-        let page = presenter.page(runs)
+        let card = RunsPresenter(now: now).card(Demo.timelineRun(now: now))
         let width = PopoverChrome.width - PopoverChrome.pad * 2
         let k = min((rect.width - 36) / width, 1)
         let x = rect.midX - width * k / 2
-        // Two frames sharing the stage: the list gets what it needs up to 55%, the page the rest.
-        let top = rect.minY + 22
-        let gap: CGFloat = 30, bottom = rect.maxY - 18
-        let avail = bottom - top - gap * 2
-        let listH = min(RunListRenderer.drawPage(page, style: settings.runsListStyle, origin: .zero, width: width, theme: t, ctx: nil) * k + 16, avail * 0.55)
-        let pageH = avail - listH
-        func frame(_ label: String, y: CGFloat, height: CGFloat, draw: (CGContext) -> Void) {
-            Text(label, F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: y - 12, align: .center, in: ctx)
-            let f = CGRect(x: x - 8, y: y, width: width * k + 16, height: height)
-            let shape = rounded(f, 14)
-            ctx.withState {
-                ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 18, color: black(t.isDark ? 0.45 : 0.16).cgColor)
-                ctx.fill(shape, t.isDark ? rgb(0x131418) : rgb(0xEDEDF1))
-            }
-            ctx.withState {
-                ctx.addPath(shape); ctx.clip()
-                PopoverChrome.drawWindow(f, theme: t, ctx: ctx, opaque: true)
-                ctx.translateBy(x: x, y: y + 8)
-                ctx.scaleBy(x: k, y: k)
-                draw(ctx)
-            }
+        let top = rect.minY + 44, bottom = rect.maxY - 18
+        let needed = RunPageRenderer.draw(card, style: settings.runPageStyle, origin: .zero, width: width, theme: t, ctx: nil) * k + 16
+        let height = min(needed, bottom - top)
+        Text("RUN PAGE · \(settings.runPageStyle.title.uppercased())", F.sf(9.5, 700), t.muted, kern: 1).draw(x: rect.midX, capCenter: top - 12, align: .center, in: ctx)
+        let f = CGRect(x: x - 8, y: top, width: width * k + 16, height: height)
+        let shape = rounded(f, 14)
+        ctx.withState {
+            ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 18, color: black(t.isDark ? 0.45 : 0.16).cgColor)
+            ctx.fill(shape, t.isDark ? rgb(0x131418) : rgb(0xEDEDF1))
         }
-        frame("LIST · \(settings.runsListStyle.title.uppercased())", y: top + gap - 8, height: listH) { ctx in
-            RunListRenderer.drawPage(page, style: settings.runsListStyle, origin: .zero, width: width, theme: t, ctx: ctx)
-        }
-        let card = presenter.card(Demo.timelineRun(now: now))
-        frame("RUN PAGE · \(settings.runPageStyle.title.uppercased())", y: top + gap - 8 + listH + gap, height: pageH) { ctx in
+        ctx.withState {
+            ctx.addPath(shape); ctx.clip()
+            PopoverChrome.drawWindow(f, theme: t, ctx: ctx, opaque: true)
+            ctx.translateBy(x: x, y: top + 8)
+            ctx.scaleBy(x: k, y: k)
             RunPageRenderer.draw(card, style: settings.runPageStyle, origin: .zero, width: width, theme: t, ctx: ctx)
         }
     }

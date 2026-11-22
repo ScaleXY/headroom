@@ -464,16 +464,18 @@ final class CardsView: NSView, NSViewToolTipOwner {
     private var runsPage = RunsPageModel()
     /// The run whose own page is open in the Runs tab; nil for the list.
     var detailRun: String? { didSet { if detailRun != oldValue { offset = 0 } } }
-    /// Two-line's folded finished runs, opened.
+    /// The day's short sessions, opened.
     private var showFinished = false
     /// "2 of 4 live": where the open run sits, for the page's crumb.
     var detailPosition: String? {
         guard let id = detailRun else { return nil }
         if let i = runsPage.live.firstIndex(where: { $0.id == id }) { return "\(i + 1) of \(runsPage.live.count) live" }
-        if runsPage.recent.contains(where: { $0.id == id }) { return "finished" }
+        if detailCard != nil { return "settled" }
         return nil
     }
-    private var detailCard: RunCardModel? { detailRun.flatMap { id in (runsPage.live + runsPage.recent).first { $0.id == id } } }
+    private var detailCard: RunCardModel? {
+        detailRun.flatMap { id in (runsPage.live + runsPage.recent + runsPage.days.flatMap(\.short)).first { $0.id == id } }
+    }
     /// Run cards showing their finished rows (for as long as the app runs).
     private var expandedRuns: Set<String> = []
     /// Rows showing their details (`RunsPresenter.rowKey`).
@@ -608,7 +610,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 return RunPageRenderer.draw(card, style: model.settings.runPageStyle, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx,
                                             out: ctx == nil ? nil : out) + 2
             }
-            return RunListRenderer.drawPage(runsPage, style: model.settings.runsListStyle, showFinished: showFinished, origin: CGPoint(x: pad, y: y),
+            return RunListRenderer.drawPage(runsPage, showFinished: showFinished, origin: CGPoint(x: pad, y: y),
                                             width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
         }
         let mode = model.settings.activityMode, kind = model.settings.breakdown
@@ -816,6 +818,8 @@ final class CardsView: NSView, NSViewToolTipOwner {
                     RunActions.openSession(run)
                 case .copyResume:
                     RunActions.copyResumeCommand(run)
+                case .close:
+                    confirmClose(run)
                 }
                 return
             case .connectAgents:
@@ -873,7 +877,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
 
     private func taskRun(_ id: String) -> TaskRun? { model.taskRuns.first { $0.id == id } }
 
-    /// Open session, copy the resume command, hide, give up: what the run allows.
+    /// Open (or resume) the session, copy the resume command, hide, close: what the run allows.
     private func showRunMenu(_ id: String, at p: NSPoint) {
         guard let run = taskRun(id) else { return }
         let actions = RunsPresenter.actions(run)
@@ -887,12 +891,12 @@ final class CardsView: NSView, NSViewToolTipOwner {
             menu.addItem(item)
         }
         if actions.openSession || actions.copyResume {
-            add("Open Session", #selector(openSession(_:)), enabled: actions.openSession)
+            add(actions.resume ? "Resume Session" : "Open Session", #selector(openSession(_:)), enabled: actions.openSession)
             add("Copy Resume Command", #selector(copyResume(_:)), enabled: actions.copyResume)
             menu.addItem(.separator())
         }
         add("Hide This Run", #selector(hideRun(_:)))
-        if actions.abandon { add("Mark as Abandoned…", #selector(abandonRun(_:))) }
+        if actions.close { add("Close Run…", #selector(closeRun(_:))) }
         menu.popUp(positioning: nil, at: p, in: self)
     }
 
@@ -912,20 +916,23 @@ final class CardsView: NSView, NSViewToolTipOwner {
         RunActions.hide(id)
     }
 
-    /// Asks first: giving up cancels the run's open tasks. The popover closes so the alert isn't
-    /// left behind it.
-    @objc private func abandonRun(_ sender: NSMenuItem) {
+    @objc private func closeRun(_ sender: NSMenuItem) {
         guard let run = (sender.representedObject as? String).flatMap(taskRun) else { return }
+        confirmClose(run)
+    }
+
+    /// Asks first: closing cancels the run's open tasks. Neutral, not a failure. The popover
+    /// closes so the alert isn't left behind it.
+    private func confirmClose(_ run: TaskRun) {
         let title = RunsPresenter(now: Date()).label(run)
         root?.controller?.close()
         let alert = NSAlert()
-        alert.messageText = "Mark “\(title)” as abandoned?"
-        alert.informativeText = "Its open tasks are cancelled and the run moves to the finished ones. The agent itself isn't stopped."
-        alert.addButton(withTitle: "Mark as Abandoned")
+        alert.messageText = "Close “\(title)”?"
+        alert.informativeText = "Its open tasks are set aside and it moves to the settled runs. The agent itself isn't stopped, and resuming the session opens it again."
+        alert.addButton(withTitle: "Close Run")
         alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { RunActions.abandon(run.id) }
+        if alert.runModal() == .alertFirstButtonReturn { RunActions.close(run.id) }
     }
 
     private func showBreakdownMenu(at p: NSPoint) {

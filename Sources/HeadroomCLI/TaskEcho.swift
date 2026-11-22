@@ -1,5 +1,6 @@
 import Foundation
 import HeadroomKit
+import HeadroomPresent
 
 /// What `headroom task` says back to the agent: one line after every report, and the compact
 /// tree `headroom task status` prints. Both are about the caller's run only.
@@ -62,13 +63,14 @@ enum TaskEcho {
     // MARK: Status
 
     static func stateWord(_ n: TaskNode) -> String {
-        n.state == .waiting ? "waiting:\(n.waitReason?.rawValue ?? "dependency")" : n.state.rawValue
+        n.state == .waiting ? (n.waitReason == .you ? "yours" : "waiting:\(n.waitReason?.rawValue ?? "dependency")") : n.state.rawValue
     }
 
     /// The run as a compact tree for an agent: a header with the run id, then one line per task,
     /// `name  state  [steps]  [age or note]`, indented by depth. Finished groups are one line.
     static func status(_ r: TaskRun, now: Date, titles: Bool) -> [String] {
-        let tasks = r.nodes.filter { !TaskPath.isImplicit($0.id) }
+        // The job the session is on; earlier ones are done with.
+        let tasks = r.jobNodes.filter { !TaskPath.isImplicit($0.id) }
         let leaves = tasks.filter { $0.leaf && $0.counted }
         var head = "run \(r.id)"
         if let name = r.bestTitle ?? r.project { head += " \"\(TaskText.display(name, limit: 60))\"" }
@@ -76,9 +78,10 @@ enum TaskEcho {
         switch r.state {
         case .running: break
         case .waiting: head += " · waiting on \(r.waitReason?.rawValue ?? "dependency")"
-        case .stopped: head += " · stopped with work left"
-        default: head += " · \(r.state.rawValue)"
+        case .stopped: head += " · " + TaskRender.stateWord(r)
+        default: head += " · " + TaskRender.stateWord(r)
         }
+        if let jobs = r.jobs { head += " · job \(jobs) of this session" }
         guard r.hasDeclaredTasks, !tasks.isEmpty else {
             return [head, "No plan declared. For work with 3 or more steps, declare one: headroom task guide explains how."]
         }

@@ -3,14 +3,19 @@ import HeadroomKit
 
 // MARK: - Models
 
-/// What a run, row or glyph means, for the renderer to colour: blue for work moving, ink for
-/// settled, amber for something to look at, rose for something that needs you or broke.
+/// What a run, row or glyph means, for the renderer to colour: blue for work moving, ink (pearl)
+/// for settled and for your turn, amber only for time and limits (quiet, paused at a limit), rose
+/// only for a question (`.alert` with a failure glyph is the failure colour instead).
 public enum RunTone: Sendable, Hashable {
     case progress, neutral, warn, alert, quiet
 }
 
 public enum RunGlyph: Sendable, Hashable {
     case planned, running, stale, needsInput, waiting, parked, stopped, done, partial, failed, skipped
+    /// The agent ended its turn: the person moves next.
+    case yourTurn
+    /// Settled with work open.
+    case left
     /// "and N more".
     case more
 }
@@ -73,8 +78,10 @@ public struct RunTimelineModel: Sendable, Hashable {
 
 /// A finished run's receipt: how long, how much, how it went, and where the time went.
 public struct RunReceiptModel: Sendable, Hashable {
-    /// "1h 42m"
+    /// "1h 23m": time worked, which is what a run's time means on every surface but its page.
     public var duration: String
+    /// "128h": first event to last, which the run page shows beside where the time went.
+    public var open: String?
     /// "296K"
     public var tokens: String
     /// "about $4.10", when the models are priced.
@@ -89,6 +96,7 @@ public struct RunReceiptModel: Sendable, Hashable {
 
     public init(duration: String, tokens: String, cost: String? = nil, tasks: String, tasksNote: String, time: TaskTimeSplit, footnote: String? = nil) {
         self.duration = duration; self.tokens = tokens; self.cost = cost; self.tasks = tasks; self.tasksNote = tasksNote; self.time = time; self.footnote = footnote
+        self.open = nil
     }
 }
 
@@ -99,14 +107,17 @@ public struct RunActionSet: Sendable, Hashable {
     /// Copy a command that resumes the session in a terminal.
     public var copyResume: Bool
     public var hide: Bool
-    /// Give up on a run that isn't finished.
-    public var abandon: Bool
+    /// Close a run that isn't finished (`run.abandon` on disk).
+    public var close: Bool
+    /// The session's work is open and the person moves next (your turn, left): opening the
+    /// session is resuming it, and says so.
+    public var resume: Bool
 
-    public init(openSession: Bool = false, copyResume: Bool = false, hide: Bool = false, abandon: Bool = false) {
-        self.openSession = openSession; self.copyResume = copyResume; self.hide = hide; self.abandon = abandon
+    public init(openSession: Bool = false, copyResume: Bool = false, hide: Bool = false, close: Bool = false, resume: Bool = false) {
+        self.openSession = openSession; self.copyResume = copyResume; self.hide = hide; self.close = close; self.resume = resume
     }
     public static let none = RunActionSet()
-    public var any: Bool { openSession || copyResume || hide || abandon }
+    public var any: Bool { openSession || copyResume || hide || close }
 }
 
 /// One line under a run card: a task, or a summary standing in for several.
@@ -253,6 +264,20 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     public var page: RunPageModel?
     /// The Mac a run synced from, on another Mac's Runs tab; nil for a run of this Mac's own.
     public var mac: String?
+    /// Who moves next: the list's sections and the lead card follow it.
+    public var phase = RunPhase.working
+    /// The list's two-line row.
+    public var line = RunLineModel(key: "")
+    /// Seconds worked (the time open when the run has no split).
+    public var worked: Double = 0
+    /// What the run cost at API rates, in dollars, when priced.
+    public var cost: Double?
+    /// The headline percent, for a run with a plan.
+    public var percent: Int?
+    /// When it last moved; for a settled run, when it settled.
+    public var updatedAt = Date.distantPast
+    /// The lead card's badge and lines, for a run that isn't settled.
+    public var lead: RunLeadModel?
 
     public init(id: String, title: String, subtitle: String, stateText: String, glyph: RunGlyph, tone: RunTone, live: Bool, declared: Bool,
                 needsInput: Bool = false, provider: Provider? = nil, bar: TaskProgress? = nil, headline: String, estimate: String? = nil,
@@ -269,10 +294,18 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     }
 }
 
-/// The Runs tab: live runs first, then the ones that finished in the last day.
+/// The Runs tab: live runs first (who moves next, then most pressing), then the ones that settled
+/// in the last day. The Mac draws `leadID`'s card opened in place, or `receipt` with nothing live,
+/// and the settled runs by `days`; the phone lists `live` and `recent`.
 public struct RunsPageModel: Sendable, Hashable {
     public var live: [RunCardModel]
     public var recent: [RunCardModel]
+    /// The live run opened in place: the first of `live`.
+    public var leadID: String?
+    /// With nothing live, today's receipt.
+    public var receipt: RunDayReceipt?
+    /// Settled runs under Today and Yesterday, each with its total.
+    public var days: [RunDaySection] = []
     /// Finished runs of the last day past the ones shown.
     public var moreRecent: Int
     /// Every finished run of the last day is listed ("+ N more" was opened).
@@ -287,7 +320,7 @@ public struct RunsPageModel: Sendable, Hashable {
     public static let emptyTitle = "No runs yet"
     public static let emptyBody = "Runs show up here while an agent works through a plan or spawns subagents. Connect Claude Code or Codex to see their questions, progress and a receipt for each run."
     public static let emptyAction = "Connect your agents"
-    public static let recentTitle = "Finished in the last day"
+    public static let recentTitle = "Settled in the last day"
 }
 
 /// The menu bar's run indicator: the most pressing live run's progress, and whether any needs you.
@@ -337,8 +370,8 @@ public struct RunsPresenter: Sendable {
         self.now = now; self.calendar = calendar; self.locale = locale; self.pricing = pricing
     }
 
-    /// Finished, or given up on: it sits with the finished runs and shows a receipt.
-    public static func isFinished(_ r: TaskRun) -> Bool { r.state.isTerminal || r.abandoned }
+    /// Finished, closed or left: it sits with the finished runs and shows a receipt.
+    public static func isFinished(_ r: TaskRun) -> Bool { r.isSettled }
 
     /// The key of an opened row in `page(_:expanded:opened:allRecent:)`'s `opened`.
     public static func rowKey(run: String, row: String) -> String { run + "\u{1F}" + row }
@@ -347,21 +380,12 @@ public struct RunsPresenter: Sendable {
     /// holds runs showing all their rows, `opened` rows showing their details (`rowKey`), and
     /// `allRecent` lists every finished run of the last day.
     public func page(_ runs: [TaskRun], expanded: Set<String> = [], opened: Set<String> = [], allRecent: Bool = false) -> RunsPageModel {
-        // Hidden runs never show; a run waiting on you stays however long it has waited.
-        let shown = runs.filter { r in
-            !r.hidden && (now.timeIntervalSince(r.updatedAt) < Self.recentWindow || (!Self.isFinished(r) && r.needsInput))
-        }
-        let live = shown.filter { !Self.isFinished($0) }
-        let finished = shown.filter(Self.isFinished).sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
-        let recent = Array(finished.prefix(allRecent ? Self.recentExpandedCap : Self.recentCap))
-        // Runs with the same name say when they started.
-        var counts: [String: Int] = [:]
-        for r in live + recent { counts[baseTitle(r), default: 0] += 1 }
-        func make(_ r: TaskRun) -> RunCardModel {
-            card(r, expanded: expanded.contains(r.id), sayStart: (counts[baseTitle(r)] ?? 0) > 1, opened: opened)
-        }
-        return RunsPageModel(live: live.map(make), recent: recent.map(make), moreRecent: finished.count - recent.count,
-                             allRecent: allRecent && finished.count > Self.recentCap)
+        assemble(shown(runs).map { entry($0, expanded: expanded, opened: opened) }, allRecent: allRecent)
+    }
+
+    /// Hidden runs never show; a run waiting on you stays however long it has waited.
+    func shown(_ runs: [TaskRun]) -> [TaskRun] {
+        runs.filter { r in !r.hidden && (now.timeIntervalSince(r.updatedAt) < Self.recentWindow || (!Self.isFinished(r) && r.needsInput)) }
     }
 
     /// The indicator for the most pressing run that's running or waiting; nil when none is.
@@ -405,7 +429,7 @@ public struct RunsPresenter: Sendable {
             if r.mirrored { figures.append(RunWords.fromSessionPlan) }
             if r.mustHaves.total > 0 { figures.append("must-haves \(r.mustHaves.done) of \(r.mustHaves.total)") }
             if !finished, let eta = etaText(r) { figures.append(eta) }
-            if !finished { segments = Self.segments(r) }
+            if !finished || r.left { segments = Self.segments(r) }
         } else {
             // No percent and no ETA: nobody knows how many more agents will come.
             let (done, total) = agentCounts(r)
@@ -432,6 +456,13 @@ public struct RunsPresenter: Sendable {
         card.verdict = verdict(r, timeline: timeline != nil)
         card.rowsTitle = !declared ? "Agents" : r.mirrored ? "Steps" : "Tasks"
         card.page = pageModel(r, showDone: expanded, opened: opened)
+        card.phase = Self.phase(r)
+        card.worked = Self.worked(r)
+        card.cost = costValue(r)
+        card.percent = declared ? shownPercent(r) : nil
+        card.updatedAt = r.updatedAt
+        card.line = line(r, card: card)
+        card.lead = lead(r, card: card)
         return card
     }
 
@@ -441,8 +472,10 @@ public struct RunsPresenter: Sendable {
         let finished = Self.isFinished(r)
         var side: String?, caption: String?, hourglass = false
         func clock(_ d: Date) -> String { TimeFormat.clock(d, calendar: calendar, locale: locale) }
-        if finished {
-            side = Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)); caption = "start to finish"
+        if finished || r.yourTurn {
+            // Time worked: a session reopened days later never reads as days of work.
+            let w = Self.worked(r)
+            if w >= 60 { side = Self.duration(w); caption = finished ? "working" : "working so far" }
         } else if !r.hasDeclaredTasks {
             // Nobody knows how many more agents will come: no forecast, only the time spent.
             if r.time.working >= 60 { side = Self.duration(r.time.working); caption = "working" }
@@ -479,7 +512,7 @@ public struct RunsPresenter: Sendable {
     /// What's happening, in a sentence; then the figures that matter for it.
     func verdict(_ r: TaskRun, timeline: Bool) -> RunVerdictModel {
         let figure = r.tokens > 0 ? "\(NumberFormat.tokens(r.tokens)) tokens" : nil
-        let leaves = r.nodes.filter { $0.leaf && ($0.counted || !r.hasDeclaredTasks) }
+        let leaves = r.jobNodes.filter { $0.leaf && ($0.counted || !r.hasDeclaredTasks || ($0.state == .waiting && $0.waitReason == .you)) }
         let open = leaves.filter { !$0.state.isTerminal }.count
         var primary: String?
         var secondary: [String] = []
@@ -488,7 +521,7 @@ public struct RunsPresenter: Sendable {
             return "Working on \(first.title)" + (nodes.count > 1 ? " and \(nodes.count - 1) more." : ".")
         }
         if r.abandoned {
-            primary = open > 0 ? "Given up with \(open) \(open == 1 ? "task" : "tasks") open." : "Given up."
+            primary = open > 0 ? "Closed with \(open) \(open == 1 ? "task" : "tasks") open." : "Closed."
         } else {
             switch r.state {
             case .running where r.stale:
@@ -499,10 +532,13 @@ public struct RunsPresenter: Sendable {
                 switch r.waitReason ?? .dependency {
                 case .input: primary = nil
                 case .limit: primary = timeline ? nil : r.warning ?? RunWords.waitingOnLimit(r.warning) + "."
-                case .dependency: primary = RunWords.waitingOnTask + "."
+                case .dependency, .you: primary = RunWords.waitingOnTask + "."
                 }
+            case .stopped where r.left:
+                primary = "\(open) \(open == 1 ? "task" : "tasks") left open when the session ended. Resume it to pick them up, or close the run."
             case .stopped:
-                primary = "\(open) \(open == 1 ? "task" : "tasks") left. Open the session to pick it up, or mark the run abandoned."
+                let yours = leaves.filter { $0.state == .waiting && $0.waitReason == .you }.count
+                primary = yours > 0 && yours == open ? "What's left is yours to do." : "The agent ended its turn with \(open) \(open == 1 ? "task" : "tasks") open. Reply in the session to go on."
             case .done:
                 let optionalFailed = r.nodes.filter { $0.leaf && $0.importance == .optional && ($0.state == .failed || $0.state == .partial) }
                 if let first = optionalFailed.first {
@@ -519,9 +555,10 @@ public struct RunsPresenter: Sendable {
                 }
             }
         }
-        if !Self.isFinished(r) {
+        if !Self.isFinished(r) || r.left {
             if r.mirrored { secondary.append(RunWords.fromSessionPlan) }
-            if r.mustHaves.total > 0 { secondary.append("must-haves \(r.mustHaves.done) of \(r.mustHaves.total)") }
+            if r.mustHavesDone { secondary.append(RunWords.mustHavesDone) }
+            else if r.mustHaves.total > 0 { secondary.append("must-haves \(r.mustHaves.done) of \(r.mustHaves.total)") }
         } else if let foot = receipt(r).footnote {
             secondary.append(foot)
         }
@@ -588,14 +625,17 @@ public struct RunsPresenter: Sendable {
         if let h = Self.harnessName(r.harness), baseTitle(r) != Self.untitled(r.harness) { parts.append(h) }
         let age = TimeFormat.freshness(since: r.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
-        parts.append(Self.isFinished(r) ? "finished \(ago)" : "updated \(ago)")
+        parts.append(r.left ? "settled \(ago)" : Self.isFinished(r) ? "finished \(ago)" : "updated \(ago)")
         return parts.joined(separator: " · ")
     }
 
-    /// The run's state in plain words (`RunWords`).
+    /// The run's state in plain words (`RunWords`). A left run says how far it got, and that its
+    /// must-haves are done when they are.
     public func stateText(_ r: TaskRun) -> String {
         if !r.abandoned, r.state == .running, r.stale { return RunWords.quiet(TimeFormat.compact(now.timeIntervalSince(r.updatedAt))) }
-        return RunWords.state(r.state, waitReason: r.waitReason, abandoned: r.abandoned, limitWarning: r.warning)
+        let s = RunWords.state(r.state, waitReason: r.waitReason, abandoned: r.abandoned, limitWarning: r.warning, left: r.left,
+                               percent: r.hasDeclaredTasks ? shownPercent(r) : nil)
+        return r.left && r.mustHavesDone ? s + " · " + RunWords.mustHavesDone : s
     }
 
     /// `TaskLimits` names the limit in the warning it writes.
@@ -611,9 +651,10 @@ public struct RunsPresenter: Sendable {
         case .waiting where r.waitReason == .input: return (.needsInput, .alert)
         case .waiting where r.waitReason == .limit: return (.waiting, .warn)
         case .waiting: return (.waiting, .neutral)
-        case .stopped: return (.stopped, .warn)
+        case .stopped: return r.left ? (.left, .neutral) : (.yourTurn, .neutral)
         case .done: return (.done, .neutral)
-        case .partial: return (.partial, .warn)
+        // Failures in the failure colour (`.alert` on a failure glyph), never amber: amber is time and limits.
+        case .partial: return (.partial, .alert)
         case .failed: return (.failed, .alert)
         }
     }
@@ -662,7 +703,7 @@ public struct RunsPresenter: Sendable {
 
     /// "1h 12m working" while live (working time only); how long it took once finished.
     func elapsed(_ r: TaskRun) -> String? {
-        if Self.isFinished(r) { return Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)) }
+        if Self.isFinished(r) { return Self.worked(r) >= 60 ? RunWords.working(Self.duration(Self.worked(r))) : nil }
         return r.time.working >= 60 ? Self.duration(r.time.working) + " working" : nil
     }
 
@@ -721,12 +762,14 @@ public struct RunsPresenter: Sendable {
     }
 
     /// Open needs the session's app or folder; a resume command needs Claude Code or Codex and a
-    /// session id; anything can be hidden; only an unfinished run can be given up on.
+    /// session id; anything can be hidden; a run that isn't finished or closed can be closed (a
+    /// left one too). Your turn and left runs call opening the session resuming it.
     public static func actions(_ r: TaskRun) -> RunActionSet {
         let open = !(r.host ?? "").isEmpty || !(r.cwd ?? "").isEmpty
         let harness = (r.harness ?? "").lowercased()
         let resumable = ["claude-code", "claude", "codex"].contains(harness) && UUID(uuidString: r.id) != nil
-        return RunActionSet(openSession: open, copyResume: resumable, hide: true, abandon: !isFinished(r))
+        return RunActionSet(openSession: open, copyResume: resumable, hide: true, close: !r.state.isTerminal && !r.abandoned,
+                            resume: r.state == .stopped && !r.abandoned)
     }
 
     // MARK: Timeline
@@ -767,15 +810,18 @@ public struct RunsPresenter: Sendable {
         if r.scopeChanges > 0 { foot.append("Plan changed \(r.scopeChanges == 1 ? "once" : "\(r.scopeChanges) times") after it started") }
         let retries = r.nodes.reduce(0) { $0 + $1.attempts.retries }
         if retries > 0 { foot.append(retries == 1 ? "1 retry" : "\(retries) retries") }
-        return RunReceiptModel(duration: Self.duration(r.updatedAt.timeIntervalSince(r.startedAt)), tokens: NumberFormat.tokens(r.tokens),
-                               cost: cost, tasks: tasks, tasksNote: note, time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
+        if r.jobs != nil { foot.insert("\(r.jobs!) jobs this session", at: 0) }
+        var rc = RunReceiptModel(duration: Self.duration(Self.worked(r)), tokens: NumberFormat.tokens(r.tokens),
+                                 cost: cost, tasks: tasks, tasksNote: note, time: r.time, footnote: foot.isEmpty ? nil : foot.joined(separator: " · "))
+        rc.open = Self.duration(r.updatedAt.timeIntervalSince(r.startedAt))
+        return rc
     }
 
     /// "4 of 5" and "tasks · 1 optional failed": the plan's leaves (or the agents seen) and how
     /// the ones that didn't finish ended.
     static func receiptTasks(_ r: TaskRun) -> (String, String) {
         // A mirrored plan's items count like declared tasks; helper agents under a plan don't.
-        let leaves = r.nodes.filter { $0.leaf && ($0.declared || !r.hasDeclaredTasks || (r.mirrored && $0.counted)) }
+        let leaves = r.jobNodes.filter { $0.leaf && ($0.declared || !r.hasDeclaredTasks || (r.mirrored && $0.counted)) }
         let earlier = r.hasDeclaredTasks ? 0 : (r.finishedEarlier ?? 0)
         var done = earlier, failed = 0, optionalFailed = 0, cancelled = 0, skipped = 0, open = 0
         var replaced = 0
@@ -914,8 +960,9 @@ public struct RunsPresenter: Sendable {
         if !extra.isEmpty { detail = ([detail].compactMap { $0 } + extra).joined(separator: " · ") }
         let quiet = !n.counted || n.state == .skipped || n.state == .cancelled
         let lines = details(n, unconfirmed: unconfirmed, run: run)
+        let yours = n.state == .waiting && n.waitReason == .you
         return RunRowModel(id: n.id, glyph: glyph, tone: quiet && tone != .alert ? .quiet : tone, depth: depth, title: n.title,
-                           marker: n.importance == .normal ? nil : n.importance.rawValue, steps: steps,
+                           marker: yours ? RunWords.yours.lowercased() : n.importance == .normal ? nil : n.importance.rawValue, steps: steps,
                            tokens: n.tokens > 0 ? NumberFormat.tokens(n.tokens) : nil, detail: detail, detailTone: detailTone, quiet: quiet,
                            details: opened && !lines.isEmpty ? lines : nil, opens: !lines.isEmpty)
     }
@@ -928,7 +975,7 @@ public struct RunsPresenter: Sendable {
         func add(_ label: String, _ value: String?) {
             if let v = value?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty { out.append(RunDetailLine(label: label, value: v)) }
         }
-        if n.state == .waiting { add(n.waitReason == .input ? "Asking" : "Waiting", n.waitNote) }
+        if n.state == .waiting { add(n.waitReason == .input ? "Asking" : n.waitReason == .you ? "Yours" : "Waiting", n.waitNote) }
         add("Evidence", n.evidence)
         if let next = n.replacedBy { add("Replaced by", Self.title(of: next, in: run)) }
         switch n.state {
@@ -961,9 +1008,10 @@ public struct RunsPresenter: Sendable {
             case .input: return (n.waitNote ?? RunWords.needsInput, .alert)
             case .limit: return (n.waitNote ?? RunWords.waitingOnLimit(limitWarning), .warn)
             case .dependency: return (n.waitNote ?? RunWords.waitingOnTask, .neutral)
+            case .you: return (n.waitNote ?? RunWords.yoursNote, .quiet)
             }
-        case .failed: return (n.failure ?? RunWords.failed, n.importance == .optional ? .warn : .alert)
-        case .partial: return (n.failure ?? RunWords.partial, .warn)
+        case .failed: return (n.failure ?? RunWords.failed, n.importance == .optional ? .quiet : .alert)
+        case .partial: return (n.failure ?? RunWords.partial, .alert)
         case .running where n.stale:
             let quiet = RunWords.quiet(TimeFormat.compact(now.timeIntervalSince(n.lastActivityAt ?? now)))
             return (n.note.map { quiet + " · " + $0 } ?? quiet, .warn)
@@ -987,11 +1035,13 @@ public struct RunsPresenter: Sendable {
         case .running: (.running, .progress)
         case .waiting where n.waitReason == .input: (.needsInput, .alert)
         case .waiting where n.waitReason == .limit: (.waiting, .warn)
+        // Yours: nothing is stuck, it's simply the person's to do.
+        case .waiting where n.waitReason == .you: (.planned, .neutral)
         case .waiting: (.waiting, .neutral)
         case .parked: (.parked, .quiet)
         case .done: (.done, .neutral)
-        case .partial: (.partial, .warn)
-        case .failed: (.failed, n.importance == .optional ? .warn : .alert)
+        case .partial: (.partial, .alert)
+        case .failed: (.failed, n.importance == .optional ? .quiet : .alert)
         case .skipped, .cancelled: (.skipped, .quiet)
         }
     }
@@ -999,15 +1049,16 @@ public struct RunsPresenter: Sendable {
 
 extension RunCardModel {
     /// The compact view's word in place of the time when the run isn't simply running: what needs
-    /// you or holds it up ("asks", "quiet", "limit", "waiting", "stopped"); nil otherwise.
+    /// you or holds it up ("asks", "your turn", "quiet", "limit", "waiting", "offline"); nil otherwise.
     public var compactFlag: String? {
         switch glyph {
         case .needsInput: "asks"
+        case .yourTurn: "your turn"
         case .stale: "quiet"
         case .waiting where tone == .warn: "limit"
         case .waiting: "waiting"
         // A Mac that stopped syncing reads "Mac last seen…": its run isn't stopped, its Mac is away.
-        case .stopped where live: stateText.hasPrefix("Mac last seen") ? "offline" : "stopped"
+        case .stopped where live: "offline"
         default: nil
         }
     }

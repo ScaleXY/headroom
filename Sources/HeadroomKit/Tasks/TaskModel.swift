@@ -64,10 +64,14 @@ public enum TaskWaitReason: String, LenientStringEnum, CaseIterable, Comparable 
     case limit
     /// Another task or an outside event.
     case dependency
+    /// Work only a person can do (`task wait ID --for you`): it never blocks the agent now, so it
+    /// is never a question. Readers from before it read it as `dependency`, which says the same
+    /// thing calmly.
+    case you
     public static let fallback = TaskWaitReason.dependency
 
     public static func < (a: Self, b: Self) -> Bool { a.urgency < b.urgency }
-    var urgency: Int { switch self { case .input: 0; case .limit: 1; case .dependency: 2 } }
+    var urgency: Int { switch self { case .input: 0; case .limit: 1; case .dependency: 2; case .you: 3 } }
 }
 
 /// What a node is doing. Leaves use planned through cancelled, and `parked` when their work was
@@ -90,7 +94,8 @@ public enum TaskState: String, LenientStringEnum, CaseIterable {
 public enum TaskRunState: String, LenientStringEnum, CaseIterable {
     case running, waiting
     /// The orchestrator ended its turn or the session closed, nothing is active, and unfinished
-    /// tasks remain.
+    /// tasks remain. `TaskRun.left` tells the two apart: kept as one state on disk and on the wire
+    /// so a reader from before the split still reads either as stopped, never as running.
     case stopped
     case done, partial, failed
     public static let fallback = TaskRunState.running
@@ -109,6 +114,8 @@ public enum TaskAttention: Int, Comparable, Sendable, CaseIterable {
         case .failed, .partial: self = .failed
         case .running where stale: self = .stale
         case .waiting where waitReason == .limit: self = .limit
+        // Yours: it waits on nobody's answer, so it sits with the work not yet begun.
+        case .waiting where waitReason == .you: self = .planned
         case .running, .waiting: self = .running
         case .planned, .parked: self = .planned
         case .done, .skipped, .cancelled: self = .done

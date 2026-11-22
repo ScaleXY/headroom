@@ -4,7 +4,7 @@ import HeadroomSync
 import UserNotifications
 
 /// Local notifications about agent runs, posted as a sync brings news: a run that newly needs an
-/// answer (the question itself when the Mac shares it), one that stopped with work left, or one
+/// answer (the question itself when the Mac shares it), one whose agent finished a long turn, or one
 /// that finished. Unlike the reset reminders these can't be scheduled ahead, so they arrive as fast
 /// as the Mac syncs and the phone is woken. Each episode alerts once (`RunAlertLedger`), however
 /// many syncs repeat it. While you're at the Mac a needs-input alert is held, scheduled for two
@@ -32,7 +32,7 @@ public enum RunNotifier {
             let run = alert.run
             let copy = switch alert.kind {
             case .needsInput: presenter.needsInputAlert(run)
-            case .stopped: presenter.stoppedAlert(run)
+            case .stopped: presenter.turnEndedAlert(run)
             case .finished: presenter.finishedAlert(run)
             }
             let content = UNMutableNotificationContent()

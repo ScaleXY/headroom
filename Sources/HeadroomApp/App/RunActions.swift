@@ -3,7 +3,7 @@ import HeadroomKit
 import notify
 
 /// What a person can do to a run from the Mac: bring its session forward, copy a resume command,
-/// hide it, give up on it. The Runs tab and the notification actions call these.
+/// hide it, close it. The Runs tab and the notification actions call these.
 @MainActor
 enum RunActions {
     /// Brings the app hosting the run's session to the front (its terminal, editor or the desktop
@@ -67,8 +67,8 @@ enum RunActions {
         record(.hide(hidden), run: runID)
     }
 
-    /// Writes `run.abandon` to the run's journal as the user.
-    static func abandon(_ runID: String) {
+    /// Closes the run: `run.abandon` in its journal, as the user (the event keeps its old name on disk).
+    static func close(_ runID: String) {
         record(.abandon(reason: nil), run: runID)
     }
 
