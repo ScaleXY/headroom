@@ -5,19 +5,26 @@ import Foundation
 public enum TimeFormat {
     // MARK: Durations
 
+    /// Never negative, and never past a century: a forecast that divided by nearly nothing must
+    /// not reach an `Int` conversion as infinity.
+    private static func bounded(_ seconds: TimeInterval) -> TimeInterval {
+        seconds.isNaN ? 0 : min(max(0, seconds), 36_500 * 86400)
+    }
+
     /// Compact duration: "<1m", "48m", "20h", "4d".
     /// Minutes under an hour, rounded hours under 47.5 h, whole days after that.
     public static func compact(_ seconds: TimeInterval) -> String {
-        let s = max(0, seconds)
+        let s = bounded(seconds)
         if s < 60 { return "<1m" }
         if s < 3600 - 30 { return "\(Int((s / 60).rounded()))m" }
         if s < 47.5 * 3600 { return "\(max(1, Int((s / 3600).rounded())))h" }
-        return "\(Int(s / 86400))d"
+        // From 47.5 h the hours would round to 48: that's "2d", not one whole day.
+        return "\(max(2, Int(s / 86400)))d"
     }
 
     /// Countdown to a reset: "48m" under an hour, then "h:mm" ("1:12").
     public static func countdown(_ seconds: TimeInterval) -> String {
-        let s = max(0, seconds)
+        let s = bounded(seconds)
         if s < 60 { return "<1m" }
         let totalMinutes = Int((s / 60).rounded(.up))
         if totalMinutes < 60 { return "\(totalMinutes)m" }
@@ -35,7 +42,7 @@ public enum TimeFormat {
 
     /// Spoken span for "21 hours early": "45 minutes", "1 hour", "21 hours", "3 days".
     public static func spokenSpan(_ seconds: TimeInterval) -> String {
-        let s = max(0, seconds)
+        let s = bounded(seconds)
         if s < 3600 - 30 {
             let m = max(1, Int((s / 60).rounded()))
             return m == 1 ? "1 minute" : "\(m) minutes"
@@ -72,7 +79,7 @@ public enum TimeFormat {
         clean(date.formatted(style(calendar, locale).hour(.defaultDigits(amPM: .abbreviated)).minute(.twoDigits)))
     }
 
-    /// "6 AM" on the hour, otherwise "6:30 AM".
+    /// "6 AM" on the hour, otherwise "6:30 AM"; "18:00" on a 24-hour clock.
     public static func shortClock(_ date: Date, calendar: Calendar, locale: Locale) -> String {
         // A 24-hour clock keeps its minutes on the hour: a bare "15" reads as a date, not a time.
         let hourFormat = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? "h a"

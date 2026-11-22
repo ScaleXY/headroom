@@ -109,11 +109,13 @@ public struct UnpricedSummary: Sendable, Hashable {
 /// "This week: $412 at API rates ≈ 8.9× your plan's weekly price."
 public enum PlanComparison {
     /// Weekly API cost divided by the plan's weekly price. `monthlyOverrideUSD` (from Settings) replaces
-    /// the plan's list price. Nil when the price is unknown or zero.
-    public static func multiple(weeklyCostMicros: Int64, plan: PlanInfo?, monthlyOverrideUSD: Double? = nil) -> Double? {
+    /// the plan's list price. Nil when the price is unknown or zero. `window` is how long the cost's
+    /// window runs: a month's cost is set against a month of the plan, not a week of it.
+    public static func multiple(weeklyCostMicros: Int64, plan: PlanInfo?, monthlyOverrideUSD: Double? = nil,
+                                window: TimeInterval = 7 * 86400) -> Double? {
         let monthly = monthlyOverrideUSD ?? plan?.monthlyPriceUSD
-        guard let monthly, monthly > 0 else { return nil }
+        guard let monthly, monthly > 0, window > 0 else { return nil }
         let weekly = monthly * 12 / 52
-        return Double(weeklyCostMicros) / 1_000_000 / weekly
+        return Double(weeklyCostMicros) / 1_000_000 / (weekly * window / (7 * 86400))
     }
 }

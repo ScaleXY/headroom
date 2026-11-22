@@ -71,7 +71,8 @@ struct SnapshotBuilder {
         }
         if let micros = input.weekCostMicros {
             out.weekCostUSD = (Double(micros) / 10_000).rounded() / 100
-            out.planMultiple = PlanComparison.multiple(weeklyCostMicros: micros, plan: r.plan, monthlyOverrideUSD: input.planMonthlyOverride)
+            out.planMultiple = PlanComparison.multiple(weeklyCostMicros: micros, plan: r.plan, monthlyOverrideUSD: input.planMonthlyOverride,
+                                                       window: r.headline?.effectiveDuration ?? 7 * 86400)
                 .map { ($0 * 10).rounded() / 10 }
         }
         return out

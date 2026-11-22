@@ -257,14 +257,15 @@ final class AppSettings {
     // MARK: Fan control
 
     /// Fans sit at their lowest speed here and are macOS's below it.
+    /// Held to the choices offered: the value goes to the root helper as the fan curve.
     var fanMinTemp: Int {
-        get { defaults.object(forKey: "fanMinTemp") as? Int ?? 45 }
+        get { min(max(defaults.object(forKey: "fanMinTemp") as? Int ?? 45, Self.fanMinTempChoices.first!), Self.fanMinTempChoices.last!) }
         set { defaults.set(newValue, forKey: "fanMinTemp") }
     }
 
     /// Fans run flat out from here.
     var fanMaxTemp: Int {
-        get { defaults.object(forKey: "fanMaxTemp") as? Int ?? 70 }
+        get { min(max(defaults.object(forKey: "fanMaxTemp") as? Int ?? 70, Self.fanMaxTempChoices.first!), Self.fanMaxTempChoices.last!) }
         set { defaults.set(newValue, forKey: "fanMaxTemp") }
     }
 

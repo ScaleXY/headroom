@@ -230,6 +230,15 @@ struct UnpricedAndPlanTests {
         #expect(abs(x - 10) < 1e-9)
     }
 
+    @Test func aMonthsCostIsSetAgainstAMonthOfThePlan() throws {
+        let pro = try #require(PlanCatalog.codex(planType: "pro"))
+        // $520 a month is $120 a week: a 30-day window costs 30/7 of that.
+        let week = try #require(PlanComparison.multiple(weeklyCostMicros: 120_000_000, plan: pro, monthlyOverrideUSD: 520))
+        let month = try #require(PlanComparison.multiple(weeklyCostMicros: 120_000_000, plan: pro, monthlyOverrideUSD: 520, window: 30 * 86400))
+        #expect(abs(week - 1) < 1e-9)
+        #expect(abs(month - 7.0 / 30) < 1e-9)
+    }
+
     @Test func freeOrUnknownPlanHasNoMultiple() throws {
         #expect(PlanComparison.multiple(weeklyCostMicros: 1_000_000, plan: PlanCatalog.codex(planType: "free")) == nil)
         #expect(PlanComparison.multiple(weeklyCostMicros: 1_000_000, plan: nil) == nil)

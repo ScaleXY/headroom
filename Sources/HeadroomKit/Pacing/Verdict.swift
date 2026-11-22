@@ -85,7 +85,9 @@ public enum VerdictWriter {
             )
 
         case .tight:
-            if (a.rule == .projection || a.rawState < .tight), let runOut = a.projectedRunOut, let burn = a.burnPerHour, burn > 0 {
+            // A held state can outlive its numbers: only a run-out that comes before renewal is "early".
+            if (a.rule == .projection || a.rawState < .tight), let runOut = a.projectedRunOut, runOut < a.resetsAt,
+               let burn = a.burnPerHour, burn > 0 {
                 let early = a.resetsAt.timeIntervalSince(runOut)
                 let ease = easeOff(required: a.requiredBurnPerHour, current: burn)
                 return Verdict(
@@ -97,7 +99,8 @@ public enum VerdictWriter {
                 )
             }
             let early = a.resetsAt.timeIntervalSince(a.evenRunOut)
-            guard early > 0 else {
+            // S is ∞ in the last hour: there's no percent to ease off by.
+            guard early > 0, a.multiple.isFinite else {
                 return Verdict(
                     state: state,
                     title: state.title,
@@ -117,6 +120,17 @@ public enum VerdictWriter {
 
         case .veryTight:
             let early = a.resetsAt.timeIntervalSince(a.evenRunOut)
+            // The state last shown for a reading that has since gone stale: S has recovered past 1,
+            // or is ∞ (last hour, renewal passed), and would trap as a percent.
+            guard early > 0, a.multiple.isFinite else {
+                return Verdict(
+                    state: state,
+                    title: state.title,
+                    multipleText: chip,
+                    primary: "Just off track for the \(period).",
+                    secondary: "Ease off a little to reach \(renewDay)."
+                )
+            }
             return Verdict(
                 state: state,
                 title: state.title,

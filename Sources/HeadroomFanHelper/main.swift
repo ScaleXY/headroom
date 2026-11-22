@@ -17,6 +17,8 @@ let holdingMarker = "/var/run/\(FanHelper.label).holding"
 @MainActor
 final class Controller {
     static let interval: TimeInterval = 2
+    /// Full speed must come by this temperature (°C); the app offers up to 95.
+    static let highestMaxTemp: Double = 100
 
     private let thermals: Thermals
     private var governor: FanGovernor?
@@ -36,6 +38,9 @@ final class Controller {
 
     func follow(_ curve: FanCurve, sensor: FanSensor, for peer: xpc_connection_t) -> String? {
         guard curve.isValid else { return "The min temperature must be below the max." }
+        // The curve comes from the app's preferences, which anything running as the user can rewrite:
+        // a max no chip reaches would hold the fans near their lowest speed however hot it gets.
+        guard curve.maxTemp <= Self.highestMaxTemp else { return "The max temperature is too high." }
         guard thermals.fanCount > 0 else { return "This Mac has no fans." }
         owner = peer
         self.sensor = sensor

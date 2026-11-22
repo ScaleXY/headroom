@@ -13,6 +13,8 @@ struct TimeFormatTests {
         #expect(TimeFormat.compact(48 * 60) == "48m")
         #expect(TimeFormat.compact(19 * 3600 + 58 * 60) == "20h")
         #expect(TimeFormat.compact(47 * 3600) == "47h")
+        #expect(TimeFormat.compact(47 * 3600 + 45 * 60) == "2d") // where hours would round to 48, not a day short
+        #expect(TimeFormat.compact(48 * 3600) == "2d")
         #expect(TimeFormat.compact(4 * 86400 + 3 * 3600) == "4d")
         #expect(TimeFormat.compact(59 * 60 + 50) == "1h")
         #expect(TimeFormat.compact(-5) == "<1m")
@@ -78,6 +80,25 @@ struct TimeFormatTests {
         #expect(TimeFormat.weekdayShort(six, calendar: cal, locale: loc) == "Wed")
         #expect(TimeFormat.weekdayLong(six, calendar: cal, locale: loc) == "Wednesday")
         #expect(TimeFormat.monthDay(six, calendar: cal, locale: loc) == "Oct 21")
+    }
+
+    // On a 24-hour clock the hour alone is a bare number ("renews tomorrow at 06"): the minutes stay.
+    @Test func shortClockKeepsMinutesOnA24HourClock() {
+        let six = PT.date(2026, 10, 21, 6, 0)
+        for (id, expected) in [("en_GB", "6:00"), ("en_US@hours=h23", "06:00"), ("sv_SE", "6:00")] {
+            let loc = Locale(identifier: id)
+            #expect(TimeFormat.shortClock(six, calendar: cal, locale: loc) == expected, "\(id)")
+            #expect(TimeFormat.relative(six, now: now, calendar: cal, locale: loc) == "tomorrow at " + expected, "\(id)")
+        }
+    }
+
+    @Test func aDurationThatIsNotANumberStillReads() {
+        // A forecast that divided by nearly nothing: no trap in the `Int` conversion.
+        #expect(TimeFormat.compact(.infinity) == "36500d")
+        #expect(TimeFormat.compact(.nan) == "<1m")
+        #expect(TimeFormat.compact(-.infinity) == "<1m")
+        #expect(TimeFormat.countdown(.infinity).hasSuffix(":00"))
+        #expect(TimeFormat.spokenSpan(.infinity) == "36500 days")
     }
 
     @Test func renewalCaption() {

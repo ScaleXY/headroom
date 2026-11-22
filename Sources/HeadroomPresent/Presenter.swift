@@ -135,7 +135,8 @@ public struct Presenter {
         }
         if let row = creditsRow(reading) { model.rows.append(row) }
         if let micros = input.weekCostMicros {
-            let multiple = PlanComparison.multiple(weeklyCostMicros: micros, plan: reading.plan, monthlyOverrideUSD: input.planMonthlyOverride)
+            let multiple = PlanComparison.multiple(weeklyCostMicros: micros, plan: reading.plan, monthlyOverrideUSD: input.planMonthlyOverride,
+                                                   window: reading.headline?.effectiveDuration ?? 7 * 86400)
             model.rows.append(DetailRowModel(
                 icon: .coin(p), label: "This \(model.hero?.label.contains("month") == true ? "month" : "week") at API rates",
                 value: NumberFormat.dollars(micros: micros, style: .compact),

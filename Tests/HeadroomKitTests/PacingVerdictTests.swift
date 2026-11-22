@@ -142,6 +142,53 @@ struct PacingVerdictTests {
         #expect(VerdictWriter.multipleText(0.6) == "40% short")
     }
 
+    // The tracker holds "tight" through the hysteresis band while today's burn lasts well past renewal.
+    @Test func heldTightDoesNotQuoteARunOutPastRenewal() throws {
+        let reset = PT.date(2026, 10, 24, 13, 0)
+        let used = 1 - 1.02 * reset.timeIntervalSince(now) / PT.week
+        let samples = PT.linear(from: now.addingTimeInterval(-30 * 3600), fromUsed: used - 0.03, to: now, toUsed: used)
+        let w = PT.weekly(used: used, resetsAt: reset)
+        let a = PacingEngine.analyze(window: w, samples: samples, now: now)
+        #expect(a.state == .onPace)
+        #expect(try #require(a.projectedRunOut) > reset)
+        let v = VerdictWriter.verdict(for: a, window: w, now: now, calendar: PT.calendar, locale: PT.locale, state: .tight)
+        #expect(v.primary == "Just off track for the week.")
+        #expect(v.secondary == "Ease off a little to reach Saturday.")
+    }
+
+    // A reading that has gone stale keeps the state last shown, though S has since recovered past 1.
+    @Test func heldVeryTightDoesNotQuoteARunOutPastRenewal() {
+        let w = PT.weekly(used: 0.7, resetsAt: now.addingTimeInterval(1.5 * 86400))
+        let a = PacingEngine.analyze(window: w, samples: [], now: now)
+        #expect(abs(a.multiple - 1.4) < 0.01)
+        let v = VerdictWriter.verdict(for: a, window: w, now: now, calendar: PT.calendar, locale: PT.locale, state: .veryTight)
+        #expect(v.title == "Very tight")
+        #expect(v.primary == "Just off track for the week.")
+        #expect(v.secondary == "Ease off a little to reach tomorrow.")
+    }
+
+    // In the last hour, and once a stale reading's renewal has passed, S is ∞: the state the
+    // tracker last showed must still read, not trap on the conversion to a percent.
+    @Test func heldStateWithInfiniteMultipleStillReads() {
+        var tracker = PacingTracker()
+        let reset = now.addingTimeInterval(86400)
+        let w = PT.weekly(used: 0.9, resetsAt: reset)
+        #expect(tracker.update(PacingEngine.analyze(window: w, samples: [], now: now), now: now) == .veryTight)
+        // No reading since; the card redraws half an hour before renewal, and again after it.
+        for later in [reset.addingTimeInterval(-1800), reset.addingTimeInterval(3600)] {
+            let a = PacingEngine.analyze(window: w, samples: [], now: later)
+            #expect(a.multiple == .infinity)
+            let v = VerdictWriter.verdict(for: a, window: w, now: later, calendar: PT.calendar, locale: PT.locale, state: tracker.shown)
+            #expect(v.title == "Very tight")
+            #expect(v.primary == "Just off track for the week.")
+        }
+        // Getting tight with a sliver left: even pace still runs out early, but 1 − ∞ is no percent.
+        let sliver = PT.weekly(used: 0.995, resetsAt: now.addingTimeInterval(59 * 60))
+        let a = PacingEngine.analyze(window: sliver, samples: [], now: now)
+        let v = VerdictWriter.verdict(for: a, window: sliver, now: now, calendar: PT.calendar, locale: PT.locale, state: .tight)
+        #expect(v.secondary == "Ease off a little to reach renewal.")
+    }
+
     @Test func trackerStateOverridesAnalysis() {
         let reset = now.addingTimeInterval(PT.week / 2)
         let w = PT.weekly(used: 0.4, resetsAt: reset)

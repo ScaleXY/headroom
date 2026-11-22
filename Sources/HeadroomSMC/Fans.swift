@@ -134,8 +134,9 @@ public final class Thermals {
     public func speed(fan: Int) -> Double? { number("F\(fan)Ac") }
 
     public func temperature(_ sensor: FanSensor) -> Double? {
-        if sensors == nil {
-            sensors = ((try? smc.allKeys()) ?? []).filter { key in
+        // Kept only once the keys could be listed: a failed first try isn't "no sensors" for good.
+        if sensors == nil, let keys = try? smc.allKeys() {
+            sensors = keys.filter { key in
                 FanSensor.allPrefixes.contains { key.description.hasPrefix($0) }
                     && (try? smc.info(key))?.type.description == "flt "
             }
