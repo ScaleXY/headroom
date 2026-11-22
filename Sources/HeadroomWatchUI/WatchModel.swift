@@ -62,9 +62,14 @@ public final class WatchModel {
 
     /// Leaves the current feed for the complications and asks them to redraw when it changed.
     private func publish() {
-        var previous = lastWritten
+        // What a complication draws, not when it was built: `generatedAt` moves with every read,
+        // and each reload spends the complications' budget (the iPhone's `FeedWriter` does the same).
+        var body = feed
+        body.generatedAt = .distantPast
+        guard let encoded = try? SnapshotFile.encoder().encode(body), encoded != lastWritten else { return }
+        lastWritten = encoded
+        var previous: Data?
         if FeedFile.write(feed, previous: &previous) {
-            lastWritten = previous
             #if canImport(WidgetKit)
             WidgetCenter.shared.reloadAllTimelines()
             #endif

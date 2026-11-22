@@ -20,7 +20,7 @@ public struct DeviceInfo: Identifiable, Sendable, Hashable {
     /// computer name ("Athul's MacBook Pro") decides.
     public var isLaptop: Bool { name.localizedCaseInsensitiveContains("book") }
 
-    /// Heard from in the last 30 minutes.
+    /// Not heard from in the last 30 minutes.
     public func isQuiet(now: Date) -> Bool { now.timeIntervalSince(lastSeenAt) > 30 * 60 }
 }
 
@@ -115,7 +115,7 @@ public struct MergedAccount: Identifiable, Sendable {
 
 /// Everything readers show, merged.
 public struct SyncSnapshot: Sendable {
-    /// Active accounts first, each group most recently updated first.
+    /// Active accounts first, then by provider, each provider's most recently updated first.
     public var accounts: [MergedAccount]
     public var devices: [DeviceInfo]
     public var unreadable: Int

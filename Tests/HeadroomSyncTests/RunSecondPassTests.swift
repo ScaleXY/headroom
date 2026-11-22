@@ -169,6 +169,13 @@ private struct FirstPassDevice: Decodable {
         let d = s.digest(deviceID: "mac", mac: "MacBook Pro", lastSeen: nil)
         #expect(d.mirrored && d.abandoned)
     }
+
+    @Test func modelNamesCutToTheSameSixtyCharactersAddUpInTheReceipt() {
+        var r = Demo.finishedRun(now: now)
+        let stem = String(repeating: "m", count: 60)
+        r.tokensByModel = [stem + "-a": 1_000, stem + "-b": 2_000]
+        #expect(RunSummaryBuilder.receipt(r).models == [stem: 3_000])
+    }
 }
 
 @MainActor @Suite struct RunSecondPassGateTests {
@@ -275,6 +282,45 @@ private struct FirstPassDevice: Decodable {
         _ = held.observe([], now: now, needsInput: true, finished: true)
         _ = held.observe([digest("b", .waiting, wait: .input, active: now)], now: now, needsInput: true, finished: true)
         #expect(held.observe([digest("b", .running)], now: now.addingTimeInterval(300), needsInput: true, finished: true).withdraw.isEmpty)
+    }
+
+    @Test func aQuestionAlreadyWaitingAtTheFirstLookNeverAlerts() {
+        // First look, with the Mac's user there: nothing is held, so a later sync can't send it.
+        var ledger = RunAlertLedger()
+        #expect(ledger.observe([digest("a", .waiting, wait: .input, active: now.addingTimeInterval(-30))], now: now, needsInput: true, finished: true).due.isEmpty)
+        let later = ledger.observe([digest("a", .waiting, wait: .input, active: now.addingTimeInterval(50))], now: now.addingTimeInterval(60),
+                                   needsInput: true, finished: true)
+        #expect(later.due.isEmpty && later.withdraw.isEmpty)
+        // The same with the switch off when the question came, then turned on mid-hold.
+        var off = RunAlertLedger()
+        _ = off.observe([digest("b", .running)], now: now, needsInput: false, finished: true)
+        _ = off.observe([digest("b", .waiting, wait: .input, active: now.addingTimeInterval(-30))], now: now, needsInput: false, finished: true)
+        #expect(off.observe([digest("b", .waiting, wait: .input, active: now.addingTimeInterval(50))], now: now.addingTimeInterval(60),
+                            needsInput: true, finished: true).due.isEmpty)
+    }
+
+    @Test func aFinishedRunThatComesBackAskingAlertsItsNextFinish() {
+        var ledger = RunAlertLedger()
+        _ = ledger.observe([digest("a", .running)], now: now, needsInput: true, finished: true)
+        #expect(ledger.observe([digest("a", .done)], now: now, needsInput: true, finished: true).due.map(\.kind) == [.finished])
+        // Back at work, and the first this phone hears of it is a question.
+        let t1 = now.addingTimeInterval(2000)
+        #expect(ledger.observe([digest("a", .waiting, wait: .input, updated: t1)], now: t1, needsInput: true, finished: true).due.map(\.kind) == [.needsInput])
+        let t2 = now.addingTimeInterval(2400)
+        #expect(ledger.observe([digest("a", .done, updated: t2)], now: t2, needsInput: true, finished: true).due.map(\.kind) == [.finished])
+    }
+
+    @Test func twoSpellingsOfOneModelArePricedTogether() {
+        let day = Int((now.timeIntervalSince1970 / 86400).rounded(.down))
+        func slot(_ model: String, tokens: Int64, micros: Int64) -> ActivitySlot {
+            ActivitySlot(slot: day * 96, model: model, tokens: TokenCounts(newInput: tokens), micros: micros, unpricedTokens: 0, classMicros: [micros, 0, 0, 0])
+        }
+        let spelled = ["anthropic/claude-test-9", "claude-test-9"]
+        #expect(Set(spelled.map { ModelID.normalize($0) }).count == 1)
+        let activity = [Envelope(deviceID: "mac", provider: .claude, accountKey: "k", day: day, updatedAt: now,
+                                 payload: ActivityDayPayload(day: day, slots: [slot(spelled[0], tokens: 1000, micros: 3000), slot(spelled[1], tokens: 3000, micros: 1000)]))]
+        // 4,000 micro-dollars over 4,000 tokens, whichever spelling the dictionary walks last.
+        #expect(RunCost.rates(activity, deviceID: "mac", now: now) == [ModelID.normalize(spelled[0]): 1.0])
     }
 
     @Test func aRunFinishesAtMostOnceEveryHalfHour() {

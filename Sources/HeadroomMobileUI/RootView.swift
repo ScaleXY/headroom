@@ -147,7 +147,8 @@ public struct HeadroomRootView: View {
         case "activity":
             section = .activity; sidebarAccount = nil
         default:
-            section = .now; sidebarAccount = nil
+            // `headroom://runs` (the run Live Activity): Now itself, not an account pushed on it earlier.
+            section = .now; sidebarAccount = nil; path = []
         }
     }
 }

@@ -237,6 +237,33 @@ private let presenter: RunsPresenter = {
         #expect(presenter.card(mirrored).headline == "50%" && presenter.card(mirrored).declared)
     }
 
+    @Test func oneStepOrTaskIsSingularAsOnTheMac() throws {
+        func one(mirrored: Bool, state: TaskRunState, counts: RunCounts) -> RunDigest {
+            var d = RunDigest(id: "mac:1", mac: "MacBook Pro", state: state, hasDeclaredTasks: true, startedAt: now.addingTimeInterval(-600),
+                              updatedAt: now.addingTimeInterval(-60), counts: counts, title: "One thing")
+            d.mirrored = mirrored
+            d.receipt = state.isTerminal ? RunDigest.Receipt(seconds: 540) : nil
+            return d
+        }
+        let step = presenter.card(one(mirrored: true, state: .done, counts: RunCounts(done: 1)))
+        #expect(step.counts == "1 of 1 step")
+        #expect(step.verdict?.primary == "Done.")
+        #expect(try #require(step.receipt).tasksNote == "step")
+        #expect(presenter.card(one(mirrored: false, state: .running, counts: RunCounts(running: 1))).counts == "0 of 1 task · 1 running")
+        #expect(presenter.card(one(mirrored: true, state: .done, counts: RunCounts(done: 3))).verdict?.primary == "All 3 steps done.")
+        // Failed with no failed task counted: how it ended, not "0 tasks failed."
+        #expect(presenter.card(one(mirrored: false, state: .partial, counts: RunCounts(done: 2))).verdict?.primary == RunWords.partial + ".")
+    }
+
+    @Test func aReceiptNamesFailedAndOptionalFailedApart() throws {
+        var d = RunDigest(id: "mac:2", mac: "MacBook Pro", state: .partial, hasDeclaredTasks: true, startedAt: now.addingTimeInterval(-600),
+                          updatedAt: now.addingTimeInterval(-60), counts: RunCounts(failed: 1, done: 2), title: "Mixed")
+        d.receipt = RunDigest.Receipt(seconds: 540, optionalFailed: 1)
+        let receipt = try #require(presenter.card(d).receipt)
+        #expect(receipt.tasks == "2 of 4")
+        #expect(receipt.tasksNote == "tasks · 1 failed · 1 optional failed")
+    }
+
     @Test func anAbandonedRunSaysSo() {
         var d = digest(Demo.stoppedRun(now: now), names: true)
         d.abandoned = true

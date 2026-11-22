@@ -187,6 +187,16 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(c.receipt?.tasksNote == "tasks · 1 cancelled · 1 left open")
         #expect(p.menuBar([r]) == nil)
     }
+
+    @Test func aRunGivenUpOnWhileItWaitedAsksNothing() {
+        let r = run("stuck", state: .waiting, wait: .input, nodes: [leaf("migrate", .waiting, wait: .input, waitNote: "Drop the table?")]) {
+            $0.question = TaskQuestion(text: "May I drop the unused audit table?", task: "migrate", askedAt: at(-4))
+            $0.abandoned = true
+        }
+        let c = p.page([r]).recent[0]
+        #expect(c.stateText == "Abandoned" && !c.live)
+        #expect(!c.needsInput && c.question == nil)
+    }
 }
 
 @Suite struct RunRowDetailTests {

@@ -47,12 +47,14 @@ public enum RunCost {
             for s in e.payload.slots {
                 let priced = s.tokens.total - s.unpricedTokens
                 guard priced > 0, s.micros > 0 else { continue }
-                micros[s.model, default: 0] += s.micros
-                tokens[s.model, default: 0] += priced
+                // Two spellings of one model are one model: summed, not whichever came last.
+                let model = ModelID.normalize(s.model)
+                micros[model, default: 0] += s.micros
+                tokens[model, default: 0] += priced
             }
         }
         return micros.reduce(into: [:]) { out, m in
-            if let t = tokens[m.key], t > 0 { out[ModelID.normalize(m.key)] = Double(m.value) / Double(t) }
+            if let t = tokens[m.key], t > 0 { out[m.key] = Double(m.value) / Double(t) }
         }
     }
 
@@ -145,6 +147,8 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
         for r in runs {
             if !r.state.isTerminal, r.state == .waiting, r.waitReason == .input {
                 stillWaiting.insert(r.id)
+                // Back at work after finishing, even if first seen asking: its next finish is news.
+                if finished[r.id] != nil { reopened.insert(r.id) }
                 // A quiet Mac can't say the agent is still waiting; it alerts once the Mac is back.
                 guard r.lastSeen == nil else { continue }
                 let release = r.macActiveAt.map { $0.addingTimeInterval(Self.activeHold) }
@@ -157,9 +161,13 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
                     continue
                 }
                 waiting.insert(r.id)
+                // Nothing is held on the first look or with the switch off: the episode is used up,
+                // so a later sync can't bring it back as a delayed alert.
                 if let release, release > now {
-                    held[r.id] = release
-                    if primed, needsInput { out.due.append(Alert(kind: .needsInput, run: r, deliverAt: release)) }
+                    if primed, needsInput {
+                        held[r.id] = release
+                        out.due.append(Alert(kind: .needsInput, run: r, deliverAt: release))
+                    }
                 } else if primed, needsInput {
                     out.due.append(Alert(kind: .needsInput, run: r))
                 }

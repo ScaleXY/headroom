@@ -66,8 +66,9 @@ public struct ActivityPresenter {
             let block = Int(now.timeIntervalSince(dayStart) / (4 * 3600))
             let current = dayStart.addingTimeInterval(Double(block) * 4 * 3600)
             let starts = (0..<42).map { current.addingTimeInterval(Double($0 - 41) * 4 * 3600) }
+            // The first bin to start in each day: at midnight, or an hour off it on the far side of a clock change.
             let labels = starts.enumerated().compactMap { i, d -> (Int, String)? in
-                calendar.component(.hour, from: d) == 0 && i < 40 ? (i, weekday(d)) : nil
+                !calendar.isDate(d, inSameDayAs: d.addingTimeInterval(-4 * 3600)) && i < 40 ? (i, weekday(d)) : nil
             }
             return Bins(starts: starts, step: { $0.addingTimeInterval(4 * 3600) }, labels: labels)
         case .month:
@@ -81,7 +82,9 @@ public struct ActivityPresenter {
     public func card(_ provider: Provider, aggregates: [HourAggregate], range: ActivityRange, selection: Range<Int>?) -> ActivityCardModel {
         let b = bins(for: range)
         let n = b.starts.count
-        let sel = (selection ?? 0..<n).clamped(to: 0..<n)
+        // A selection past the bars (the range got shorter) is no selection.
+        let clamped = (selection ?? 0..<n).clamped(to: 0..<n)
+        let sel = clamped.isEmpty ? 0..<n : clamped
         var bars = b.starts.map { ActivityBar(start: $0, end: b.step($0), tokens: .zero, micros: 0) }
         let mine = aggregates.filter { $0.provider == provider }
         guard let first = b.starts.first else {

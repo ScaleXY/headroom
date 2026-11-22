@@ -388,7 +388,8 @@ public enum RunSummaryBuilder {
         let optionalFailed = r.nodes.filter { $0.leaf && $0.importance == .optional && ($0.state == .failed || $0.state == .partial) }.count
         let retries = r.nodes.reduce(0) { $0 + $1.attempts.retries }
         return RunReceiptPayload(seconds: max(0, r.updatedAt.timeIntervalSince(r.startedAt)).rounded(),
-                                 models: models.isEmpty ? nil : Dictionary(uniqueKeysWithValues: models.map { (String($0.key.prefix(60)), $0.value) }),
+                                 // Two names can be cut to the same 60 characters: they add up.
+                                 models: models.isEmpty ? nil : Dictionary(models.map { (String($0.key.prefix(60)), $0.value) }, uniquingKeysWith: +),
                                  time: r.time.total > 0 ? r.time : nil, optionalFailed: optionalFailed > 0 ? optionalFailed : nil,
                                  scopeChanges: r.scopeChanges > 0 ? r.scopeChanges : nil, retries: retries > 0 ? retries : nil)
     }

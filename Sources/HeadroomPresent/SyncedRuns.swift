@@ -350,9 +350,9 @@ extension RunsPresenter {
             case .done:
                 let opt = d.receipt?.optionalFailed ?? 0
                 primary = opt > 0 ? "Everything that counts is done; \(opt) optional \(opt == 1 ? "task" : "tasks") failed."
-                    : (d.hasDeclaredTasks || d.mirrored) ? "All \(d.counts.total) \(noun) done." : "Every agent finished."
+                    : (d.hasDeclaredTasks || d.mirrored) ? (d.counts.total == 1 ? "Done." : "All \(d.counts.total) \(noun) done.") : "Every agent finished."
             case .partial, .failed:
-                primary = "\(d.counts.failed) \(d.counts.failed == 1 ? "task" : "tasks") failed."
+                primary = d.counts.failed > 0 ? "\(d.counts.failed) \(d.counts.failed == 1 ? "task" : "tasks") failed." : RunWords.partial + "."
             }
         }
         var secondary: [String] = []
@@ -451,7 +451,7 @@ extension RunsPresenter {
     /// "5 of 11 tasks · 3 running" beside the percent (steps for a plan read off the harness).
     func syncedCounts(_ d: RunDigest, quiet: Bool) -> String? {
         guard d.hasDeclaredTasks || d.mirrored, d.counts.total > 0 else { return nil }
-        let noun = d.mirrored ? "steps" : (d.counts.total == 1 ? "task" : "tasks")
+        let noun = d.mirrored ? (d.counts.total == 1 ? "step" : "steps") : (d.counts.total == 1 ? "task" : "tasks")
         var s = "\(d.counts.done) of \(d.counts.total) \(noun)"
         if !quiet, !d.state.isTerminal, d.counts.running > 0 { s += " · \(d.counts.running) running" }
         return s
@@ -519,9 +519,10 @@ extension RunsPresenter {
         let c = d.counts
         // Counts leave out what doesn't count toward the run; the receipt names failed optional work too.
         let optional = d.hasDeclaredTasks ? r.optionalFailed : 0
-        let failed = c.failed + optional, total = c.total + optional
-        var note = [d.hasDeclaredTasks ? (d.mirrored ? "steps" : "tasks") : "agents"]
-        if failed > 0 { note.append(r.optionalFailed == failed ? "\(failed) optional failed" : "\(failed) failed") }
+        let total = c.total + optional
+        var note = [!d.hasDeclaredTasks ? (total == 1 ? "agent" : "agents") : d.mirrored ? (total == 1 ? "step" : "steps") : (total == 1 ? "task" : "tasks")]
+        if c.failed > 0 { note.append("\(c.failed) failed") }
+        if optional > 0 { note.append("\(optional) optional failed") }
         var foot: [String] = []
         if r.scopeChanges > 0 { foot.append("Plan changed \(r.scopeChanges) time\(r.scopeChanges == 1 ? "" : "s") after it started") }
         if r.retries > 0 { foot.append("\(r.retries) retr\(r.retries == 1 ? "y" : "ies")") }

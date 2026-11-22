@@ -125,6 +125,19 @@ import HeadroomKit
         for (a, b) in zip(merged, merged.dropFirst()) { #expect(a.upperBound < b.lowerBound) }
     }
 
+    @Test func dayTicksStayOnMidnightWhenTheClocksChange() throws {
+        // Clocks go back on Sunday 1 November 2026 in New York: that day has 25 hours.
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+        let start = try #require(cal.date(from: DateComponents(year: 2026, month: 10, day: 31, hour: 10)))
+        let now = try #require(cal.date(from: DateComponents(year: 2026, month: 11, day: 4, hour: 12)))
+        var r = Demo.declaredRun(now: now)
+        r.startedAt = start
+        let lanes = try #require(RunsPresenter(now: now, calendar: cal, locale: Locale(identifier: "en_US")).lanes(r))
+        let days = lanes.ticks.filter { $0.kind == .plain }.map(\.label)
+        #expect(Array(days.prefix(3)) == ["Sun", "Mon", "Tue"])
+    }
+
     @Test func everyDemoRunBuildsAPage() {
         for s in Demo.runScenarios(now: now) {
             let page = presenter.page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)

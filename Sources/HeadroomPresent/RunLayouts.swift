@@ -566,7 +566,8 @@ extension RunsPresenter {
             while h < end {
                 let label = stepHours >= 24 ? TimeFormat.weekdayShort(h, calendar: calendar, locale: locale) : clock(h)
                 hours.append(.init(label: label, at: at(h)))
-                h = calendar.date(byAdding: .hour, value: stepHours, to: h) ?? h.addingTimeInterval(Double(stepHours) * 3600)
+                // Days step by the calendar: 24 hours on from midnight isn't midnight when the clocks change.
+                h = calendar.date(byAdding: unit, value: stepHours >= 24 ? stepHours / 24 : stepHours, to: h) ?? h.addingTimeInterval(Double(stepHours) * 3600)
             }
         }
         // A label needs about 9% of the width; keep the important ones.

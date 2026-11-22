@@ -28,6 +28,8 @@ public final class SyncReaderModel {
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var pendingReload: Task<Void, Never>?
+    /// Counts source swaps, so a read begun on the old source is dropped when it lands.
+    @ObservationIgnored private var generation = 0
 
     public init(source: any SyncReading, isDemo: Bool = false) {
         self.source = source
@@ -51,16 +53,22 @@ public final class SyncReaderModel {
     public func use(_ source: any SyncReading, isDemo: Bool) async {
         self.source = source
         self.isDemo = isDemo
+        generation += 1
         await reload()
     }
 
     /// Re-reads every record and rebuilds.
     public func reload() async {
         pendingReload = nil
+        let generation = generation
         do {
-            records = try await source.records()
+            let fresh = try await source.records()
+            // Swapped meanwhile (sample data on or off): the new source's own read is the one that shows.
+            guard generation == self.generation else { return }
+            records = fresh
             lastError = nil
         } catch {
+            guard generation == self.generation else { return }
             lastError = String(describing: error)
         }
         rebuild(at: clock())

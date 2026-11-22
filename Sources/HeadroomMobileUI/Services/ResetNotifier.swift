@@ -32,10 +32,14 @@ public enum ResetNotifier {
                 }
             }
         }
-        let pending = await center.pendingNotificationRequests().map(\.identifier).filter { $0.hasPrefix(prefix) }
-        let stale = pending.filter { wanted[$0] == nil }
+        // Identifier → body of what's pending.
+        var pending: [String: String] = [:]
+        for r in await center.pendingNotificationRequests() where r.identifier.hasPrefix(prefix) { pending[r.identifier] = r.content.body }
+        let stale = pending.keys.filter { wanted[$0] == nil }
         if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: stale) }
-        for (id, req) in wanted where !pending.contains(id) { try? await center.add(req) }
+        // The week's reminder quotes what's left, which moves: one whose words changed goes in again
+        // (the same identifier replaces it).
+        for (id, req) in wanted where pending[id] != req.content.body { try? await center.add(req) }
     }
 
     static func request(_ id: String, at date: Date, title: String, body: String) -> UNNotificationRequest {

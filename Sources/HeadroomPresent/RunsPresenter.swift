@@ -417,12 +417,14 @@ public struct RunsPresenter: Sendable {
         let built = rows(r, expanded: expanded, opened: opened)
         let expandable = built.finished > 0 || built.pressing > Self.rowCap
         let timeline = finished ? nil : self.timeline(r)
+        // A run given up on while it waited keeps its state, but asks nothing any more.
+        let asking = r.needsInput && !r.abandoned
         var card = RunCardModel(id: r.id, title: displayTitle(r, sayStart: sayStart), subtitle: subtitle(r), stateText: stateText(r), glyph: glyph,
-                            tone: tone, live: !finished, declared: declared, needsInput: r.needsInput,
+                            tone: tone, live: !finished, declared: declared, needsInput: asking,
                             provider: TaskLimits.provider(named: r.harness), bar: declared ? r.progress : nil, headline: headline,
                             estimate: nil, figures: figures, warning: timeline == nil ? r.warning : nil, rows: built.rows,
                             expandable: expandable, expanded: expanded && expandable,
-                            segments: segments, counts: counts, elapsed: elapsed(r), question: r.needsInput ? question(r) : nil,
+                            segments: segments, counts: counts, elapsed: elapsed(r), question: asking ? question(r) : nil,
                             timeline: timeline, receipt: finished ? receipt(r) : nil, actions: Self.actions(r))
         card.hero = hero(r)
         card.verdict = verdict(r, timeline: timeline != nil)
@@ -683,7 +685,8 @@ public struct RunsPresenter: Sendable {
     func question(_ r: TaskRun) -> RunQuestionModel? {
         func title(_ id: String?) -> String? { id.flatMap { id in r.nodes.first { $0.id == id }?.title } }
         if let q = r.question {
-            return RunQuestionModel(asker: RunWords.asking(title(q.task)), text: q.text, options: q.options)
+            // A run can wait on you without saying why: the block still says something.
+            return RunQuestionModel(asker: RunWords.asking(title(q.task)), text: q.text.isEmpty ? RunWords.waitingForAnswer : q.text, options: q.options)
         }
         if let n = r.nodes.first(where: { $0.state == .waiting && $0.waitReason == .input }), let note = n.waitNote, !note.isEmpty {
             return RunQuestionModel(asker: RunWords.asking(n.title), text: note)

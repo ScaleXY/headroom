@@ -15,7 +15,13 @@ public final class LiveActivityController {
 
     public init() {}
 
-    public var tracked: Set<String> { Set(Activity<SessionActivityAttributes>.activities.filter { $0.activityState == .active }.map(\.attributes.accountID)) }
+    /// Every activity still on screen: active, stale or not yet shown. One past its stale date is
+    /// still there to be updated or ended (as `RunActivityController` has it).
+    private var current: [Activity<SessionActivityAttributes>] {
+        Activity<SessionActivityAttributes>.activities.filter { $0.activityState != .ended && $0.activityState != .dismissed }
+    }
+
+    public var tracked: Set<String> { Set(current.map(\.attributes.accountID)) }
 
     public var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
@@ -38,16 +44,17 @@ public final class LiveActivityController {
     /// Brings every running activity up to date, ends the ones whose session is over, and (when
     /// asked, in the foreground) starts one for each account with a session running.
     public func sync(_ feed: WidgetFeed, autoStart: Bool) {
-        for activity in Activity<SessionActivityAttributes>.activities where activity.activityState == .active {
+        for activity in current {
             let id = activity.attributes.accountID
             guard let p = feed.account(id), let state = SessionActivityState.from(p, generatedAt: feed.generatedAt),
                   state.resetsAt > Date() else {
                 end(activity)
                 continue
             }
-            // Ring the bell once per level, only as it escalates.
+            // Ring the bell once per level, only as it escalates. A fresh launch (a sync's wake)
+            // remembers nothing: the level the activity already shows has rung.
             var alert: AlertConfiguration?
-            if state.level > (alerted[id] ?? .normal), state.level >= .amber {
+            if state.level > (alerted[id] ?? activity.content.state.level), state.level >= .amber {
                 alert = AlertConfiguration(title: "\(activity.attributes.shortLabel): 5-hour session \(Int((state.used * 100).rounded()))% used",
                                            body: "\(state.forecast(Copy(now: Date())))", sound: .default)
                 alerted[id] = state.level

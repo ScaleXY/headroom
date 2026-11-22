@@ -69,7 +69,8 @@ public enum FeedFile {
         url.flatMap { WidgetFeed.read(from: $0) }
     }
 
-    /// Writes atomically. Returns false when nothing changed (apart from `generatedAt`).
+    /// Writes atomically. Returns false when `feed` encodes to the bytes in `previous`. `generatedAt`
+    /// is part of that: a caller that shouldn't write for it alone compares without it first.
     @discardableResult
     public static func write(_ feed: WidgetFeed, to url: URL? = url, previous: inout Data?) -> Bool {
         guard let url, let data = try? SnapshotFile.encoder().encode(feed), data != previous else { return false }

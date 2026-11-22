@@ -32,7 +32,8 @@ public final class FeedWriter {
 
         for kind in Self.kinds {
             let look = Self.look(feed, kind: kind)
-            let urgent = looks[kind].map { Self.colors($0) != Self.colors(look) } ?? true
+            // An activity kind's look is tokens and cost, no colors: nothing in it is urgent.
+            let urgent = looks[kind].map { !kind.hasSuffix(".activity") && Self.colors($0) != Self.colors(look) } ?? true
             guard looks[kind] != look else { continue }
             looks[kind] = look
             let last = reloaded[kind] ?? .distantPast

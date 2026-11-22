@@ -140,6 +140,34 @@ import HeadroomKit
         #expect(a.history.windows["weekly"]?.samples.isEmpty == true)
     }
 
+    @Test func aWeekRolledOverByTheClockStartsWithNoSessionHitsOrEarlyReset() {
+        var r = SyncRecords()
+        let reset = now.addingTimeInterval(-3600)
+        var h = history([(-30, 0.9)], resetsAt: reset)
+        h.sessionHitsThisWindow = 3
+        h.earlyResetAt = reset.addingTimeInterval(-2 * 86400)
+        r.live = [live("A", reading(0.9, at: now.addingTimeInterval(-86400), resetsAt: reset), h)]
+        let a = AccountReader(now: now).read(r).accounts[0]
+        #expect(a.projected)
+        #expect(a.history.sessionHitsThisWindow == 0)
+        #expect(a.history.earlyResetAt == nil)
+    }
+
+    @MainActor @Test func aReadFromTheOldSourceNeverLandsOverTheNewOne() async {
+        let (entered, hasEntered) = AsyncStream<Void>.makeStream()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        var slowRecords = SyncRecords(), demoRecords = SyncRecords()
+        slowRecords.devices = [device("Live")]
+        demoRecords.devices = [device("Demo")]
+        let model = SyncReaderModel(source: GatedStore(fixture: slowRecords, entered: hasEntered, gate: gate))
+        let slow = Task { await model.reload() }
+        for await _ in entered { break }
+        await model.use(FixtureSyncStore(demoRecords), isDemo: true)
+        open.yield()
+        await slow.value
+        #expect(model.snapshot.devices.map(\.id) == ["Demo"])
+    }
+
     @Test func labelsUseEmailsAndNumberLookalikes() {
         var r = SyncRecords()
         r.devices = [device("A", current: ["claude": "claude-a"]), device("B", current: ["claude": "claude-b"])]
@@ -177,5 +205,18 @@ import HeadroomKit
         w2.finalUsed = 0.9; w2.sessionHits = 3; w2.scheduledEnd = now.addingTimeInterval(120)
         let weeks = AccountReader.mergeWeeks([[w1], [w2]])
         #expect(weeks.count == 1 && weeks[0].finalUsed == 0.9 && weeks[0].sessionHits == 3)
+    }
+}
+
+/// A source whose read says it began, then waits to be let go.
+private struct GatedStore: SyncReading {
+    var fixture: SyncRecords
+    let entered: AsyncStream<Void>.Continuation
+    let gate: AsyncStream<Void>
+
+    func records() async throws -> SyncRecords {
+        entered.yield()
+        for await _ in gate { break }
+        return fixture
     }
 }

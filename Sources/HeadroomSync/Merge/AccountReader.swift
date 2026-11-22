@@ -258,6 +258,8 @@ public struct AccountReader: Sendable {
             r.windows[i].used = 0
             r.windows[i].resetsAt = next
             history.windows[r.windows[i].id] = WindowHistory(id: r.windows[i].id, resetsAt: next, duration: length)
+            // As `HistoryStore.record` does when the week rolls: its 5-hour hits and early reset were the old week's.
+            if r.windows[i].id == reading.headline?.id { history.sessionHitsThisWindow = 0; history.earlyResetAt = nil }
             projected = true
         }
         return (r, projected)

@@ -100,7 +100,7 @@ struct WatchAccountPage: View {
                     }
                     .frame(height: 24, alignment: .bottom)
                 }
-                Text(now.timeIntervalSince(feed.generatedAt) < 60 ? "Updated just now" : "Updated \(copy.ago(feed.generatedAt))" + (provider.sourceDevice.map { " · \($0)" } ?? ""))
+                Text((now.timeIntervalSince(feed.generatedAt) < 60 ? "Updated just now" : "Updated \(copy.ago(feed.generatedAt))") + (provider.sourceDevice.map { " · \($0)" } ?? ""))
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 4)

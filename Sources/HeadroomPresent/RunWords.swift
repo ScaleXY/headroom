@@ -7,6 +7,8 @@ public enum RunWords {
     // Run and task states.
     public static let running = "Running"
     public static let needsInput = "Needs your input"
+    /// A run that waits on you without saying what it asked.
+    public static let waitingForAnswer = "An agent is waiting for your answer."
     public static let waitingOnTask = "Waiting on another task"
     public static let stopped = "Stopped with work left"
     /// A group with some children finished and the rest not started.

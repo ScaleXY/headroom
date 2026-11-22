@@ -95,7 +95,8 @@ final class AppServices {
         if ask { askedForNotifications = true }
         Task {
             if ask { await ResetNotifier.requestPermission() }
-            await ResetNotifier.schedule(feed, sessionBack: prefs.notifySessionBack, weekRenews: prefs.notifyWeekRenews)
+            // Sample data schedules nothing: its resets aren't real, and the real reminders stay pending.
+            if !demo { await ResetNotifier.schedule(feed, sessionBack: prefs.notifySessionBack, weekRenews: prefs.notifyWeekRenews) }
             await RunNotifier.notify(runs, prefs: prefs, isDemo: demo)
         }
     }
