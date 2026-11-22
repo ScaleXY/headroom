@@ -267,7 +267,7 @@ extension Demo {
         let cum = series(total: 0.53, nowH: elapsed, startHour: startHour, seed: 11) { h in
             let t = at(start, hours: Double(h))
             let day = Display.calendar.component(.weekday, from: t), hour = Display.calendar.component(.hour, from: t)
-            if day == 3 { return hour >= 7 ? 22 : 1 }
+            if day == 3 { return hour >= 7 ? 3 : 0.5 }
             return day == 2 ? 1.6 : day == 1 || day == 7 ? 0.35 : 1
         }
         let weekly = LimitWindow(id: "weekly", kind: .weekly, used: 0.53, resetsAt: at(start, hours: 168), duration: 168 * 3600)
