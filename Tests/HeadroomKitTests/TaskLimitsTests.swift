@@ -99,7 +99,7 @@ import Testing
     @Test func theRoomLine() {
         let line = { TaskLimits.roomLine(.claude, providers: [$0], now: self.now, calendar: self.calendar, locale: self.locale) }
         #expect(line(claude(used: 0.62, resetsIn: 7)) == "5-hour window 38% left, resets 3 PM")
-        #expect(line(claude(used: 0.8, resetsIn: 2, runsOutIn: 0.5)) == "5-hour window 20% left, resets 10 AM; at this pace it runs out around 8:30 AM")
+        #expect(line(claude(used: 0.8, resetsIn: 2, runsOutIn: 0.5)) == "5-hour window 20% left, resets 10 AM; at this rate it runs out around 8:30 AM")
         #expect(line(claude(used: 1, blocked: BlockedSnapshot(by: "session", detail: nil, until: h(1)))) == "5-hour window used up, back today 9 AM")
         #expect(TaskLimits.roomLine(.codex, providers: [claude(used: 0.5)], now: now) == nil)
         #expect(TaskLimits.roomLine(.claude, providers: [ProviderSnapshot(id: .claude)], now: now) == nil)

@@ -20,22 +20,28 @@ public struct MarkShape: Shape {
     }
 }
 
-/// The provider tile: brand gradient squircle with the mark, as on the Pace card.
+/// The provider tile (redesign §2 rule 1): the real mark in the provider's tone on a neutral
+/// Headroom tile, as on the Mac's cards.
 public struct BrandTile: View {
     public var provider: Provider
     public var size: CGFloat
+    @Environment(\.colorScheme) private var scheme
 
     public var body: some View {
-        let b = BrandColors.of(provider)
-        let shape = RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+        let p = Palette(scheme)
+        let k = size / 26
+        let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
         ZStack {
-            shape.fill(LinearGradient(colors: [b.tileTop, b.tileBottom], startPoint: UnitPoint(x: 0.25, y: 0), endPoint: UnitPoint(x: 0.75, y: 1)))
-            shape.strokeBorder(LinearGradient(colors: [white(0.34), white(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6)
-            MarkShape(provider: provider).fill(b.markInk)
-                .frame(width: size * (provider == .claude ? 0.62 : 0.6), height: size * (provider == .claude ? 0.62 : 0.6))
+            shape.fill(LinearGradient(colors: [p.markTileTop, p.markTileBottom], startPoint: .top, endPoint: .bottom))
+            // inset 0 1px 0: a 1 pt highlight along the top edge.
+            shape.fill(p.markTileHighlight)
+                .mask(shape.subtracting(shape.offset(y: 1)).frame(width: size, height: size))
+            shape.strokeBorder(p.markTileStroke, lineWidth: 0.5)
+            MarkShape(provider: provider).fill(p.providerTone(provider))
+                .frame(width: size * 0.58, height: size * 0.58)
         }
         .frame(width: size, height: size)
-        .shadow(color: black(0.22), radius: size * 0.1, y: size * 0.05)
+        .shadow(color: p.markTileShadow, radius: 1.5 * k, y: 1 * k)
     }
 
     public init(provider: Provider, size: CGFloat) {
@@ -44,21 +50,21 @@ public struct BrandTile: View {
     }
 }
 
-/// "MAX 20×" in the brand's tint.
+/// "MAX 20×" in the provider's tone (rule 2): tone text, a 10% tone fill and a 0.5 pt stroke at 42%.
 public struct PlanPill: View {
     public var provider: Provider
     public var text: String
     @Environment(\.colorScheme) private var scheme
 
     public var body: some View {
-        let b = BrandColors.of(provider), p = Palette(scheme)
+        let p = Palette(scheme)
         Text(text.uppercased())
             .font(.system(size: 7.5, weight: .heavy))
             .tracking(0.7)
-            .foregroundStyle(b.pill(p))
+            .foregroundStyle(p.providerTone(provider))
             .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(b.base.opacity(p.dark ? 0.16 : 0.10)))
-            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(b.base.opacity(0.32), lineWidth: 0.6))
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(p.providerTone(provider, ProviderTone.pillFill)))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(p.providerTone(provider, ProviderTone.pillStroke), lineWidth: 0.5))
             .lineLimit(1)
             .fixedSize()
     }
@@ -100,7 +106,7 @@ public struct ProviderHeader: View {
 
 // MARK: - Type
 
-/// A small-capitals label ("EVEN PACE", "TO RESET").
+/// A small-capitals label ("ON TRACK", "TO RESET").
 public struct Caps: View {
     public var text: String
     public var size: CGFloat

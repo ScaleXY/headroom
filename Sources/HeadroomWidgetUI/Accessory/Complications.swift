@@ -10,7 +10,7 @@ public enum ComplicationKind: String, CaseIterable, Sendable {
     case week
     /// Week and session together, or the two accounts that need watching most.
     case pace
-    /// The Burn-o-meter: how fast you're spending against the pace that lasts.
+    /// The Burn-o-meter: how fast you're spending against the rate that lasts.
     case burn
 
     public var kind: String { "com.scalexy.headroom.complication.\(rawValue)" }
@@ -27,9 +27,9 @@ public enum ComplicationKind: String, CaseIterable, Sendable {
     public var summary: String {
         switch self {
         case .session: "Time to the 5-hour reset, and what's left."
-        case .week: "What's left this week, and whether you're on pace."
+        case .week: "What's left this week, and whether you're on track."
         case .pace: "The week and the 5-hour session at a glance."
-        case .burn: "How fast you're spending against the pace that lasts."
+        case .burn: "How fast you're spending against the rate that lasts."
         }
     }
 
@@ -472,7 +472,7 @@ public enum AccessoryMath {
             if !ratio.isFinite { return "Used up" }
             return switch BurnGauge.state(ratio) {
             case .plenty: "Cruising"
-            case .onPace: "Right on pace"
+            case .onPace: "Right on track"
             case .tight: "Ease off a little"
             case .veryTight: "Slow down"
             }

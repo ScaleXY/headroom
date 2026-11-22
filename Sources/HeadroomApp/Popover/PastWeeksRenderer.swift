@@ -20,7 +20,7 @@ enum PastWeeksRenderer {
         CardChrome.draw(CGRect(x: origin.x, y: origin.y, width: width, height: h), provider: m.provider, theme: theme, ctx: ctx)
         let x0 = origin.x + 14, w = width - 28
         var y = origin.y + 13
-        BrandMark.drawTile(m.provider, in: CGRect(x: x0, y: y, width: 20, height: 20), ctx: ctx)
+        BrandMark.drawTile(m.provider, in: CGRect(x: x0, y: y, width: 20, height: 20), theme: theme, ctx: ctx)
         Text(m.provider.displayName, F.sf(14, 650), theme.ink, kern: -0.07).draw(x: x0 + 20 + 8, capCenter: y + 10, in: ctx)
         // Chips, right-aligned.
         var cx = x0 + w

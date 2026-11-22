@@ -5,7 +5,7 @@ public struct Verdict: Codable, Sendable, Hashable {
     public var state: PacingState
     /// Badge text: "Plenty available", "Getting tight", or "Limit reached".
     public var title: String
-    /// "6.9×", or "—" when S is infinite (last hour).
+    /// S in words (`NumberFormat.headroom`): "40% spare", "12% short", "6.9× what's needed"; "—" when infinite.
     public var multipleText: String
     public var primary: String
     public var secondary: String
@@ -51,9 +51,9 @@ public enum VerdictWriter {
             let early = a.resetsAt.timeIntervalSince(runOut)
             let longer: String
             if let dayRunOut = a.projectedRunOut, dayRunOut < a.resetsAt {
-                longer = "At today's pace it lasts to " + TimeFormat.weekdayOrDay(dayRunOut, now: now, calendar: calendar, locale: locale) + "."
+                longer = "At today's rate it lasts to " + TimeFormat.weekdayOrDay(dayRunOut, now: now, calendar: calendar, locale: locale) + "."
             } else {
-                longer = "At today's pace it lasts to \(renewDay)."
+                longer = "At today's rate it lasts to \(renewDay)."
             }
             return Verdict(
                 state: state,
@@ -69,7 +69,7 @@ public enum VerdictWriter {
             let primary = "Spend it before it renews " + TimeFormat.relative(a.resetsAt, now: now, calendar: calendar, locale: locale) + "."
             let secondary: String
             if let unused = a.projectedUnusedAtReset {
-                secondary = "At today's pace, \(percent(unused)) renews unused."
+                secondary = "At today's rate, \(percent(unused)) renews unused."
             } else {
                 secondary = "\(percent(a.remaining)) left with \(TimeFormat.spokenSpan(a.timeLeft)) to go."
             }
@@ -80,8 +80,8 @@ public enum VerdictWriter {
                 state: state,
                 title: state.title,
                 multipleText: chip,
-                primary: "Roughly on pace for the \(period).",
-                secondary: "At this pace it lasts to renewal."
+                primary: "Roughly on track for the \(period).",
+                secondary: "At this rate it lasts to renewal."
             )
 
         case .tight:
@@ -92,7 +92,7 @@ public enum VerdictWriter {
                     state: state,
                     title: state.title,
                     multipleText: chip,
-                    primary: "Runs out " + TimeFormat.weekdayOrDay(runOut, now: now, calendar: calendar, locale: locale) + " at today's pace.",
+                    primary: "Runs out " + TimeFormat.weekdayOrDay(runOut, now: now, calendar: calendar, locale: locale) + " at today's rate.",
                     secondary: "\(TimeFormat.spokenSpan(early)) early · ease off ~\(ease)% to reach \(renewDay)."
                 )
             }
@@ -102,7 +102,7 @@ public enum VerdictWriter {
                     state: state,
                     title: state.title,
                     multipleText: chip,
-                    primary: "Just under even pace for the \(period).",
+                    primary: "Just off track for the \(period).",
                     secondary: "Ease off a little to reach \(renewDay)."
                 )
             }
@@ -111,7 +111,7 @@ public enum VerdictWriter {
                 state: state,
                 title: state.title,
                 multipleText: chip,
-                primary: "Even pace runs out " + TimeFormat.shortDayTime(a.evenRunOut, now: now, calendar: calendar, locale: locale) + ", \(TimeFormat.spokenSpan(early)) early.",
+                primary: "An even rate runs out " + TimeFormat.shortDayTime(a.evenRunOut, now: now, calendar: calendar, locale: locale) + ", \(TimeFormat.spokenSpan(early)) early.",
                 secondary: "Ease off about \(ease)% to reach \(renewDay)."
             )
 
@@ -121,17 +121,15 @@ public enum VerdictWriter {
                 state: state,
                 title: state.title,
                 multipleText: chip,
-                primary: "At even pace you run out " + TimeFormat.shortDayTime(a.evenRunOut, now: now, calendar: calendar, locale: locale) + ", \(TimeFormat.spokenSpan(early)) early.",
-                secondary: "Slow to about \(fractionPhrase(a.multiple)) your usual pace."
+                primary: "At an even rate you run out " + TimeFormat.shortDayTime(a.evenRunOut, now: now, calendar: calendar, locale: locale) + ", \(TimeFormat.spokenSpan(early)) early.",
+                secondary: "Slow to about \(fractionPhrase(a.multiple)) your usual rate."
             )
         }
     }
 
-    /// "6.9×", "12×" from 10 up, "—" when infinite.
+    /// S in words: "40% spare", "12% short", "6.9× what's needed"; "—" when infinite.
     public static func multipleText(_ s: Double) -> String {
-        guard s.isFinite else { return "—" }
-        if s >= 10 { return "\(Int(s.rounded()))×" }
-        return String(format: "%.1f×", s)
+        NumberFormat.headroom(s)
     }
 
     /// "half", "a third of", "two-thirds of", "60% of".

@@ -83,4 +83,16 @@ struct NumberFormatTests {
         #expect(NumberFormat.multiple(12.4) == "12×")
         #expect(NumberFormat.multiple(.infinity) == "∞×")
     }
+
+    @Test func headroomMultiplier() {
+        #expect(NumberFormat.headroom(0.62) == "38% short")
+        #expect(NumberFormat.headroom(0) == "100% short")
+        #expect(NumberFormat.headroom(0.996) == "0% short")
+        #expect(NumberFormat.headroom(1) == "0% spare")
+        #expect(NumberFormat.headroom(1.4) == "40% spare")
+        #expect(NumberFormat.headroom(1.996) == "100% spare")
+        #expect(NumberFormat.headroom(2) == "2.0× what's needed")
+        #expect(NumberFormat.headroom(7.73) == "7.7× what's needed")
+        #expect(NumberFormat.headroom(.infinity) == "—")
+    }
 }

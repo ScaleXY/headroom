@@ -28,7 +28,7 @@ enum PopoverChrome {
     }
 
     /// Header row: app tile + wordmark, segmented Pace · Activity.
-    static func drawHeader(x: CGFloat, y: CGFloat, width: CGFloat, title: String = "Headroom", tabs: [String]? = ["Pace", "Activity"], selected: Int, theme: Theme, ctx: CGContext, out: RenderOutput?) {
+    static func drawHeader(x: CGFloat, y: CGFloat, width: CGFloat, title: String = "Headroom", tabs: [String]? = ["Limits", "Activity"], selected: Int, theme: Theme, ctx: CGContext, out: RenderOutput?) {
         let rowTop = y + 3, mid = rowTop + 14
         HeadroomMark.draw(in: CGRect(x: x + 3, y: mid - 13, width: 26, height: 26), ctx: ctx)
         Text(title, F.sf(16, 650), theme.ink, kern: -0.16).draw(x: x + 3 + 26 + 9, capCenter: mid, in: ctx)

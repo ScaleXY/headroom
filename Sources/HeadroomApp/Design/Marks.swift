@@ -18,33 +18,33 @@ enum BrandMark {
         ctx.fill(scaled, color)
     }
 
-    /// App-icon-style provider tile (PLAN §3.1): brand gradient squircle with the mark inside.
-    static func drawTile(_ provider: Provider, in rect: CGRect, ctx: CGContext, shadow: Bool = true) {
-        let brand = Brand.of(provider)
-        let r = rect.width * 0.29
+    /// The provider tile (spec §2 rule 1): the real mark in the provider's tone on a neutral
+    /// Headroom tile. Dark: `#34363C`→`#232428` with a 0.5 pt white 12% inner stroke, a 1 pt white 10%
+    /// top highlight and a small drop shadow. Light: `#FFFFFF`→`#F1F1F4` with a 0.5 pt black 8% stroke.
+    static func drawTile(_ provider: Provider, in rect: CGRect, theme: Theme, ctx: CGContext, shadow: Bool = true) {
+        let k = rect.width / 26
+        let r = rect.width * 0.3
         let shape = rounded(rect, r)
         if shadow {
+            // 0 1px 3px rgba(0,0,0,.35 / .10), scaled from the 26 pt mockup tile.
             ctx.withState {
-                ctx.setShadow(offset: CGSize(width: 0, height: -2 * rect.width / 28), blur: 6 * rect.width / 28, color: black(0.22).cgColor)
-                ctx.fill(shape, brand.tileBottom)
+                ctx.setShadow(offset: CGSize(width: 0, height: -1 * k), blur: 3 * k, color: theme.markTileShadow.cgColor)
+                ctx.fill(shape, theme.markTileBottom)
             }
         }
-        // CSS linear-gradient(150deg, top, bottom): from top-left-ish to bottom-right-ish.
-        let a = CGPoint(x: rect.minX + rect.width * 0.25, y: rect.minY), b = CGPoint(x: rect.maxX - rect.width * 0.25, y: rect.maxY)
-        ctx.fillLinear(shape, [brand.tileTop, brand.tileBottom], from: a, to: b)
-        // inset 0 1px 0 rgba(255,255,255,.3), inset 0 0 0 .5px rgba(255,255,255,.14)
+        ctx.fillVertical(shape, theme.markTileTop, theme.markTileBottom)
+        // inset 0 1px 0 highlight along the top edge.
         ctx.withState {
             ctx.addPath(shape); ctx.clip()
-            let top = rounded(rect.offsetBy(dx: 0, dy: 1), r)
-            let outer = CGMutablePath(); outer.addPath(shape); outer.addPath(top)
-            ctx.addPath(outer)
-            ctx.setFillColor(white(0.3).cgColor)
+            let ring = CGMutablePath(); ring.addPath(shape); ring.addPath(rounded(rect.offsetBy(dx: 0, dy: 1), r))
+            ctx.addPath(ring)
+            ctx.setFillColor(theme.markTileHighlight.cgColor)
             ctx.fillPath(using: .evenOdd)
         }
-        ctx.innerStroke(shape, white(0.14), width: 0.5)
-        let markSide = rect.width * (provider == .claude ? 0.62 : 0.60)
+        ctx.innerStroke(shape, theme.markTileStroke, width: 0.5)
+        let markSide = rect.width * 0.58
         let m = CGRect(x: rect.midX - markSide / 2, y: rect.midY - markSide / 2, width: markSide, height: markSide)
-        draw(provider, in: m, color: brand.markInk, ctx: ctx)
+        draw(provider, in: m, color: theme.providerTone(provider), ctx: ctx)
     }
 }
 

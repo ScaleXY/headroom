@@ -11,7 +11,8 @@ enum PaceCardRenderer {
     static func draw(_ m: PaceCardModel, origin: CGPoint, width: CGFloat, theme: Theme, ctx: CGContext?, out: RenderOutput? = nil) -> CGFloat {
         let height = layout(m, origin: origin, width: width, theme: theme, ctx: nil, out: nil)
         guard let ctx else { return height }
-        CardChrome.draw(CGRect(x: origin.x, y: origin.y, width: width, height: height), provider: m.provider, theme: theme, ctx: ctx)
+        CardChrome.draw(CGRect(x: origin.x, y: origin.y, width: width, height: height), provider: m.provider, theme: theme, ctx: ctx,
+                        state: m.meter?.state ?? m.verdict?.state)
         _ = layout(m, origin: origin, width: width, theme: theme, ctx: ctx, out: out)
         return height
     }
@@ -126,7 +127,7 @@ enum PaceCardRenderer {
     // MARK: Header
 
     static func drawHeader(_ m: PaceCardModel, x: CGFloat, y: CGFloat, w: CGFloat, theme: Theme, ctx: CGContext, out: RenderOutput?) {
-        BrandMark.drawTile(m.provider, in: CGRect(x: x, y: y, width: 28, height: 28), ctx: ctx)
+        BrandMark.drawTile(m.provider, in: CGRect(x: x, y: y, width: 28, height: 28), theme: theme, ctx: ctx)
         let mid = y + 14
         let name = Text(m.provider.displayName, F.sf(15, 650), theme.ink, kern: -0.075)
         name.draw(x: x + 28 + 9, capCenter: mid, in: ctx)
@@ -136,13 +137,15 @@ enum PaceCardRenderer {
         drawFreshness(m.freshness, right: x + w, midY: mid, theme: theme, ctx: ctx, out: out)
     }
 
+    /// The plan pill ("MAX 5×", "PLUS"), spec §2 rule 2: text in the tone, a 10% tone fill and a
+    /// 0.5 pt inner stroke at 42%.
     static func drawPill(_ text: String, provider: Provider, x: CGFloat, midY: CGFloat, theme: Theme, ctx: CGContext) {
         let brand = Brand.of(provider)
-        let t = Text(text, F.sf(9.5, 700), brand.pillText(theme), kern: 0.95)
+        let t = Text(text, F.sf(9.5, 700), brand.tone(theme), kern: 0.95)
         let r = CGRect(x: x, y: midY - 8.2, width: t.width + 12 - 0.95, height: 16.4)
         let shape = rounded(r, 6)
-        ctx.fill(shape, brand.base.fade(0.18))
-        ctx.innerStroke(shape, brand.light.fade(0.28), width: 0.5)
+        ctx.fill(shape, brand.tone(theme, ProviderTone.pillFill))
+        ctx.innerStroke(shape, brand.tone(theme, ProviderTone.pillStroke), width: 0.5)
         t.draw(x: r.minX + 6, capCenter: r.midY + 0.5, in: ctx)
     }
 
@@ -474,7 +477,7 @@ enum PaceCardRenderer {
         let secondary = TextBlock(v.secondary, F.sf(12.5), theme.muted, width: w, lineHeight: 17.25)
         if let ctx {
             BadgeRenderer.draw(v.title, state: v.state, origin: CGPoint(x: x, y: y), theme: theme, ctx: ctx)
-            Text(v.multiple + " pace", F.mono(11, 600), theme.muted).draw(x: x + w, capCenter: y + 11.5, align: .right, in: ctx)
+            Text(v.multiple, F.mono(11, 600), theme.muted).draw(x: x + w, capCenter: y + 11.5, align: .right, in: ctx)
             primary.draw(x: x, top: y + 23 + 8, in: ctx)
             secondary.draw(x: x, top: y + 23 + 8 + primary.height + 3, in: ctx)
         }

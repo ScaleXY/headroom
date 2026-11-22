@@ -64,7 +64,7 @@ enum ShareCardRenderer {
         if let plan = s.plan { right = planPill(plan, provider: s.provider, right: right, midY: 88, ctx: ctx) - 12 }
         _ = chip(s.spanLong, right: right, midY: 88, ctx: ctx)
 
-        BrandMark.drawTile(s.provider, in: CGRect(x: 72, y: 176, width: 42, height: 42), ctx: ctx)
+        BrandMark.drawTile(s.provider, in: CGRect(x: 72, y: 176, width: 42, height: 42), theme: theme, ctx: ctx)
         Text(s.provider.displayName, F.sf(30, 650), theme.ink).draw(x: 72 + 42 + 14, capCenter: 197, in: ctx)
 
         let big = Text(NumberFormat.tokens(s.tokens), F.sf(196, 750, tabular: true), theme.ink, kern: -10.8)
@@ -186,7 +186,7 @@ enum ShareCardRenderer {
             glassPanel(r, ctx: ctx)
             ctx.fillRadial(in: rounded(r, 30), center: r.origin, radii: CGSize(width: 420, height: 280), color: Brand.of(s.provider).base.alpha(0.3), fadeAt: 0.72)
             let x = r.minX + 36
-            BrandMark.drawTile(s.provider, in: CGRect(x: x, y: r.minY + 34, width: 44, height: 44), ctx: ctx)
+            BrandMark.drawTile(s.provider, in: CGRect(x: x, y: r.minY + 34, width: 44, height: 44), theme: theme, ctx: ctx)
             let name = Text(s.provider.displayName, F.sf(30, 650), theme.ink)
             name.draw(x: x + 44 + 14, capCenter: r.minY + 56, in: ctx)
             if let plan = s.plan { _ = planPill(plan, provider: s.provider, right: r.maxX - 36, midY: r.minY + 56, ctx: ctx) }

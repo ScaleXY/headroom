@@ -302,7 +302,7 @@ enum PopoverPage {
         let h = top + content(nil, 0) + 2 + PopoverChrome.footerHeight + pad
         return renderImage(size: CGSize(width: w, height: h)) { ctx in
             PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
-            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: ["Pace", "Activity", "Runs"], selected: 2, theme: theme, ctx: ctx, out: nil)
+            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: ["Limits", "Activity", "Runs"], selected: 2, theme: theme, ctx: ctx, out: nil)
             if let card {
                 let position = page.live.firstIndex { $0.id == card.id }.map { "\($0 + 1) of \(page.live.count) live" } ?? "finished"
                 PopoverRootView.drawRunCrumb(position: position, x: pad, y: pad + PopoverChrome.headerHeight, width: cw, theme: theme, ctx: ctx, out: nil)
@@ -372,7 +372,7 @@ enum PopoverPage {
         let rows: [(String, [PaceInput])] = [
             ("mockup", [Demo.claudeMockup(now: now), Demo.codexMockup(now: now)]),
             ("update available", [Demo.claudeMockup(now: now), Demo.codexMockup(now: now)]),
-            ("on pace + very tight", [Demo.state(.claude, used: 0.52, elapsedH: 84, now: now), Demo.state(.codex, used: 0.82, elapsedH: 72, now: now)]),
+            ("on track + very tight", [Demo.state(.claude, used: 0.52, elapsedH: 84, now: now), Demo.state(.codex, used: 0.82, elapsedH: 72, now: now)]),
             ("rose session + blocked", [Demo.state(.claude, used: 0.46, elapsedH: 90, session: 0.94, now: now), Demo.state(.codex, used: 0.46, elapsedH: 90, session: 1, now: now)]),
             ("fault + weekly blocked", [Demo.state(.claude, used: 0.46, elapsedH: 90, fault: .offline, now: now), Demo.state(.codex, used: 1, elapsedH: 140, now: now)]),
         ]

@@ -78,7 +78,7 @@ enum Summary {
         }
         guard sess.outlook != nil else { return nil } // older apps: only the warning, as before
         var text = "5-hour session \(left)\(resets)"
-        if let l = sess.leftAtReset, l >= 0.01 { text += " · ~\(Int((l * 100).rounded()))% spare at this pace" }
+        if let l = sess.leftAtReset, l >= 0.01 { text += " · ~\(Int((l * 100).rounded()))% spare at this rate" }
         return style.dim(text)
     }
 
@@ -92,10 +92,10 @@ enum Summary {
         }
         switch w.pacingState {
         case .plenty:
-            if let u = w.unusedAtReset, u >= 0.005 { return "\(Int((u * 100).rounded()))% renews unused at this pace" }
+            if let u = w.unusedAtReset, u >= 0.005 { return "\(Int((u * 100).rounded()))% renews unused at this rate" }
             return "spend it before it renews"
         case .onPace:
-            return "lasts to renewal at this pace"
+            return "lasts to renewal at this rate"
         case .tight, .veryTight:
             return w.verdict.primary.prefix(1).lowercased() + w.verdict.primary.dropFirst().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         }

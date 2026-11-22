@@ -125,9 +125,15 @@ extension CGContext {
     }
 }
 
-/// Card surface (PLAN §3.3): brand orb, glass gradient, hairline and top highlight.
+/// Card surface (PLAN §3.3, redesign §2): glass gradient, hairline and top highlight; on a provider
+/// card, a top-edge light in the provider's tone; on a Limits card, a top-right glow in its state color.
 enum CardChrome {
-    static func draw(_ rect: CGRect, provider: Provider?, theme: Theme, ctx: CGContext, radius: CGFloat = 20) {
+    /// - Parameters:
+    ///   - provider: draws the top-edge light and wash in this provider's tone (rule 3). Nil for
+    ///     cards that belong to no provider.
+    ///   - state: the Limits card's pacing state, for the top-right state glow (rule 4). Only the
+    ///     Limits card passes it; every other card gets the edge light alone.
+    static func draw(_ rect: CGRect, provider: Provider?, theme: Theme, ctx: CGContext, radius: CGFloat = 20, state: PacingState? = nil) {
         let shape = rounded(rect, radius)
         if theme.isDark {
             ctx.fillVertical(shape, theme.cardTop, theme.cardBottom)
@@ -142,9 +148,15 @@ enum CardChrome {
             }
         }
         if let provider {
-            let brand = Brand.of(provider)
-            ctx.fillRadial(in: shape, center: rect.origin, radii: CGSize(width: 260, height: 170),
-                           color: theme.isDark ? brand.orbDark : brand.orbLight, fadeAt: 0.72)
+            // radial-gradient(75% 64px at 16% 0%, tone 11% / 9%, transparent)
+            ctx.fillRadial(in: shape, center: CGPoint(x: rect.minX + rect.width * 0.16, y: rect.minY),
+                           radii: CGSize(width: rect.width * 0.75, height: 64),
+                           color: theme.providerTone(provider, ProviderTone.edgeWash(dark: theme.isDark)))
+        }
+        if let state {
+            // radial-gradient(260px 170px at 100% 0%, glow, transparent 72%)
+            ctx.fillRadial(in: shape, center: CGPoint(x: rect.maxX, y: rect.minY), radii: CGSize(width: 260, height: 170),
+                           color: theme.stateGlow(state), fadeAt: 0.72)
         }
         if theme.isDark {
             ctx.innerStroke(shape, theme.cardBorder, width: 1)
@@ -158,6 +170,21 @@ enum CardChrome {
             }
         } else {
             ctx.stroke(rounded(rect.insetBy(dx: -0.5, dy: -0.5), radius + 0.5), theme.cardBorder, width: 1)
+        }
+        if let provider { drawEdgeLight(rect, provider: provider, theme: theme, ctx: ctx, radius: radius) }
+    }
+
+    /// The 1.5 pt top-edge light: clear at 3% of the width, the tone at 90% (dark) or 75% (light)
+    /// at 20%, clear again from 72%. Clipped to the card's corners.
+    static func drawEdgeLight(_ rect: CGRect, provider: Provider, theme: Theme, ctx: CGContext, radius: CGFloat = 20) {
+        let tone = theme.providerTone(provider)
+        let peak = tone.fade(CGFloat(ProviderTone.edgeLight(dark: theme.isDark)))
+        ctx.withState {
+            ctx.addPath(rounded(rect, radius)); ctx.clip()
+            let line = CGPath(rect: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: 1.5), transform: nil)
+            ctx.fillLinear(line, [tone.alpha(0), tone.alpha(0), peak, tone.alpha(0)],
+                           from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.minY),
+                           locations: [0, 0.03, 0.20, 0.72])
         }
     }
 }
@@ -202,12 +229,12 @@ enum MeterRenderer {
         }
     }
 
-    /// Caret row under the meter: ▲ EVEN PACE at fraction τ along the track.
+    /// Caret row under the meter: ▲ ON TRACK at fraction τ along the track.
     static func drawCaret(at tau: Double, trackRect: CGRect, top: CGFloat, theme: Theme, ctx: CGContext) {
         let color = theme.isDark ? rgb(0xF4F4F6, 0.45) : rgb(0x1C1C1E, 0.45)
         let usable = trackRect.insetBy(dx: 3, dy: 0)
         let x = usable.minX + usable.width * CGFloat(min(max(tau, 0), 1))
-        let label = Text("EVEN PACE", F.sf(8.5, 650), color, kern: 0.765)
+        let label = Text("ON TRACK", F.sf(8.5, 650), color, kern: 0.765)
         let caretRect = CGRect(x: x - 3.5, y: top + 3.5, width: 7, height: 5)
         let labelOnLeft = x + 4 + label.width + 4 > trackRect.maxX
         Glyph.caret(in: caretRect, color: color, ctx: ctx)

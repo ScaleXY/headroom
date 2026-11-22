@@ -48,7 +48,7 @@ enum RunCardRenderer {
     /// The provider's tile; a run with no known provider gets its state glyph on a plain tile.
     static func drawTile(_ m: RunCardModel, rect: CGRect, tone: NSColor, theme t: Theme, ctx: CGContext) {
         if let p = m.provider {
-            BrandMark.drawTile(p, in: rect, ctx: ctx)
+            BrandMark.drawTile(p, in: rect, theme: t, ctx: ctx)
         } else {
             ctx.fill(rounded(rect, rect.width * 0.27), t.chipFill)
             drawGlyph(m.glyph, color: tone, center: CGPoint(x: rect.midX, y: rect.midY), size: rect.width * 0.5, ctx: ctx)

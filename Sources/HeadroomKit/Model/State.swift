@@ -12,7 +12,7 @@ public enum PacingState: Int, Codable, Sendable, Hashable, CaseIterable, Compara
     public var title: String {
         switch self {
         case .plenty: "Plenty available"
-        case .onPace: "On pace"
+        case .onPace: "On track"
         case .tight: "Getting tight"
         case .veryTight: "Very tight"
         }
@@ -22,7 +22,7 @@ public enum PacingState: Int, Codable, Sendable, Hashable, CaseIterable, Compara
     public var word: String {
         switch self {
         case .plenty: "plenty"
-        case .onPace: "on pace"
+        case .onPace: "on track"
         case .tight: "tight"
         case .veryTight: "very tight"
         }

@@ -76,6 +76,17 @@ public enum NumberFormat {
         return core + " " + suffix
     }
 
+    /// The headroom multiplier S (remaining share ÷ time-left share) in words:
+    /// under 1 `"12% short"`, from 1 to 2 `"40% spare"`, from 2 `"7.7× what's needed"`; `"—"` when
+    /// S isn't finite (the last moments of a window).
+    public static func headroom(_ s: Double) -> String {
+        guard s.isFinite else { return "—" }
+        let s = max(0, s)
+        if s < 1 { return "\(Int(((1 - s) * 100).rounded()))% short" }
+        if s < 2 { return "\(Int(((s - 1) * 100).rounded()))% spare" }
+        return fixed(s, 1) + "× what's needed"
+    }
+
     // MARK: Percents
 
     /// Share of a whole: `96%`, `3.0%`, `0.6%`, `<0.1%`, `0%`. One decimal under 10%.

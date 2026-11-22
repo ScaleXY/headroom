@@ -44,7 +44,7 @@ public enum TaskLimits {
         var line = "5-hour window \(left)% left"
         if let reset = session.resetsAt, reset > now { line += ", resets \(clock(reset))" }
         if let out = session.runsOutAt, out > now, session.resetsAt.map({ out < $0 }) ?? true {
-            line += "; at this pace it runs out around \(clock(out))"
+            line += "; at this rate it runs out around \(clock(out))"
         }
         return line
     }

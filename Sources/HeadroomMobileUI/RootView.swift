@@ -10,7 +10,7 @@ public enum MobileSection: String, CaseIterable, Hashable, Sendable {
 
     public var title: String {
         switch self {
-        case .now: "Now"
+        case .now: "Limits"
         case .activity: "Activity"
         case .macs: "Macs"
         case .settings: "Settings"

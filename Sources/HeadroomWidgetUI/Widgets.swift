@@ -35,7 +35,7 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
 
     public var summary: String {
         switch self {
-        case .burn: "How fast you're spending, against the pace that lasts to the reset."
+        case .burn: "How fast you're spending, against the rate that lasts to the reset."
         case .pace: "What's left this week, where it's heading and when it renews."
         case .session: "Time to the 5-hour reset, and how the session is going."
         case .accounts: "Every account at a glance, the one that needs watching first."
@@ -485,7 +485,7 @@ public struct PaceWidget: View {
                 HStack {
                     StateChip(state: w.state, title: w.verdictTitle)
                     Spacer()
-                    if let m = w.multiple { Text(NumberFormat.multiple(m, suffix: "pace")).font(Fonts.number(10, .semibold)).foregroundStyle(p.muted) }
+                    if let m = w.multiple { Text(NumberFormat.headroom(m)).font(Fonts.number(10, .semibold)).foregroundStyle(p.muted) }
                 }
                 .padding(.top, 8)
                 Text(w.verdict).font(Fonts.text(11, .medium)).foregroundStyle(p.ink).lineLimit(2).padding(.top, 5)

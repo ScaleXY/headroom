@@ -168,7 +168,7 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     static let runsTab = 2
     /// The Runs tab is there only while task tracking is on.
     private var showsRuns: Bool { model.settings.taskTracking }
-    private var tabs: [String] { showsRuns ? ["Pace", "Activity", "Runs"] : ["Pace", "Activity"] }
+    private var tabs: [String] { showsRuns ? ["Limits", "Activity", "Runs"] : ["Limits", "Activity"] }
 
     private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
     private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }

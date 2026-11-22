@@ -31,7 +31,7 @@ enum ActivityCardRenderer {
 
         // Header: tile, name, span chip.
         if let ctx {
-            BrandMark.drawTile(m.provider, in: CGRect(x: x0, y: y, width: 26, height: 26), ctx: ctx)
+            BrandMark.drawTile(m.provider, in: CGRect(x: x0, y: y, width: 26, height: 26), theme: theme, ctx: ctx)
             Text(m.provider.displayName, F.sf(15, 650), theme.ink, kern: -0.075).draw(x: x0 + 26 + 9, capCenter: y + 13, in: ctx)
             let label = Text(m.spanLabel, F.sf(11.5, 600, tabular: true), theme.ink)
             let chipW = 8 + 12 + 5 + label.width + 8

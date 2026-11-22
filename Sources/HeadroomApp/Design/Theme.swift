@@ -101,6 +101,26 @@ struct Theme: Sendable {
         }
     }
 
+    /// The Limits card's top-right glow in the state color (spec §2 rule 4). Signals glow; provider tones never do.
+    func stateGlow(_ state: PacingState) -> NSColor {
+        let g = state.cardGlow(dark: isDark)
+        return rgb(g.hex, CGFloat(g.alpha))
+    }
+
+    // MARK: Provider tones
+
+    /// The provider's tone (clay or jade) at `strength` alpha. See `Brand.tone`.
+    func providerTone(_ provider: Provider, _ strength: CGFloat = 1) -> NSColor {
+        Brand.of(provider).tone(self, strength)
+    }
+
+    /// The neutral mark tile (spec §2 rule 1): a Headroom surface the provider mark sits on in its tone.
+    var markTileTop: NSColor { isDark ? rgb(0x34363C) : rgb(0xFFFFFF) }
+    var markTileBottom: NSColor { isDark ? rgb(0x232428) : rgb(0xF1F1F4) }
+    var markTileStroke: NSColor { isDark ? white(0.12) : black(0.08) }
+    var markTileHighlight: NSColor { isDark ? white(0.10) : white(1) }
+    var markTileShadow: NSColor { isDark ? black(0.35) : black(0.10) }
+
     func session(_ level: SessionLevel) -> NSColor {
         switch level {
         case .normal: ink
@@ -119,7 +139,13 @@ struct PacingColors: Sendable {
 }
 
 /// Brand identity colors (PLAN §3.3). Identity only, never a pacing state.
+///
+/// In the UI a provider is drawn in its **tone** (`tone(_:_:)`): clay or jade recut onto Headroom's
+/// palette. `base`, `light`, `deep` and the tile gradient stay for pure identity, such as the app
+/// icon or the share card's brand art.
 struct Brand: Sendable {
+    /// Whose brand this is (its tone lives in `ProviderTone`, shared with SwiftUI).
+    let provider: Provider
     let base: NSColor
     let light: NSColor
     let deep: NSColor
@@ -132,17 +158,30 @@ struct Brand: Sendable {
     let orbLight: NSColor
 
     static let claude = Brand(
+        provider: .claude,
         base: rgb(0xD97757), light: rgb(0xF0A084), deep: rgb(0x9E4A2F), newInput: rgb(0xE58A6B),
         tileTop: rgb(0xE8956F), tileBottom: rgb(0xC65F3C), markInk: rgb(0xFFF6EF),
         orbDark: rgb(0xD97757, 0.27), orbLight: rgb(0xD97757, 0.12)
     )
     static let codex = Brand(
+        provider: .codex,
         base: rgb(0x10A37F), light: rgb(0x3FD0A3), deep: rgb(0x07664F), newInput: rgb(0x2FB78F),
         tileTop: rgb(0x22C496), tileBottom: rgb(0x0A7D61), markInk: rgb(0xFFFFFF),
         orbDark: rgb(0x10A37F, 0.22), orbLight: rgb(0x10A37F, 0.10)
     )
 
     static func of(_ provider: Provider) -> Brand { provider == .claude ? .claude : .codex }
+
+    /// The provider's tone for `theme` at `strength` alpha (spec §2): marks, plan pills, the card's
+    /// top-edge light, and Activity data. Strengths in use are named on `ProviderTone`
+    /// (`cachedReads`, `newInput`, `output`, `modelBar`, `pastWeek`, `pillFill`, ...).
+    func tone(_ theme: Theme, _ strength: CGFloat = 1) -> NSColor {
+        rgb(ProviderTone.hex(provider, dark: theme.isDark), strength)
+    }
+
+    static func tone(_ provider: Provider, _ theme: Theme, _ strength: CGFloat = 1) -> NSColor {
+        Brand.of(provider).tone(theme, strength)
+    }
 
     /// Plan pill text color (lighter on dark, darker on light).
     func pillText(_ theme: Theme) -> NSColor {

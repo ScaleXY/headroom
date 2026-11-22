@@ -216,7 +216,7 @@ enum GlideChartRenderer {
         // Leave it out when it would sit on the end label; the dashed line reads on its own.
         guard !CGRect(x: X(evenAt) - 30, y: evenY - 14, width: 60, height: 16).intersects(endRect) else { return }
         let ly = evenY - 6
-        let label = NSMutableAttributedString(string: "EVEN PACE", attributes: [.font: F.sf(8.5, 650), .kern: 0.6, .foregroundColor: theme.chartLabel])
+        let label = NSMutableAttributedString(string: "ON TRACK", attributes: [.font: F.sf(8.5, 650), .kern: 0.6, .foregroundColor: theme.chartLabel])
         drawOutlined(label, center: CGPoint(x: X(evenAt), y: ly), outline: theme.cardSolid, ctx: ctx)
     }
 

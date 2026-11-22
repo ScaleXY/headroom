@@ -16,9 +16,9 @@ struct PacingVerdictTests {
         let samples = PT.linear(from: reset.addingTimeInterval(-PT.week), fromUsed: 0, to: now, toUsed: 0.18)
         let v = verdict(PT.weekly(used: 0.18, resetsAt: reset), samples)
         #expect(v.title == "Plenty available")
-        #expect(v.multipleText == "6.9×")
+        #expect(v.multipleText == "6.9× what's needed")
         #expect(v.primary == "Spend it before it renews tomorrow at 6 AM.")
-        #expect(v.secondary == "At today's pace, 80% renews unused.")
+        #expect(v.secondary == "At today's rate, 80% renews unused.")
     }
 
     @Test func plentyWithoutHistory() {
@@ -30,10 +30,10 @@ struct PacingVerdictTests {
     @Test func onPace() {
         let reset = now.addingTimeInterval(PT.week / 2)
         let v = verdict(PT.weekly(used: 0.4, resetsAt: reset))
-        #expect(v.title == "On pace")
-        #expect(v.multipleText == "1.2×")
-        #expect(v.primary == "Roughly on pace for the week.")
-        #expect(v.secondary == "At this pace it lasts to renewal.")
+        #expect(v.title == "On track")
+        #expect(v.multipleText == "20% spare")
+        #expect(v.primary == "Roughly on track for the week.")
+        #expect(v.secondary == "At this rate it lasts to renewal.")
     }
 
     @Test func tightByProjection() {
@@ -43,8 +43,8 @@ struct PacingVerdictTests {
         let samples = PT.linear(from: now.addingTimeInterval(-30 * 3600), fromUsed: 0.41 - burn * 30, to: now, toUsed: 0.41)
         let v = verdict(PT.weekly(used: 0.41, resetsAt: reset), samples)
         #expect(v.title == "Getting tight")
-        #expect(v.multipleText == "1.0×")
-        #expect(v.primary == "Runs out Friday 4 PM at today's pace.")
+        #expect(v.multipleText == "0% spare")
+        #expect(v.primary == "Runs out Friday 4 PM at today's rate.")
         #expect(v.secondary == "21 hours early · ease off ~20% to reach Saturday.")
     }
 
@@ -57,7 +57,7 @@ struct PacingVerdictTests {
         let v = verdict(PT.weekly(used: 0.45, resetsAt: reset), samples)
         #expect(v.title == "Very tight")
         #expect(v.primary == "At this rate you run out today 2:09 PM, 6 days early.")
-        #expect(v.secondary == "At today's pace it lasts to tomorrow 2:08 PM.")
+        #expect(v.secondary == "At today's rate it lasts to tomorrow 2:08 PM.")
     }
 
     @Test func tightBySustainableMultiple() {
@@ -66,8 +66,8 @@ struct PacingVerdictTests {
         let tau = reset.timeIntervalSince(now) / PT.week
         let v = verdict(PT.weekly(used: 1 - 0.9 * tau, resetsAt: reset))
         #expect(v.title == "Getting tight")
-        #expect(v.multipleText == "0.9×")
-        #expect(v.primary.hasPrefix("Even pace runs out "))
+        #expect(v.multipleText == "10% short")
+        #expect(v.primary.hasPrefix("An even rate runs out "))
         #expect(v.primary.hasSuffix(" early."))
         #expect(v.secondary == "Ease off about 10% to reach Saturday.")
     }
@@ -79,9 +79,9 @@ struct PacingVerdictTests {
         let r = runOut.timeIntervalSince(now) / PT.week
         let v = verdict(PT.weekly(used: 1 - r, resetsAt: reset))
         #expect(v.title == "Very tight")
-        #expect(v.primary == "At even pace you run out tomorrow 6 PM, 15 hours early.")
+        #expect(v.primary == "At an even rate you run out tomorrow 6 PM, 15 hours early.")
         #expect(v.secondary.hasPrefix("Slow to about "))
-        #expect(v.secondary.hasSuffix(" your usual pace."))
+        #expect(v.secondary.hasSuffix(" your usual rate."))
     }
 
     @Test func veryTightLaterInWeekUsesWeekday() {
@@ -93,8 +93,8 @@ struct PacingVerdictTests {
         let a = PacingEngine.analyze(window: w, samples: [], now: now)
         let v = VerdictWriter.verdict(for: a, window: w, now: now, calendar: PT.calendar, locale: PT.locale)
         #expect(a.state == .veryTight)
-        #expect(v.primary == "At even pace you run out Wed 6 PM, 20 hours early.")
-        #expect(v.secondary == "Slow to about 75% of your usual pace.")
+        #expect(v.primary == "At an even rate you run out Wed 6 PM, 20 hours early.")
+        #expect(v.secondary == "Slow to about 75% of your usual rate.")
     }
 
     @Test func veryTightAtHalfPace() {
@@ -106,8 +106,8 @@ struct PacingVerdictTests {
         let a = PacingEngine.analyze(window: w, samples: [], now: now)
         let v = VerdictWriter.verdict(for: a, window: w, now: now, calendar: PT.calendar, locale: PT.locale)
         #expect(abs(a.multiple - 0.5) < 0.01)
-        #expect(v.primary == "At even pace you run out today 6 PM, 15 hours early.")
-        #expect(v.secondary == "Slow to about half your usual pace.")
+        #expect(v.primary == "At an even rate you run out today 6 PM, 15 hours early.")
+        #expect(v.secondary == "Slow to about half your usual rate.")
     }
 
     @Test func fractionWords() {
@@ -130,7 +130,7 @@ struct PacingVerdictTests {
         let month: TimeInterval = 30 * 86400
         let reset = now.addingTimeInterval(month / 2)
         let v = verdict(PT.weekly(used: 0.4, resetsAt: reset, duration: month))
-        #expect(v.primary == "Roughly on pace for the month.")
+        #expect(v.primary == "Roughly on track for the month.")
         let ex = verdict(PT.weekly(used: 1, resetsAt: reset, duration: month))
         #expect(ex.primary == "Monthly limit reached.")
         #expect(ex.secondary == "Back Nov 4.")
@@ -138,8 +138,8 @@ struct PacingVerdictTests {
 
     @Test func infiniteMultipleShowsDash() {
         #expect(VerdictWriter.multipleText(.infinity) == "—")
-        #expect(VerdictWriter.multipleText(12.4) == "12×")
-        #expect(VerdictWriter.multipleText(0.6) == "0.6×")
+        #expect(VerdictWriter.multipleText(12.4) == "12.4× what's needed")
+        #expect(VerdictWriter.multipleText(0.6) == "40% short")
     }
 
     @Test func trackerStateOverridesAnalysis() {
