@@ -43,7 +43,7 @@ struct PacingVerdictTests {
         let samples = PT.linear(from: now.addingTimeInterval(-30 * 3600), fromUsed: 0.41 - burn * 30, to: now, toUsed: 0.41)
         let v = verdict(PT.weekly(used: 0.41, resetsAt: reset), samples)
         #expect(v.title == "Getting tight")
-        #expect(v.multipleText == "0% spare")
+        #expect(v.multipleText == "exactly enough")
         #expect(v.primary == "Runs out Friday 4 PM at today's rate.")
         #expect(v.secondary == "21 hours early · ease off ~20% to reach Saturday.")
     }
