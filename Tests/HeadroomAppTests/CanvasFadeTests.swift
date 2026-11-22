@@ -20,7 +20,9 @@ import Testing
             view.removeFromSuperview()
         }
         #expect(timer?.isValid == true && gone == nil)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        // One tick stops it; a busy CI machine may take a while to get to that tick.
+        let deadline = Date().addingTimeInterval(5)
+        while timer?.isValid == true, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         #expect(timer?.isValid == false)
     }
 }

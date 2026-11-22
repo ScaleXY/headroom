@@ -73,10 +73,15 @@ private func withBytes<T>(_ text: String, _ body: (UnsafePointer<UInt8>, Int) ->
     /// A background job the child leaves behind (a daemon started from the login shell's profile)
     /// keeps the pipe open; the run must end when the child does, not when that job does.
     @Test func runEndsWithTheChildNotWithWhatItLeftBehind() async throws {
+        // The job left behind sleeps a minute, far longer than a busy CI machine can hold the run
+        // up: waiting for it reads as a minute, not as a few slow seconds.
         let t0 = Date()
-        let result = try await SystemProcessRunner().run("/bin/sh", arguments: ["-c", "sleep 4 & echo hi"], currentDirectory: nil, timeout: 10)
-        #expect(Date().timeIntervalSince(t0) < 2)
-        #expect(String(decoding: result.stdout, as: UTF8.self) == "hi\n")
+        let result = try await SystemProcessRunner().run("/bin/sh", arguments: ["-c", "sleep 60 & echo $!"], currentDirectory: nil, timeout: 45)
+        let took = Date().timeIntervalSince(t0)
+        let job = pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        if let job { kill(job, SIGKILL) }
+        #expect(job != nil)
+        #expect(took < 30)
         #expect(result.status == 0 && !result.timedOut)
     }
 
