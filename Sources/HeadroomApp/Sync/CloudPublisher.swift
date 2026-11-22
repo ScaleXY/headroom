@@ -18,8 +18,7 @@ private let syncLog = Logger(subsystem: "com.scalexy.headroom", category: "sync"
 /// runs ride in the device record: a run's state change at most once a minute, progress alone at
 /// most every 5 minutes (`RunPublishGate`).
 ///
-/// The same store imports what the user's other Macs posted; `remoteRuns` reads their runs for
-/// the Runs tab and writes nothing.
+/// The same store imports what the user's other Macs posted for Runs and Activity.
 @MainActor
 final class CloudPublisher {
     enum Status: Equatable {
@@ -66,14 +65,16 @@ final class CloudPublisher {
 
     var isRunning: Bool { running }
 
-    /// Called when the other Macs' runs changed.
-    var onRemoteRuns: (() -> Void)? {
+    /// Called when the other Macs' runs or activity changed.
+    var onOtherMacsChange: (() -> Void)? {
         get { remote.onChange }
         set { remote.onChange = newValue }
     }
 
     /// The runs of the user's other Macs, most pressing first; empty while sync isn't running.
     func remoteRuns(now: Date) -> [RunDigest] { remote.digests(now: now) }
+
+    var otherMacs: OtherMacs { remote.records }
 
     // MARK: Lifecycle
 
@@ -97,7 +98,7 @@ final class CloudPublisher {
         store = opened
         running = true
         observe()
-        // The other Macs' runs show from what's already imported; no need to wait for the seed.
+        // The other Macs can show from what's already imported, before the seed.
         remote.start(store: opened, deviceID: deviceID)
         if model.settings.syncSince == nil { model.settings.syncSince = Date() }
         // Give the first import a moment, so a reinstalled Mac updates its old records instead of copying them.
@@ -164,7 +165,7 @@ final class CloudPublisher {
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.power = .awake; self?.update() }
         })
-        // After each import, clean up any copies of this Mac's own records and read the other Macs' runs.
+        // After each import, clean up any copies of this Mac's own records and read the other Macs.
         observers.append(NotificationCenter.default.addObserver(forName: .NSPersistentStoreRemoteChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleDedupe(); self?.remote.storeChanged() }
         })
@@ -238,6 +239,8 @@ final class CloudPublisher {
                     guard let data = try? PayloadCodec.encode(payload), data != published[key] else { continue }
                     try await store.upsertActivity(deviceID: deviceID, provider: k.provider, accountKey: k.accountKey, payload: payload, now: now)
                     published[key] = data
+                    // This Mac's new days can identify mirrors among the imported records.
+                    remote.storeChanged()
                 }
                 lastActivityWrite = now
             } else {
@@ -321,7 +324,7 @@ final class CloudPublisher {
     private func activityKey(_ p: Provider?, _ k: String, _ day: Int) -> String { "activity|\(p?.rawValue ?? "")|\(k)|\(day)" }
 
     /// The synced key for an account: its hash, or a key scoped to this Mac when the provider gave none.
-    private func syncKey(_ p: Provider, _ account: String?) -> String {
+    func syncKey(_ p: Provider, _ account: String?) -> String {
         account ?? PayloadBuilder.deviceScopedKey(p, deviceID: deviceID)
     }
 

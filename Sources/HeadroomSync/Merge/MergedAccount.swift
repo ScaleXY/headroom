@@ -102,14 +102,18 @@ public struct MergedAccount: Identifiable, Sendable {
 
     /// The Activity tab's input, in the shape the Mac's bucket store hands `ActivityPresenter`.
     public var aggregates: [HourAggregate] {
-        activity.map { s in
-            HourAggregate(provider: provider, hour: s.start, model: s.model, project: nil, tokens: s.tokens, micros: s.micros,
-                          priced: s.unpricedTokens == 0,
-                          classMicros: ClassMicros(input: s.classMicros.count > 0 ? s.classMicros[0] : 0,
-                                                   cacheWrite: s.classMicros.count > 1 ? s.classMicros[1] : 0,
-                                                   cacheRead: s.classMicros.count > 2 ? s.classMicros[2] : 0,
-                                                   output: s.classMicros.count > 3 ? s.classMicros[3] : 0))
-        }
+        activity.map { $0.aggregate(provider: provider) }
+    }
+}
+
+extension ActivitySlot {
+    public func aggregate(provider: Provider, mac: String? = nil) -> HourAggregate {
+        HourAggregate(provider: provider, hour: start, model: model, mac: mac, tokens: tokens, micros: micros,
+                      priced: unpricedTokens == 0,
+                      classMicros: ClassMicros(input: classMicros.count > 0 ? classMicros[0] : 0,
+                                               cacheWrite: classMicros.count > 1 ? classMicros[1] : 0,
+                                               cacheRead: classMicros.count > 2 ? classMicros[2] : 0,
+                                               output: classMicros.count > 3 ? classMicros[3] : 0))
     }
 }
 

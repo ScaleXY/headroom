@@ -210,23 +210,7 @@ public struct AccountReader: Sendable {
     /// Activity summed across Macs. Two Macs that read the same logs (a synced `~/.claude`) post
     /// identical days; once a busy day gives them away, their identical days count once.
     static func mergeActivity(_ days: [Envelope<ActivityDayPayload>]) -> [ActivitySlot] {
-        var mirrored: Set<[String]> = []
-        let byDay = Dictionary(grouping: days, by: \.payload.day)
-        for group in byDay.values {
-            for (i, a) in group.enumerated() {
-                for b in group[(i + 1)...] where a.deviceID != b.deviceID && a.payload.slots == b.payload.slots
-                    && a.payload.slots.filter({ $0.tokens.total > 0 }).count >= 8 {
-                    mirrored.insert([a.deviceID, b.deviceID].sorted())
-                }
-            }
-        }
-        var kept: [Envelope<ActivityDayPayload>] = []
-        for d in days.sorted(by: { $0.deviceID < $1.deviceID }) {
-            let mirror = kept.contains { k in
-                k.payload.day == d.payload.day && mirrored.contains([k.deviceID, d.deviceID].sorted()) && k.payload.slots == d.payload.slots
-            }
-            if !mirror { kept.append(d) }
-        }
+        let kept = distinctActivityDays(days)
         var sums: [String: ActivitySlot] = [:]
         for s in kept.flatMap(\.payload.slots) {
             let key = String(s.slot) + "|" + s.model
@@ -241,6 +225,32 @@ public struct AccountReader: Sendable {
             }
         }
         return sums.values.sorted { ($0.slot, $0.model) < ($1.slot, $1.model) }
+    }
+
+    /// The distinct days of one provider account, keeping the local Mac's copy when it has one.
+    static func distinctActivityDays(_ days: [Envelope<ActivityDayPayload>], preferring deviceID: String? = nil) -> [Envelope<ActivityDayPayload>] {
+        var mirrored: Set<[String]> = []
+        let byDay = Dictionary(grouping: days, by: \.payload.day)
+        for group in byDay.values {
+            for (i, a) in group.enumerated() {
+                for b in group[(i + 1)...] where a.deviceID != b.deviceID && a.payload.slots == b.payload.slots
+                    && a.payload.slots.filter({ $0.tokens.total > 0 }).count >= 8 {
+                    mirrored.insert([a.deviceID, b.deviceID].sorted())
+                }
+            }
+        }
+        var kept: [Envelope<ActivityDayPayload>] = []
+        let ordered = days.sorted { a, b in
+            if (a.deviceID == deviceID) != (b.deviceID == deviceID) { return a.deviceID == deviceID }
+            return a.deviceID < b.deviceID
+        }
+        for d in ordered {
+            let mirror = kept.contains { k in
+                k.payload.day == d.payload.day && mirrored.contains([k.deviceID, d.deviceID].sorted()) && k.payload.slots == d.payload.slots
+            }
+            if !mirror { kept.append(d) }
+        }
+        return kept
     }
 
     // MARK: Time

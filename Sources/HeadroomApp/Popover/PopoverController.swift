@@ -504,7 +504,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
     func rebuild(animated: Bool) {
         let now = Date()
         let presenter = model.presenter(now: now)
-        paceCards = model.paceInputs().map { presenter.paceCard($0) }
+        paceCards = model.paceInputs(includeSyncedWeekCost: true).map { presenter.paceCard($0) }
         let states = paceCards.map { $0.meter?.state }
         if tab == 1 || historyWeek != nil {
             let ap = ActivityPresenter(now: now, pricing: model.pricingEngine)

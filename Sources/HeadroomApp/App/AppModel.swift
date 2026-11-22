@@ -132,10 +132,7 @@ final class AppModel {
         // Read limits right away on launch.
         scheduler.refreshNow()
         tick()
-        publisher.onRemoteRuns = { [weak self] in
-            guard let self, self.settings.taskTracking, self.settings.showOtherMacsRuns else { return }
-            self.onChange?()
-        }
+        publisher.onOtherMacsChange = { [weak self] in self?.onChange?() }
         if settings.syncEnabled { Task { await publisher.start(model: self) } }
     }
 
@@ -526,7 +523,7 @@ final class AppModel {
         Presenter(now: now, policy: settings.policy, options: settings.presentation)
     }
 
-    func paceInput(_ p: Provider) -> PaceInput {
+    func paceInput(_ p: Provider, includeSyncedWeekCost: Bool = false) -> PaceInput {
         let machine = faults[p]
         let reading = machine?.lastGood
         var input = PaceInput(provider: p, reading: reading)
@@ -543,7 +540,12 @@ final class AppModel {
             input.smoothedState = acct?.tracker?.shown
             if let early = acct?.earlyResetAt, let start = reading.headline?.windowStart, early >= start { input.earlyResetAt = early }
             if let start = reading.headline?.windowStart {
-                input.weekCostMicros = buckets.totals(p, from: start, to: Date()).micros
+                let now = Date()
+                let local = buckets.totals(p, from: start, to: now).micros
+                let remote = includeSyncedWeekCost
+                    ? otherMacs?.micros(p, accountKey: publisher.syncKey(p, reading.accountKey), from: start, to: now) ?? 0
+                    : 0
+                input.weekCostMicros = local + remote
             }
         } else if input.fault == nil, !firstScanDone || inFlight.contains(p) {
             input.fault = nil
@@ -553,8 +555,10 @@ final class AppModel {
         return input
     }
 
-    func paceInputs() -> [PaceInput] {
-        Provider.allCases.filter { settings.enabledProviders.contains($0) }.map(paceInput)
+    func paceInputs(includeSyncedWeekCost: Bool = false) -> [PaceInput] {
+        Provider.allCases.filter { settings.enabledProviders.contains($0) }.map {
+            paceInput($0, includeSyncedWeekCost: includeSyncedWeekCost)
+        }
     }
 
     /// The soonest upcoming 5-hour session reset among the enabled providers.
@@ -576,14 +580,19 @@ final class AppModel {
         return FooterModel(text: "All systems normal", status: .fresh)
     }
 
+    private var otherMacs: OtherMacs? {
+        settings.syncEnabled && publisher.isRunning ? publisher.otherMacs : nil
+    }
+
     func aggregates() -> [HourAggregate] {
-        buckets.allSlots.map { s in
+        let local = buckets.allSlots.map { s in
             HourAggregate(provider: s.key.provider, hour: Date(timeIntervalSince1970: Double(s.key.slot) * Double(UsageBuckets.slotSeconds)),
                           model: s.model, project: s.project.isEmpty ? nil : s.project, tokens: s.totals.tokens,
                           micros: s.totals.micros, priced: s.totals.unpricedTokens == 0,
                           classMicros: ClassMicros(input: s.totals.cost.input, cacheWrite: s.totals.cost.cacheWrite,
                                                     cacheRead: s.totals.cost.cacheRead, output: s.totals.cost.output))
         }
+        return local + (otherMacs?.aggregates ?? [])
     }
 
     var pricingEngine: PricingEngine { pricing }

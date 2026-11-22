@@ -109,10 +109,8 @@ public actor SyncStore: ModelActor, SyncReading {
         return p
     }
 
-    /// What every Mac but `deviceID` synced about its runs: each one's device record (the newest
-    /// of any copies, so a run is never listed twice; Macs with no runs left out) and, for the Macs
-    /// with a finished run to price, their activity from `day` on. Read-only: another Mac's
-    /// records are never written, deduped or deleted here.
+    /// Other Macs' names, runs and activity from `day` on. Local days are read to identify mirrors.
+    /// Copies are collapsed in memory so this read leaves every stored record intact.
     public func otherMacs(than deviceID: String, activitySince day: Int) throws -> OtherMacs {
         var scratch = SyncRecords()
         var newest: [String: DeviceEnvelope] = [:]
@@ -126,22 +124,24 @@ public actor SyncStore: ModelActor, SyncReading {
         // Only a Mac reads this way, and after its first look it reads nothing else: what that
         // look decoded needn't stay in memory.
         deviceCache = deviceCache.filter { seen.contains($0.key) }
-        // Chosen before the Macs with no runs are dropped, so a stale copy can't bring ended runs back.
-        var out = OtherMacs(devices: newest.values.filter { $0.payload.runs != nil }.sorted { $0.deviceID < $1.deviceID })
-        let priced = Set(out.devices.filter { $0.payload.runs?.contains { $0.state.isTerminal && $0.receipt?.models?.isEmpty == false } == true }.map(\.deviceID))
         seen.removeAll()
-        if !priced.isEmpty {
-            for r in try modelContext.fetch(FetchDescriptor<ActivityDayRecord>(predicate: #Predicate { $0.deviceID != deviceID && $0.day >= day }))
-            where priced.contains(r.deviceID) {
-                seen.insert(r.persistentModelID)
-                guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &activityCache, into: &scratch) else { continue }
-                out.activity.append(Envelope(deviceID: r.deviceID, provider: Provider(rawValue: r.provider), accountKey: r.accountKey,
-                                             day: r.day, updatedAt: r.updatedAt, payload: p))
-            }
-            out.activity.sort { ($0.key, $0.updatedAt) < ($1.key, $1.updatedAt) }
+        var activity: [Envelope<ActivityDayPayload>] = []
+        for r in try modelContext.fetch(FetchDescriptor<ActivityDayRecord>(predicate: #Predicate { $0.day >= day })) {
+            seen.insert(r.persistentModelID)
+            guard let p = decode(r.payload, version: r.payloadVersion, id: r.persistentModelID, cache: &activityCache, into: &scratch) else { continue }
+            activity.append(Envelope(deviceID: r.deviceID, provider: Provider(rawValue: r.provider), accountKey: r.accountKey,
+                                     day: r.day, updatedAt: r.updatedAt, payload: p))
         }
         activityCache = activityCache.filter { seen.contains($0.key) }
-        return out
+        let days = AccountReader.collapse(activity).sorted { $0.key < $1.key }
+        let byAccount = Dictionary(grouping: days) { "\($0.provider?.rawValue ?? ""):\($0.accountKey)" }
+        let distinct = byAccount.values.flatMap { AccountReader.distinctActivityDays($0, preferring: deviceID) }
+            .filter { $0.deviceID != deviceID }.sorted { $0.key < $1.key }
+        let priced = Set(newest.values.filter {
+            $0.payload.runs?.contains { $0.state.isTerminal && $0.receipt?.models?.isEmpty == false } == true
+        }.map(\.deviceID))
+        return OtherMacs(devices: newest.values.sorted { $0.deviceID < $1.deviceID },
+                         activity: distinct, runActivity: days.filter { priced.contains($0.deviceID) })
     }
 
     // MARK: Writing (Macs only, and only their own records)
@@ -302,23 +302,27 @@ public actor SyncStore: ModelActor, SyncReading {
     }
 }
 
-/// The other Macs' device records and the activity that prices their finished runs, in a fixed
-/// order, so two reads of an unchanged store compare equal.
+/// The other Macs' device records and activity, in a fixed order so unchanged reads compare equal.
 public struct OtherMacs: Sendable, Equatable {
     public var devices: [DeviceEnvelope]
     public var activity: [Envelope<ActivityDayPayload>]
+    /// Finished runs use each Mac's own rates, including Macs whose activity mirrors another.
+    public var runActivity: [Envelope<ActivityDayPayload>]
 
-    public init(devices: [DeviceEnvelope] = [], activity: [Envelope<ActivityDayPayload>] = []) {
+    public init(devices: [DeviceEnvelope] = [], activity: [Envelope<ActivityDayPayload>] = [],
+                runActivity: [Envelope<ActivityDayPayload>] = []) {
         self.devices = devices; self.activity = activity
+        self.runActivity = runActivity
     }
 
-    public var isEmpty: Bool { devices.isEmpty }
+    public var isEmpty: Bool { devices.isEmpty && activity.isEmpty && runActivity.isEmpty }
 
     /// Every write stamps `updatedAt`, so activity is compared by key and stamp, not slot by slot.
     public static func == (a: OtherMacs, b: OtherMacs) -> Bool {
         a.devices.elementsEqual(b.devices) {
             $0.deviceID == $1.deviceID && $0.updatedAt == $1.updatedAt && $0.lastSeenAt == $1.lastSeenAt && $0.payload == $1.payload
         } && a.activity.elementsEqual(b.activity) { $0.key == $1.key && $0.updatedAt == $1.updatedAt }
+          && a.runActivity.elementsEqual(b.runActivity) { $0.key == $1.key && $0.updatedAt == $1.updatedAt }
     }
 }
 

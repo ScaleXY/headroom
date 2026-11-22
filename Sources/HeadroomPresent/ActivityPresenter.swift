@@ -1,23 +1,26 @@
 import Foundation
 import HeadroomKit
 
-/// One hour of usage for one provider/model/project, as stored by the bucket store.
+/// One bucket of usage for one provider, model and project or Mac.
 public struct HourAggregate: Sendable, Hashable {
     public var provider: Provider
     public var hour: Date
     public var model: String
     public var project: String?
+    public var mac: String?
     public var tokens: TokenCounts
     public var micros: Int64
     public var priced: Bool
     /// Micro-dollars by token class (no heap allocation per aggregate).
     public var classMicros: ClassMicros = .init()
 
-    public init(provider: Provider, hour: Date, model: String, project: String? = nil, tokens: TokenCounts, micros: Int64, priced: Bool, classMicros: ClassMicros = .init()) {
+    public init(provider: Provider, hour: Date, model: String, project: String? = nil, mac: String? = nil,
+                tokens: TokenCounts, micros: Int64, priced: Bool, classMicros: ClassMicros = .init()) {
         self.provider = provider
         self.hour = hour
         self.model = model
         self.project = project
+        self.mac = mac
         self.tokens = tokens
         self.micros = micros
         self.priced = priced
@@ -107,7 +110,7 @@ public struct ActivityPresenter {
 
         var breakdown: [BreakdownKind: [BreakdownRow]] = [:]
         breakdown[.model] = rows(group(inSelection, key: { displayModel($0.model) }), total: micros)
-        breakdown[.project] = rows(group(inSelection, key: { $0.project ?? "Other" }), total: micros)
+        breakdown[.project] = rows(group(inSelection, key: { $0.project ?? $0.mac ?? "Other" }), total: micros)
         breakdown[.tokenClass] = classRows(inSelection, total: micros)
 
         var footnote: String? = nil

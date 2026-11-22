@@ -3,7 +3,7 @@ import Testing
 import HeadroomKit
 @testable import HeadroomSync
 
-/// What a Mac reads of the user's other Macs for its own Runs tab. An extension of `StoreTests`
+/// What a Mac reads of the user's other Macs for Runs and Activity. An extension of `StoreTests`
 /// so it shares that suite's one-container-at-a-time rule.
 extension StoreTests {
     private func summaries(_ id: String, _ state: TaskRunState = .running, tokens: [String: Int64] = [:]) -> [RunSummaryPayload]? {
@@ -19,8 +19,13 @@ extension StoreTests {
         return DeviceEnvelope(deviceID: id, updatedAt: now.addingTimeInterval(updated), lastSeenAt: now.addingTimeInterval(updated), payload: p)
     }
 
-    private func activity(_ id: String, day: Int) -> Envelope<ActivityDayPayload> {
-        Envelope(deviceID: id, provider: .claude, accountKey: "k", day: day, updatedAt: now, payload: ActivityDayPayload(day: day, slots: []))
+    private func activity(_ id: String, day: Int, count: Int = 0, account: String = "k", updated: TimeInterval = 0) -> Envelope<ActivityDayPayload> {
+        let slots = (0..<count).map {
+            ActivitySlot(slot: day * 96 + $0, model: "claude-sonnet-4", tokens: TokenCounts(newInput: 100),
+                         micros: 300, unpricedTokens: 0, classMicros: [300])
+        }
+        return Envelope(deviceID: id, provider: .claude, accountKey: account, day: day, updatedAt: now.addingTimeInterval(updated),
+                        payload: ActivityDayPayload(day: day, slots: slots))
     }
 
     @Test func otherMacsAreReadNewestRecordEachAndNeverThisOne() async throws {
@@ -36,28 +41,57 @@ extension StoreTests {
                            // Its runs ended since the copy it left behind.
                            device("AIR", "MacBook Air", runs: summaries("ended"), updated: -900),
                            device("AIR", "MacBook Air", runs: nil, updated: -90)]
-        records.activity = [activity("ME", day: today), activity("STUDIO", day: today), activity("STUDIO", day: today - 30), activity("MINI", day: today)]
+        records.activity = [activity("ME", day: today), activity("STUDIO", day: today, count: 1, updated: -600),
+                            activity("STUDIO", day: today, count: 2), activity("STUDIO", day: today - 36),
+                            activity("MINI", day: today), activity("IDLE", day: today - 35), activity("ORPHAN", day: today)]
         try await s.insert(records)
 
-        let others = try await s.otherMacs(than: "ME", activitySince: today - 8)
-        // Not this Mac, not a Mac with no runs now, and one record per Mac: the newest.
-        #expect(others.devices.map(\.deviceID) == ["MINI", "STUDIO"])
+        let others = try await s.otherMacs(than: "ME", activitySince: today - 35)
+        #expect(others.devices.map(\.deviceID) == ["AIR", "IDLE", "MINI", "STUDIO"])
         #expect(others.devices.last?.updatedAt == now.addingTimeInterval(-60))
-        let digests = RunMerge.digests(others.devices, now: now, activity: others.activity)
+        let digests = RunMerge.digests(others.devices, now: now, activity: others.runActivity)
         #expect(Set(digests.map(\.id)).count == digests.count)
         #expect(digests.count == 2)
         #expect(digests.allSatisfy { !$0.id.hasPrefix("ME:") })
-        // Activity only for the Mac with a finished run to price, and only the recent days.
-        #expect(others.activity.map(\.deviceID) == ["STUDIO"])
-        #expect(others.activity.first?.day == today)
+        #expect(others.activity.map(\.deviceID) == ["IDLE", "MINI", "ORPHAN", "STUDIO"])
+        #expect(others.activity.first?.day == today - 35)
+        #expect(others.activity.last?.updatedAt == now)
+        #expect(others.activity.last?.payload.slots.count == 2)
+        #expect(others.runActivity.map(\.deviceID) == ["STUDIO"])
 
         // Reading leaves every record where it was, the stale copy included.
         let c = try await s.counts()
-        #expect(c.devices == 7 && c.activity == 4)
-        // An unchanged store reads the same, so nothing redraws; a heartbeat from another Mac doesn't.
-        #expect(try await s.otherMacs(than: "ME", activitySince: today - 8) == others)
+        #expect(c.devices == 7 && c.activity == 7)
+        #expect(try await s.otherMacs(than: "ME", activitySince: today - 35) == others)
         try await s.touchDevice("MINI", lastSeenAt: now)
-        #expect(try await s.otherMacs(than: "ME", activitySince: today - 8) != others)
+        #expect(try await s.otherMacs(than: "ME", activitySince: today - 35) != others)
+    }
+
+    @Test func activityMirrorsKeepLocalDaysAndOneCopyOfMatchingRemoteDays() async throws {
+        let s = try store()
+        var records = SyncRecords()
+        records.devices = [device("AIR", "MacBook Air", runs: summaries("done", .done, tokens: ["claude-sonnet-4": 100]), updated: 0)]
+        records.activity = [
+            activity("ME", day: 3, count: 8), activity("AIR", day: 3, count: 8),
+            activity("ME", day: 2, count: 1), activity("AIR", day: 2, count: 1),
+            activity("AIR", day: 1, count: 7), activity("MINI", day: 1, count: 7),
+            activity("AIR", day: 4, count: 8), activity("MINI", day: 4, count: 8),
+            activity("AIR", day: 3, count: 8, account: "other"),
+            activity("DESK", day: 1, count: 7),
+        ]
+        try await s.insert(records)
+
+        let others = try await s.otherMacs(than: "ME", activitySince: 1)
+        #expect(others.activity.map(\.key) == [records.activity[4].key, records.activity[6].key, records.activity[8].key, records.activity[9].key])
+        #expect(others.runActivity.contains { $0.key == records.activity[1].key })
+        #expect(try await s.otherMacs(than: "ME", activitySince: 1) == others)
+
+        // A changed local day breaks the mirror and makes the imported day visible.
+        let changed = activity("ME", day: 3, count: 9)
+        try await s.upsertActivity(deviceID: "ME", provider: .claude, accountKey: "k", payload: changed.payload, now: now.addingTimeInterval(1))
+        let after = try await s.otherMacs(than: "ME", activitySince: 1)
+        #expect(after != others)
+        #expect(after.activity.contains { $0.key == records.activity[1].key })
     }
 
     @Test func aMacAloneSeesNoOtherMacs() async throws {
