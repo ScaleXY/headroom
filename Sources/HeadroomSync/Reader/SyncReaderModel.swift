@@ -20,6 +20,8 @@ public final class SyncReaderModel {
 
     /// Called after every rebuild, with the new feed (widgets, Live Activity, notifications, watch).
     @ObservationIgnored public var onRebuild: ((SyncReaderModel) -> Void)?
+    /// What "now" is (the PNG renderer pins it to the fixtures' moment).
+    @ObservationIgnored public var clock: () -> Date = { Date() }
 
     @ObservationIgnored private var source: any SyncReading
     @ObservationIgnored private var records = SyncRecords()
@@ -61,7 +63,7 @@ public final class SyncReaderModel {
         } catch {
             lastError = String(describing: error)
         }
-        rebuild(at: Date())
+        rebuild(at: clock())
         loaded = true
     }
 
@@ -76,7 +78,7 @@ public final class SyncReaderModel {
     }
 
     /// The clock moved: countdowns, staleness and rollover change without new records.
-    public func tick() { rebuild(at: Date()) }
+    public func tick() { rebuild(at: clock()) }
 
     private func rebuild(at date: Date) {
         now = date

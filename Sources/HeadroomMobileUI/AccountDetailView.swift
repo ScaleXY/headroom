@@ -4,8 +4,8 @@ import HeadroomSync
 import HeadroomWidgetUI
 import SwiftUI
 
-/// One account in full: the whole Pace card, the Burn-o-meter, the Macs reporting it, its past
-/// weeks and recent sessions, and the session Live Activity.
+/// One account in full: the whole Limits card, the Burn-o-meter, the Macs reporting it, its past
+/// weeks, and the session Live Activity.
 struct AccountDetailView: View {
     var model: MobileModel
     var accountID: String
@@ -126,84 +126,189 @@ struct MacsPanel: View {
     }
 }
 
-/// Past weeks and recent 5-hour sessions, as the Activity tab draws them on the Mac.
+/// Past weeks for one account, as the Activity tab draws them on the Mac: the heading, the card and
+/// its legend. (Recent 5-hour sessions moved to the Limits card's lane; their count is a chip here.)
 struct HistoryPanels: View {
     var model: MobileModel
     var account: MergedAccount
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let p = Palette(scheme), now = model.reader.now
-        let input = account.paceInput(now: now)
-        let weeks = HistoryPresenter.pastWeeks(input, records: Array(account.history.weeks.suffix(7)),
-                                               sessionHitsThisWindow: account.history.sessionHitsThisWindow,
-                                               earlyResetAt: account.history.earlyResetAt, now: now)
-        let sessions = HistoryPresenter.sessions(account.provider, sessions: account.history.recentSessions(now: now),
-                                                 warnAt: account.policy.sessionAmber, now: now, calendar: .current, locale: .current)
-        VStack(alignment: .leading, spacing: 16) {
-            if !weeks.collecting {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Past weeks").font(.headline).foregroundStyle(p.ink)
-                    Chips(chips: weeks.chips.map { ($0.color, $0.text) })
-                    HStack(alignment: .bottom, spacing: 8) {
-                        ForEach(Array(weeks.weeks.enumerated()), id: \.offset) { _, w in
-                            WeekBar(column: w)
-                        }
-                    }
-                    .frame(height: 110)
-                }
-            }
-            if !sessions.bars.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("5-hour sessions").font(.headline).foregroundStyle(p.ink)
-                    Chips(chips: sessions.chips.map { ($0.color, $0.text) })
-                    HStack(alignment: .bottom, spacing: 4) {
-                        ForEach(Array(sessions.bars.enumerated()), id: \.offset) { _, b in
-                            VStack(spacing: 3) {
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(b.hitLimit ? p.rose : (b.inProgress ? p.tone(.plenty).text : p.tone(.plenty).text.opacity(0.6)))
-                                    .frame(height: max(4, 70 * b.peak))
-                                Text(b.dayLabel ?? " ").font(.system(size: 8, weight: .semibold)).foregroundStyle(p.muted2)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .accessibilityLabel(b.tooltip)
-                        }
-                    }
-                    .frame(height: 90, alignment: .bottom)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(p.amber.opacity(0.6)).frame(height: 1).offset(y: -(14 + 70 * sessions.warnAt))
-                    }
-                }
+        let weeks = Self.weeks(account, now: model.reader.now)
+        if !weeks.collecting {
+            VStack(alignment: .leading, spacing: 10) {
+                PastWeeksHeading()
+                PastWeeksCard(model: weeks, title: account.provider.displayName)
+                PastWeeksLegend()
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(p.cardSolid))
+    }
+
+    /// The account's finished weeks beside this one, with the last seven days' 5-hour sessions
+    /// counted when it has a 5-hour limit.
+    @MainActor static func weeks(_ account: MergedAccount, now: Date) -> PastWeeksModel {
+        let input = account.paceInput(now: now)
+        let sessions = input.reading?.session != nil ? account.history.recentSessions(now: now) : nil
+        return HistoryPresenter.pastWeeks(input, records: Array(account.history.weeks.suffix(7)),
+                                          sessionHitsThisWindow: account.history.sessionHitsThisWindow,
+                                          earlyResetAt: account.history.earlyResetAt, sessions: sessions, now: now)
     }
 }
 
-struct WeekBar: View {
-    var column: WeekColumn
+struct PastWeeksHeading: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let p = Palette(scheme)
-        VStack(spacing: 4) {
-            ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(p.meterTrack)
-                if let projected = column.projected {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(p.chartDash, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
-                        .frame(height: 86 * min(projected, 1))
-                }
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(column.used >= 1 || column.ranOutHoursEarly != nil ? p.rose : p.azure.opacity(column.isCurrent ? 1 : 0.7))
-                    .frame(height: max(3, 86 * min(column.used, 1)))
+        HStack(alignment: .firstTextBaseline) {
+            Text("Past weeks").font(.headline).foregroundStyle(p.ink)
+            Spacer()
+            Text("used by each renewal").font(.caption.weight(.medium)).foregroundStyle(p.muted)
+        }
+        .padding(.horizontal, 3)
+    }
+}
+
+/// One account's renewal weeks (redesign §5): each a column of 8 meter cells, lit for the share
+/// used in the provider's tone; a week that ran out is rose with how early above it; this week is
+/// dimmer with a dashed outline, its projection outlined above it.
+struct PastWeeksCard: View {
+    var model: PastWeeksModel
+    var title: String
+    @Environment(\.colorScheme) private var scheme
+
+    static let cells = 8
+
+    var body: some View {
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                BrandTile(provider: model.provider, size: 20)
+                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(p.ink).lineLimit(1).layoutPriority(1)
+                Spacer(minLength: 6)
+                Chips(chips: model.chips.map { ($0.color, $0.text) })
             }
-            .frame(height: 86)
-            Text(column.isCurrent ? "Now" : "\(Int((column.used * 100).rounded()))%").font(.system(size: 9, weight: .semibold)).foregroundStyle(p.muted)
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(Array(model.weeks.enumerated()), id: \.offset) { i, week in
+                    WeekCells(column: week, provider: model.provider)
+                    if let change = model.planChange, change.after == i {
+                        PlanDivider(pill: change.pill)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .signatureCard(model.provider)
+    }
+
+    /// Lit cells for a share used: rounded, at least one for any real use, all of them when it ran out.
+    static func litCells(used: Double, ranOut: Bool, cells n: Int = cells) -> Int {
+        if ranOut { return n }
+        let u = min(max(used, 0), 1)
+        return min(n, max(Int((u * Double(n)).rounded()), u >= 0.03 ? 1 : 0))
+    }
+}
+
+/// One week's column: the label above (NOW, or −31H when it ran out), the cells, the markers under it.
+struct WeekCells: View {
+    var column: WeekColumn
+    var provider: Provider
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let p = Palette(scheme), n = PastWeeksCard.cells
+        let ranOut = column.used >= 1 || column.ranOutHoursEarly != nil
+        let lit = PastWeeksCard.litCells(used: column.used, ranOut: ranOut)
+        let projected = column.isCurrent ? max(lit, PastWeeksCard.litCells(used: column.projected ?? column.used, ranOut: false)) : lit
+        let litColor = ranOut ? p.rose : p.providerTone(provider, column.isCurrent ? ProviderTone.pastWeekCurrent : ProviderTone.pastWeek)
+        let unlit = p.ink.opacity(0.06)
+        VStack(spacing: 5) {
+            Group {
+                if column.isCurrent {
+                    Text("NOW").foregroundStyle(p.muted)
+                } else if let early = column.ranOutHoursEarly {
+                    Text("−\(early)H").foregroundStyle(p.rose)
+                } else {
+                    Text(" ")
+                }
+            }
+            .font(.system(size: 9, weight: .bold)).tracking(0.5)
+            VStack(spacing: 2) {
+                ForEach((0..<n).reversed(), id: \.self) { c in
+                    let cell = RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    ZStack {
+                        cell.fill(c < lit ? litColor : unlit)
+                        if c < lit, column.isCurrent {
+                            cell.inset(by: 0.4).stroke(p.ink.opacity(0.6), style: StrokeStyle(lineWidth: 0.8, dash: [2, 1.5]))
+                        } else if c >= lit, c < projected {
+                            cell.inset(by: 0.4).stroke(p.ink.opacity(0.32), style: StrokeStyle(lineWidth: 0.8, dash: [2, 1.5]))
+                        }
+                    }
+                    .frame(height: 6)
+                }
+            }
+            HStack(spacing: 2) {
+                if column.sessionHits > 0 {
+                    PauseMark(color: p.muted)
+                    if column.sessionHits > 1 { Text("\(column.sessionHits)").font(.system(size: 9, weight: .semibold)).foregroundStyle(p.muted) }
+                }
+                if column.earlyResets > 0 { Image(systemName: "sparkle").font(.system(size: 8, weight: .bold)).foregroundStyle(Self.spark) }
+            }
+            .frame(height: 10)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(column.caption)
+    }
+
+    static let spark = Color(.sRGB, red: 0x8C / 255.0, green: 0xC2 / 255.0, blue: 1, opacity: 1)
+}
+
+/// ‖: a week with sessions that hit the 5-hour limit.
+struct PauseMark: View {
+    var color: Color
+    var body: some View {
+        HStack(spacing: 1.6) {
+            RoundedRectangle(cornerRadius: 0.8).fill(color).frame(width: 2.4, height: 8)
+            RoundedRectangle(cornerRadius: 0.8).fill(color).frame(width: 2.4, height: 8)
+        }
+    }
+}
+
+/// The line between weeks where the plan changed, with the new plan's pill.
+struct PlanDivider: View {
+    var pill: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let p = Palette(scheme)
+        LinearGradient(colors: [p.ink.opacity(p.dark ? 0.4 : 0.3), p.ink.opacity(0.04)], startPoint: .top, endPoint: .bottom)
+            .frame(width: 1, height: 84)
+            .overlay(alignment: .topLeading) {
+                Text(pill.uppercased()).font(.system(size: 8.5, weight: .bold)).tracking(0.6).foregroundStyle(p.ink.opacity(0.6))
+                    .fixedSize().offset(x: 4, y: 0)
+            }
+            .padding(.bottom, 15)
+    }
+}
+
+/// ‖ hit 5-hour limit · ✦ early reset · ran out (hours early) · projected.
+struct PastWeeksLegend: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let p = Palette(scheme), color = p.ink.opacity(0.5)
+        FlowLayout(spacing: 12, lineSpacing: 6) {
+            HStack(spacing: 5) { PauseMark(color: color); Text("hit 5-hour limit") }
+            HStack(spacing: 5) { Image(systemName: "sparkle").font(.system(size: 9, weight: .bold)).foregroundStyle(WeekCells.spark); Text("early reset") }
+            HStack(spacing: 5) { RoundedRectangle(cornerRadius: 2).fill(p.rose).frame(width: 12, height: 6); Text("ran out (hours early)") }
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 1.8).stroke(p.ink.opacity(0.4), style: StrokeStyle(lineWidth: 0.8, dash: [2, 1.5])).frame(width: 12, height: 6)
+                Text("projected")
+            }
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(color)
+        .padding(.horizontal, 3)
     }
 }
 
@@ -213,15 +318,30 @@ struct Chips: View {
 
     var body: some View {
         let p = Palette(scheme)
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                 HStack(spacing: 5) {
-                    Circle().fill(chip.0 == .rose ? p.rose : (chip.0 == .spark ? p.amber : p.azure)).frame(width: 6, height: 6)
-                    Text(chip.1).font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(p.ink)
+                    if chip.0 == .spark {
+                        Image(systemName: "sparkle").font(.system(size: 7, weight: .bold)).foregroundStyle(WeekCells.spark)
+                    } else {
+                        Circle().fill(color(chip.0, p)).frame(width: 5, height: 5)
+                    }
+                    Text(chip.1).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(p.ink).lineLimit(1)
                 }
-                .padding(.horizontal, 8).padding(.vertical, 4)
+                .padding(.horizontal, 7).padding(.vertical, 4)
                 .background(Capsule().fill(p.chipFill))
             }
+        }
+        .fixedSize()
+    }
+
+    private func color(_ dot: PastWeeksModel.ChipDot, _ p: Palette) -> Color {
+        switch dot {
+        case .rose: p.rose
+        case .azure: p.azure
+        case .spark: WeekCells.spark
+        case .amber: p.amber
+        case .muted: p.ink.opacity(0.4)
         }
     }
 }

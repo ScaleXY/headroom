@@ -108,7 +108,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             switch self {
             case .general: "General"
             case .menuBar: "Menu Bar"
-            case .card: "Pace Card"
+            case .card: "Limits card"
             case .session: "5-Hour Session"
             case .notifications: "Notifications"
             case .sync: "iPhone & Watch"
@@ -150,8 +150,8 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         var copy: (title: String, body: String) {
             switch self {
             case .general: ("The essentials.", "Which tools Headroom watches, how it looks, and how it starts.")
-            case .menuBar: ("Shape your menu bar.", "Five cells per tool: blue means room to spare, white means on pace, amber and rose mean slow down.")
-            case .card: ("Your Pace card.", "Meters and graphs for the week and for the 5-hour session. Keep what you read, hide what you don't.")
+            case .menuBar: ("Shape your menu bar.", "Five cells per tool: blue means room to spare, white means on track, amber and rose mean slow down.")
+            case .card: ("Your Limits card.", "The week's meter and graph, with each 5-hour session underneath. Keep what you read, hide what you don't.")
             case .session: ("Never get cut off\nmid-session.", "Pick when the session starts warning. From there it turns amber, counts down in the menu bar and can let you know.")
             case .notifications: ("Only what's worth a ping.", "Each alert fires once per session or week. Headroom never repeats itself.")
             case .sync: ("Your headroom,\nin your pocket.", "These readings on iPhone, iPad and Apple Watch, with widgets, complications and a Live Activity.")
@@ -685,27 +685,19 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         var cy = y
         sectionLabel("THIS WEEK", x: x, y: cy, ctx: ctx)
         cy += 14
-        toggleRow("Meter", "Five cells for what's left, with even pace marked.", on: settings.shows(.weekMeter),
-                  action: Action.part(.weekMeter), x: x, y: cy, w: w, ctx: ctx)
-        cy += 48
-        toggleRow("Graph", "The week so far, and where your pace takes it.", on: settings.shows(.weekGraph),
-                  action: Action.part(.weekGraph), x: x, y: cy, w: w, ctx: ctx)
-        cy += 48 + 14
-        sectionLabel("5-HOUR SESSION", x: x, y: cy, ctx: ctx)
-        cy += 14
-        let detailed = settings.sessionDetail == .detailed
-        segmented(["Its own panel", "A single row"], selected: detailed ? 0 : 1, x: x, y: cy, w: w,
-                  actions: [AnyHashable(Action.detail(.detailed)), AnyHashable(Action.detail(.compact))], ctx: ctx)
-        cy += 30 + 14
-        toggleRow("Meter", "Five cells for what's left of the session.", on: settings.shows(.sessionMeter),
-                  action: Action.part(.sessionMeter), x: x, y: cy, w: w, enabled: detailed, ctx: ctx)
-        cy += 48
-        toggleRow("Graph", "The five hours so far, and where they're heading.", on: settings.shows(.sessionGraph),
-                  action: Action.part(.sessionGraph), x: x, y: cy, w: w, enabled: detailed, ctx: ctx)
-        cy += 48
-        if !detailed {
-            Text("The row turns into a banner once the session warns.", F.sf(12, 500), theme.muted2).draw(x: x, capCenter: cy + 6, in: ctx)
+        // `sessionMeter` went with the 5-hour panel: it still decodes, but has no toggle.
+        for part in CardPart.toggles {
+            let lane = part == .sessionGraph
+            if lane {
+                cy += 14
+                sectionLabel("UNDER THE GRAPH", x: x, y: cy, ctx: ctx)
+                cy += 14
+            }
+            toggleRow(part.title, part.detail, on: settings.shows(part), action: Action.part(part), x: x, y: cy, w: w,
+                      enabled: !lane || settings.shows(.weekGraph), ctx: ctx)
+            cy += 48
         }
+        Text("The session banner still shows once a session warns.", F.sf(12, 500), theme.muted2).draw(x: x, capCenter: cy + 6, in: ctx)
     }
 
     private func drawSession(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {
@@ -867,7 +859,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             // Icon: the harness's own mark, or a quiet symbol tile.
             let icon = CGRect(x: r.minX + 12, y: r.minY + 12, width: 28, height: 28)
             switch row.kind {
-            case .hooks(let h): BrandMark.drawTile(h == .claudeCode ? .claude : .codex, in: icon, ctx: ctx, shadow: false)
+            case .hooks(let h): BrandMark.drawTile(h == .claudeCode ? .claude : .codex, in: icon, theme: t, ctx: ctx, shadow: false)
             case .instructions, .enforce:
                 ctx.fill(rounded(icon, 8), t.isDark ? white(0.08) : black(0.055))
                 CanvasControlView.drawSymbol(row.kind == .instructions ? "text.badge.checkmark" : "arrow.uturn.backward",
@@ -908,7 +900,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         sectionLabel("PLAN PRICE · USD A MONTH", x: x, y: l.priceRows[.claude]! - 14, ctx: ctx)
         for p in Provider.allCases {
             guard let row = l.priceRows[p], let field = l.price[p] else { continue }
-            BrandMark.drawTile(p, in: CGRect(x: x, y: field.midY - 12, width: 24, height: 24), ctx: ctx, shadow: false)
+            BrandMark.drawTile(p, in: CGRect(x: x, y: field.midY - 12, width: 24, height: 24), theme: t, ctx: ctx, shadow: false)
             Text(p.displayName, F.sf(13, 600), t.ink).draw(x: x + 34, capCenter: row + 12 + 2, in: ctx)
             Text("Sets “× plan” beside the cost", F.sf(11.5), t.muted).draw(x: x + 34, capCenter: row + 28 + 2, in: ctx)
             drawField(field, editing: priceFields[p].map(isEditing) ?? false, prefix: "$", ctx: ctx)
@@ -992,7 +984,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             let r = CGRect(x: x, y: cy, width: w, height: 36)
             ctx.fill(rounded(r, 10), t.groupFill)
             ctx.innerStroke(rounded(r, 10), t.groupBorder, width: 0.5)
-            BrandMark.drawTile(a.provider, in: CGRect(x: r.minX + 9, y: r.midY - 10, width: 20, height: 20), ctx: ctx)
+            BrandMark.drawTile(a.provider, in: CGRect(x: r.minX + 9, y: r.midY - 10, width: 20, height: 20), theme: theme, ctx: ctx)
             Text(a.title, F.sf(12.5, 600), t.ink).draw(x: r.minX + 38, capCenter: r.midY, in: ctx)
             Text(a.detail, F.sf(11.5, 500), t.muted).draw(x: r.maxX - 12, capCenter: r.midY, align: .right, in: ctx)
             cy += 36 + 6

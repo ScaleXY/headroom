@@ -441,7 +441,7 @@ enum RunListRenderer {
     static func drawTile(_ c: RunCardModel, center: CGPoint, tone: NSColor, theme t: Theme, ctx: CGContext, size: CGFloat = 20) {
         let rect = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
         if let p = c.provider {
-            BrandMark.drawTile(p, in: rect, ctx: ctx)
+            BrandMark.drawTile(p, in: rect, theme: t, ctx: ctx)
         } else {
             ctx.fill(rounded(rect, size * 0.27), t.chipFill)
             RunCardRenderer.drawGlyph(c.glyph, color: tone, center: center, size: size / 2, ctx: ctx)

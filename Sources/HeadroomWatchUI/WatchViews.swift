@@ -50,7 +50,7 @@ struct WatchAccountPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    MarkShape(provider: provider.id).fill(BrandColors.of(provider.id).light).frame(width: 14, height: 14)
+                    MarkShape(provider: provider.id).fill(p.providerTone(provider.id)).frame(width: 14, height: 14)
                     Text(provider.shortLabel ?? provider.id.displayName).font(.headline).lineLimit(1)
                     Spacer()
                     if let plan = provider.plan { Text(plan).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }
@@ -95,7 +95,7 @@ struct WatchAccountPage: View {
                 if let recent = provider.recentSessions, !recent.isEmpty {
                     HStack(alignment: .bottom, spacing: 3) {
                         ForEach(recent, id: \.resetsAt) { r in
-                            RoundedRectangle(cornerRadius: 1.5).fill(r.hitLimit ? p.rose : p.azure.opacity(0.7)).frame(width: 7, height: max(2, 22 * r.peak))
+                            RoundedRectangle(cornerRadius: 1.5).fill(p.laneSession(peak: r.peak, hit: r.hitLimit)).frame(width: 7, height: max(2, 22 * r.peak))
                         }
                     }
                     .frame(height: 24, alignment: .bottom)

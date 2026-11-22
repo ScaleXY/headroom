@@ -66,7 +66,7 @@ public struct HourBars: View {
     @Environment(\.colorScheme) private var scheme
 
     public var body: some View {
-        let p = Palette(scheme), b = BrandColors.of(provider)
+        let p = Palette(scheme)
         let top = max(tokens.max() ?? 0, 1)
         GeometryReader { g in
             let n = max(tokens.count, 1)
@@ -78,10 +78,7 @@ public struct HourBars: View {
                     let last = i == tokens.count - 1
                     RoundedRectangle(cornerRadius: min(2, w / 2), style: .continuous)
                         .fill(tokens[i] == 0 ? AnyShapeStyle(p.meterEmpty)
-                              : last ? AnyShapeStyle(tone.fill)
-                              : AnyShapeStyle(LinearGradient(colors: [b.light.opacity(p.dark ? 0.85 : 0.9), b.base.opacity(p.dark ? 0.55 : 0.7)],
-                                                             startPoint: .top, endPoint: .bottom)))
-                        .shadow(color: last ? tone.glow : .clear, radius: 3)
+                              : AnyShapeStyle(p.providerTone(provider, last ? ProviderTone.output : ProviderTone.newInput)))
                         .frame(width: w, height: tokens[i] == 0 ? 2 : h)
                         .offset(x: CGFloat(i) * (w + gap))
                 }

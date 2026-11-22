@@ -118,6 +118,37 @@ public struct ActivityPresenter {
                                  spanLabel: short, spanLong: long, totals: totals, micros: micros, breakdown: breakdown, footnote: footnote)
     }
 
+    // MARK: Summary
+
+    /// The control row's title and its sub-line: ("Last 24 hours", "since Sat 11 AM"), or
+    /// ("Last 30 days", "since Oct 24"). The sub-line names the first bar's start.
+    public func rangeTitle(_ range: ActivityRange) -> (title: String, since: String) {
+        let title = rangeLabel(range).1
+        guard let first = bins(for: range).starts.first else { return (title, "") }
+        let since = range == .month ? monthDay(first) : "\(formatter("EEE").string(from: first)) \(hourLabel(first))"
+        return (title, "since \(since)")
+    }
+
+    /// The summary card over the whole range (a selection on a card doesn't change it), from the
+    /// enabled providers' cards in their order.
+    public func summary(_ cards: [ActivityCardModel], range: ActivityRange, mode: ActivityMode) -> ActivitySummaryModel {
+        let tokens = cards.map(\.rangeTokens)
+        let all = tokens.reduce(TokenCounts.zero, +)
+        let micros = cards.map(\.rangeMicros)
+        let total = micros.reduce(0, +)
+        // Split by API value; by tokens when nothing in the range is priced.
+        let weights: [Double] = total > 0 ? micros.map(Double.init) : tokens.map { Double(mode.includesCachedReads ? $0.total : $0.fresh) }
+        let sum = weights.reduce(0, +)
+        let slices = cards.enumerated().map { i, c in
+            ActivitySummaryModel.Slice(provider: c.provider, micros: micros[i], share: sum > 0 ? weights[i] / sum : 0)
+        }
+        let cachedShare = all.total > 0 ? Double(all.cacheRead) / Double(all.total) : 0
+        let caption = mode.includesCachedReads ? "tokens · \(Int((cachedShare * 100).rounded()))% cached" : "new tokens"
+        return ActivitySummaryModel(eyebrow: "API value · \(rangeLabel(range).1.lowercased())", micros: total,
+                                    tokens: mode.includesCachedReads ? all.total : all.fresh, includesCachedReads: mode.includesCachedReads,
+                                    cachedShare: cachedShare, tokensCaption: caption, slices: slices)
+    }
+
     // MARK: Breakdown
 
     private func group(_ items: [HourAggregate], key: (HourAggregate) -> String) -> [(String, Int64)] {

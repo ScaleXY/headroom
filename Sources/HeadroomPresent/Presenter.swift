@@ -67,7 +67,9 @@ public struct Presenter {
                                   meter: nil, glide: nil, verdict: nil, callout: nil, rows: [], fault: nil)
 
         let detailed = options.sessionDetail == .detailed && reading.session != nil
-        if !detailed, let s = session, s.showsBanner, let resetsAt = s.resetsAt {
+        // The banner shows from the warning level up. The detailed session panel no longer takes its
+        // place on the Limits card; it is still built (below) for the widgets' session chart.
+        if let s = session, s.showsBanner, let resetsAt = s.resetsAt {
             let clock = TimeFormat.clock(resetsAt, calendar: calendar, locale: locale)
             model.session = SessionBannerModel(
                 level: s.level, used: s.used, title: s.title,
@@ -91,10 +93,19 @@ public struct Presenter {
             )
             let opacity: Double = input.fault != nil ? 0.5 : (blocked || a.rule == .exhausted ? 0.4 : 1)
             model.meter = MeterModel(state: state, cells: a.cells, caret: a.rule == .exhausted ? nil : a.evenPaceMarker, opacity: opacity)
-            model.glide = glide(a, samples: samples, state: state)
+            let g = glide(a, samples: samples, state: state)
+            model.glide = g
             let v = VerdictWriter.verdict(for: a, window: headline, now: now, calendar: calendar, locale: locale, state: state)
             model.verdict = VerdictModel(state: v.state, title: v.title, multiple: v.multipleText, primary: v.primary, secondary: v.secondary)
             model.callout = callout(reading, headline: headline, earlyResetAt: input.earlyResetAt)
+
+            // One chart for the week and what's under it: the lane, its keys, a caption and the stat strip.
+            let forecast = reading.session.map { SessionForecast(window: $0, samples: input.samples[LimitWindow.sessionID()] ?? [], now: now) }
+            let lane = forecast.map { sessionLane(g, forecast: $0, status: session, input: input) } ?? dailyLane(g, period: period)
+            if options.parts.contains(.sessionGraph) { model.lane = lane }
+            model.keys = limitsKeys(state: state, lane: model.lane, period: period)
+            model.chartCaption = forecast.flatMap { chartCaption($0, weekLeft: a.remaining, period: period) }
+            model.stats = statStrip(a, state: state, period: period, lane: lane, forecast: forecast, status: session)
         }
 
         model.showsMeter = options.parts.contains(.weekMeter)
@@ -108,8 +119,8 @@ public struct Presenter {
         }
         model.spending = spendSplit(input.runSpend)
 
-        // Detail rows.
-        if !detailed, let s = session, !s.showsBanner, let w = reading.session {
+        // Detail rows. The stat strip carries the 5-hour session when there is one.
+        if model.stats.isEmpty, let s = session, !s.showsBanner, let w = reading.session {
             model.rows.append(DetailRowModel(
                 icon: .ring(used: s.used, level: s.level), label: "5-hour session",
                 value: "\(percent(s.remaining)) left",
@@ -341,6 +352,169 @@ public struct Presenter {
         }
         return GlideModel(hours: hours, windowStart: a.windowStart, nowT: nowT, points: points, projectionEnd: end,
                           runsOut: runsOut, endLabel: label, state: state)
+    }
+
+    // MARK: Limits chart: the lane, keys, caption and stat strip
+
+    /// "Tue 9 AM – 2 PM".
+    private func sessionSpan(_ start: Date, _ reset: Date) -> String {
+        TimeFormat.weekdayShort(start, calendar: calendar, locale: locale) + " " + TimeFormat.shortClock(start, calendar: calendar, locale: locale)
+            + " – " + TimeFormat.shortClock(reset, calendar: calendar, locale: locale)
+    }
+
+    /// The 5-hour lane: every stored session that overlaps the window, clipped to it, plus the one running now.
+    public func sessionLane(_ g: GlideModel, forecast f: SessionForecast, status: SessionStatus?, input: PaceInput) -> LimitsLaneModel {
+        let start = g.windowStart, hours = g.hours
+        func t(_ d: Date) -> Double { d.timeIntervalSince(start) / 3600 }
+        let short: (Date) -> String = { TimeFormat.shortClock($0, calendar: calendar, locale: locale) }
+        let liveStart = f.isActive ? f.startedAt : nil
+
+        var sessions: [LaneSession] = []
+        for r in input.pastSessions.sorted(by: { $0.start < $1.start }) {
+            let s = max(0, t(r.start)), e = min(hours, t(r.resetsAt))
+            guard e > s, r.start < now else { continue }
+            // The running session comes from the reading; a stored copy of it (its reset drifts) would draw it twice.
+            if let live = liveStart, r.resetsAt > live.addingTimeInterval(600) { continue }
+            let peak = min(max(r.peakUsed, 0), 1)
+            var tip = sessionSpan(r.start, r.resetsAt)
+            if r.hitLimit {
+                tip += r.hitLimitAt.map { " · hit the limit, paused \(short($0)) until \(short(r.resetsAt))" } ?? " · hit the limit"
+            } else {
+                tip += " · peaked at \(percent(peak))"
+            }
+            sessions.append(LaneSession(start: s, end: e, peak: peak, hitLimit: r.hitLimit, tooltip: tip))
+        }
+
+        var current: LaneCurrentSession? = nil
+        if let s0 = liveStart, let reset = f.resetsAt, t(reset) > 0, t(s0) < hours {
+            let level = status?.level ?? SessionLevel(used: f.used, policy: policy)
+            let blocked = f.outlook == .blocked
+            let projected = blocked ? nil : f.burnPerHour.map { min(1, f.used + $0 * f.timeLeft / 3600) }
+            var tip = sessionSpan(s0, reset)
+            if blocked {
+                let hit = (input.samples[LimitWindow.sessionID()] ?? []).first { $0.used >= 1 && $0.time >= s0 }?.time
+                tip += hit.map { " · hit the limit, paused \(short($0)) until \(short(reset))" } ?? " · hit the limit, paused until \(short(reset))"
+            } else {
+                tip += " · \(percent(f.used)) used so far"
+                if let out = f.runsOutAt {
+                    tip += " · runs out around \(TimeFormat.clock(out, calendar: calendar, locale: locale))"
+                } else if let p = projected {
+                    tip += " · about \(percent(p)) used by the reset"
+                }
+            }
+            current = LaneCurrentSession(start: max(0, t(s0)), end: min(hours, t(reset)), used: min(max(f.used, 0), 1),
+                                         projectedUsed: projected, runsOutAt: blocked ? nil : f.runsOutAt.map(t).flatMap { $0 <= hours ? $0 : nil },
+                                         level: level, tooltip: tip)
+        }
+        return LimitsLaneModel(kind: .sessions, hours: hours, sessions: sessions, current: current, warnAt: policy.sessionAmber)
+    }
+
+    /// Used share at hour `t` along the glide's history (held flat before the first point and after the last).
+    nonisolated static func usedAt(_ t: Double, in points: [GlideModel.Point]) -> Double {
+        let pts = points.sorted { $0.t < $1.t }
+        guard let first = pts.first, let last = pts.last else { return 0 }
+        if t <= first.t { return first.used }
+        if t >= last.t { return last.used }
+        let i = pts.lastIndex { $0.t <= t } ?? 0
+        let a = pts[i], b = pts[min(i + 1, pts.count - 1)]
+        return b.t > a.t ? a.used + (b.used - a.used) * (t - a.t) / (b.t - a.t) : b.used
+    }
+
+    /// The daily-use lane, for plans without a 5-hour window: one bar per local day, the share of the
+    /// window that day used (the drop in what's left across it), against an even day's share.
+    public func dailyLane(_ g: GlideModel, period: String = "week") -> LimitsLaneModel {
+        let hours = max(g.hours, 1)
+        var bounds: [Double] = [0]
+        var day = calendar.startOfDay(for: g.windowStart)
+        while let next = calendar.date(byAdding: .day, value: 1, to: day) {
+            day = next
+            let h = day.timeIntervalSince(g.windowStart) / 3600
+            if h >= hours - 0.01 { break }
+            if h > 0.01 { bounds.append(h) }
+        }
+        bounds.append(hours)
+        let days = zip(bounds, bounds.dropFirst()).map { x0, x1 -> LaneDay in
+            let even = (x1 - x0) / hours
+            let isToday = g.nowT >= x0 && g.nowT < x1
+            let name = TimeFormat.weekdayLong(g.windowStart.addingTimeInterval((x0 + x1) / 2 * 3600), calendar: calendar, locale: locale)
+            guard x0 < g.nowT else { return LaneDay(start: x0, end: x1, used: nil, even: even, isToday: false, isHeavy: false) }
+            let used = max(0, Self.usedAt(min(x1, g.nowT), in: g.points) - Self.usedAt(x0, in: g.points))
+            return LaneDay(start: x0, end: x1, used: used, even: even, isToday: isToday, isHeavy: used > even * 1.5,
+                           label: used >= 0.005 ? percent(used) : nil,
+                           tooltip: "\(name)\(isToday ? " so far" : "") · \(percent(used)) of the \(period) (an even day is \(percent(even)))")
+        }
+        return LimitsLaneModel(kind: .daily, hours: hours, days: days, warnAt: policy.sessionAmber)
+    }
+
+    /// The keys row: the week's line, then what the lane shows.
+    public func limitsKeys(state: PacingState, lane: LimitsLaneModel?, period: String = "week") -> [LimitsKey] {
+        var keys = [LimitsKey(mark: .line, text: "This \(period)", tone: .state(state))]
+        switch lane?.kind {
+        case .sessions?:
+            keys.append(LimitsKey(mark: .bar, text: "5-hour sessions", tone: .neutral))
+            keys.append(LimitsKey(mark: .dash, text: "warns at \(percent(lane?.warnAt ?? policy.sessionAmber))", tone: .amber))
+            if (lane?.limitHits ?? 0) > 0 { keys.append(LimitsKey(mark: .cross, text: "limit hit", tone: .rose)) }
+        case .daily?:
+            keys.append(LimitsKey(mark: .bar, text: "used each day", tone: .neutral))
+            keys.append(LimitsKey(mark: .dash, text: "an even day", tone: .faint))
+        case nil:
+            break
+        }
+        return keys
+    }
+
+    /// Under the chart, only when something applies: the live session runs out before its reset, or it's paused.
+    public func chartCaption(_ f: SessionForecast, weekLeft: Double, period: String = "week") -> String? {
+        let clock: (Date) -> String = { TimeFormat.clock($0, calendar: calendar, locale: locale) }
+        switch f.outlook {
+        case .runsOut:
+            guard let out = f.runsOutAt, let reset = f.resetsAt else { return nil }
+            return "This 5-hour session runs out around \(clock(out)) at this rate, \(Self.hoursMinutes(reset.timeIntervalSince(out))) before the reset."
+        case .blocked:
+            guard let reset = f.resetsAt else { return nil }
+            return "Paused until \(clock(reset)). \(percent(weekLeft)) of the \(period) is still left after it."
+        default:
+            return nil
+        }
+    }
+
+    /// The four cells under the chart. With a 5-hour window: week, session, its reset and the limits hit.
+    /// Without: week, today, a day's share to last, and the busiest day.
+    public func statStrip(_ a: PacingAnalysis, state: PacingState, period: String, lane: LimitsLaneModel,
+                          forecast f: SessionForecast?, status: SessionStatus?) -> [StatCell] {
+        let week = StatCell(label: period.uppercased(), value: percent(a.remaining), sub: "left", tone: .state(state))
+        if let f {
+            let level = status?.level ?? .normal
+            let tone: StatCell.Tone = switch level {
+            case .normal: .plain
+            case .amber: .amber
+            case .rose, .blocked: .rose
+            }
+            let session: StatCell = switch f.outlook {
+            case .idle: StatCell(label: "5-HOUR", value: "Full", sub: "nothing used")
+            case .blocked: StatCell(label: "5-HOUR", value: "Paused", sub: "limit reached", tone: .rose)
+            default: StatCell(label: "5-HOUR", value: percent(f.remaining), sub: "left", tone: tone)
+            }
+            let resets = f.isActive
+                ? StatCell(label: "RESETS", value: Self.hoursMinutes(f.timeLeft),
+                           sub: f.resetsAt.map { TimeFormat.clock($0, calendar: calendar, locale: locale) } ?? "")
+                : StatCell(label: "RESETS", value: "5h", sub: "available")
+            let hits = lane.limitHits
+            return [week, session, resets, StatCell(label: "LIMITS HIT", value: "\(hits)", sub: "this \(period)", tone: hits > 0 ? .rose : .plain)]
+        }
+        let today = lane.days.first(where: \.isToday)
+        let daysLeft = a.timeLeft / 86400
+        let perDay = daysLeft >= 1 ? a.remaining / daysLeft : a.remaining
+        let busiest = lane.days.filter { $0.used != nil }.max { ($0.used ?? 0) < ($1.used ?? 0) }
+        let busiestName = busiest.map {
+            TimeFormat.weekdayLong(a.windowStart.addingTimeInterval(($0.start + $0.end) / 2 * 3600), calendar: calendar, locale: locale)
+        }
+        return [
+            week,
+            StatCell(label: "TODAY", value: percent(today?.used ?? 0), sub: "of the \(period)"),
+            StatCell(label: "PER DAY", value: percent(perDay), sub: "to renewal"),
+            StatCell(label: "BUSIEST", value: busiest.map { percent($0.used ?? 0) } ?? "—", sub: busiestName ?? ""),
+        ]
     }
 
     private func callout(_ r: LimitReading, headline: LimitWindow, earlyResetAt: Date?) -> CalloutModel? {

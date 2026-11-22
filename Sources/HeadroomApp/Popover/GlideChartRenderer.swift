@@ -3,23 +3,34 @@ import HeadroomKit
 import HeadroomPresent
 
 /// The weekly glide path (PLAN §3.4): remaining allowance over the window, drawn in the
-/// mockup's 300×124 coordinate space and scaled to the card width.
+/// mockup's 300×124 coordinate space and scaled to the card width. On the Limits card a lane
+/// runs underneath on the same time axis (5-hour sessions, or each day's use), which makes the
+/// space 300×172; the day labels move under the lane.
 @MainActor
 enum GlideChartRenderer {
     static let vbW: CGFloat = 300, vbH: CGFloat = 124
+    /// The week plot's baseline, and the lane's top and bottom, in view-box units.
+    static let plotBottom: CGFloat = vbH - 22, laneTop: CGFloat = plotBottom + 18, laneBottom: CGFloat = laneTop + 30
 
-    static func height(width: CGFloat) -> CGFloat { vbH * width / vbW }
+    static func viewBoxHeight(lane: Bool) -> CGFloat { lane ? laneBottom + 22 : vbH }
 
-    static func draw(_ g: GlideModel, rect: CGRect, theme: Theme, ctx: CGContext, calendar: Calendar = Display.calendar, locale: Locale = Display.locale) {
+    static func height(width: CGFloat, lane: Bool = false) -> CGFloat { viewBoxHeight(lane: lane) * width / vbW }
+
+    static func draw(_ g: GlideModel, lane: LimitsLaneModel? = nil, rect: CGRect, theme: Theme, ctx: CGContext, out: RenderOutput? = nil,
+                     calendar: Calendar = Display.calendar, locale: Locale = Display.locale) {
+        let k = rect.width / vbW
         ctx.saveGState()
         ctx.translateBy(x: rect.minX, y: rect.minY)
-        ctx.scaleBy(x: rect.width / vbW, y: rect.width / vbW)
-        render(g, theme: theme, ctx: ctx, calendar: calendar, locale: locale)
+        ctx.scaleBy(x: k, y: k)
+        render(g, lane: lane, theme: theme, ctx: ctx, calendar: calendar, locale: locale) { r, tip in
+            out?.add(CGRect(x: rect.minX + r.minX * k, y: rect.minY + r.minY * k, width: r.width * k, height: r.height * k), tooltip: tip)
+        }
         ctx.restoreGState()
     }
 
-    private static func render(_ g: GlideModel, theme: Theme, ctx: CGContext, calendar: Calendar, locale: Locale) {
-        let W = vbW, H = vbH, top: CGFloat = 12, bot = H - 22
+    private static func render(_ g: GlideModel, lane: LimitsLaneModel?, theme: Theme, ctx: CGContext, calendar: Calendar, locale: Locale,
+                               region: (CGRect, String) -> Void) {
+        let W = vbW, H = viewBoxHeight(lane: lane != nil), top: CGFloat = 12, bot = plotBottom
         let hours = max(g.hours, 1)
         func X(_ h: Double) -> CGFloat { CGFloat(h / hours) * W }
         func Y(_ r: Double) -> CGFloat { top + CGFloat(1 - r) * (bot - top) }
@@ -59,7 +70,11 @@ enum GlideChartRenderer {
         // Grid.
         ctx.stroke(line(0, Y(1), W, Y(1)), theme.chartGrid, width: 1)
         ctx.stroke(line(0, Y(0), W, Y(0)), theme.chartGrid, width: 1.2)
-        for b in bounds.dropFirst().dropLast() { ctx.stroke(line(X(b), top, X(b), bot), theme.chartGrid, width: 1) }
+        for b in bounds.dropFirst().dropLast() {
+            ctx.stroke(line(X(b), top, X(b), bot), theme.chartGrid, width: 1)
+            // Day lines run on through the lane.
+            if lane != nil { ctx.stroke(line(X(b), laneTop - 2, X(b), laneBottom), theme.chartGrid, width: 1) }
+        }
 
         // Projection end and the run-out day.
         let endT = min(max(g.projectionEnd.t, g.nowT), hours)
@@ -176,6 +191,12 @@ enum GlideChartRenderer {
             }
         }
 
+        // The lane underneath, and now running on through it.
+        if let lane {
+            drawLane(lane, X: X, nowX: nx, state: col, theme: theme, ctx: ctx, region: region)
+            ctx.stroke(line(nx, bot, nx, laneBottom), theme.chartDash, width: 0.8, dash: [1.5, 2.5])
+        }
+
         // Now dot and chip.
         let haloNow = CGMutablePath(); haloNow.addEllipse(in: CGRect(x: nx - 8, y: ny - 8, width: 16, height: 16))
         ctx.fill(haloNow, col.fade(0.22))
@@ -216,12 +237,107 @@ enum GlideChartRenderer {
         // Leave it out when it would sit on the end label; the dashed line reads on its own.
         guard !CGRect(x: X(evenAt) - 30, y: evenY - 14, width: 60, height: 16).intersects(endRect) else { return }
         let ly = evenY - 6
-        let label = NSMutableAttributedString(string: "EVEN PACE", attributes: [.font: F.sf(8.5, 650), .kern: 0.6, .foregroundColor: theme.chartLabel])
+        let label = NSMutableAttributedString(string: "ON TRACK", attributes: [.font: F.sf(8.5, 650), .kern: 0.6, .foregroundColor: theme.chartLabel])
         drawOutlined(label, center: CGPoint(x: X(evenAt), y: ly), outline: theme.cardSolid, ctx: ctx)
     }
 
     private static func line(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat) -> CGPath {
         let p = CGMutablePath(); p.move(to: CGPoint(x: x1, y: y1)); p.addLine(to: CGPoint(x: x2, y: y2)); return p
+    }
+
+    // MARK: The lane
+
+    /// Neutral bars: ink at 34% (26% on light, where ink is darker).
+    static func laneBar(_ theme: Theme) -> NSColor { theme.ink.fade(theme.isDark ? 0.34 : 0.26) }
+    /// The running session's outline below the warning level.
+    static func laneBarStrong(_ theme: Theme) -> NSColor { theme.ink.fade(theme.isDark ? 0.62 : 0.55) }
+
+    /// A 5-hour session's color: neutral, amber from the warning level, rose once it hit the limit.
+    static func sessionColor(peak: Double, hit: Bool, warnAt: Double, theme: Theme) -> NSColor {
+        hit || peak >= 0.999 ? theme.rose : peak >= warnAt - 1e-9 ? theme.amber : laneBar(theme)
+    }
+
+    /// A bar with rounded top corners standing on `y + h`.
+    static func topRounded(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ radius: CGFloat) -> CGPath {
+        let p = CGMutablePath()
+        guard h > 0.2, w > 0 else { return p }
+        let r = min(radius, w / 2, h)
+        p.move(to: CGPoint(x: x, y: y + h))
+        p.addLine(to: CGPoint(x: x, y: y + r))
+        p.addQuadCurve(to: CGPoint(x: x + r, y: y), control: CGPoint(x: x, y: y))
+        p.addLine(to: CGPoint(x: x + w - r, y: y))
+        p.addQuadCurve(to: CGPoint(x: x + w, y: y + r), control: CGPoint(x: x + w, y: y))
+        p.addLine(to: CGPoint(x: x + w, y: y + h))
+        p.closeSubpath()
+        return p
+    }
+
+    /// The small rose × over a session that hit the limit.
+    private static func limitCross(at c: CGPoint, theme: Theme, ctx: CGContext) {
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: c.x - 2.4, y: c.y - 2.4)); p.addLine(to: CGPoint(x: c.x + 2.4, y: c.y + 2.4))
+        p.move(to: CGPoint(x: c.x + 2.4, y: c.y - 2.4)); p.addLine(to: CGPoint(x: c.x - 2.4, y: c.y + 2.4))
+        ctx.stroke(p, theme.rose, width: 1.5, cap: .round)
+    }
+
+    private static func drawLane(_ lane: LimitsLaneModel, X: (Double) -> CGFloat, nowX nx: CGFloat, state: NSColor, theme: Theme, ctx: CGContext,
+                                 region: (CGRect, String) -> Void) {
+        let LT = laneTop, LB = laneBottom
+        ctx.stroke(line(0, LB, vbW, LB), theme.chartGrid, width: 1.2)
+        switch lane.kind {
+        case .sessions:
+            func LY(_ v: Double) -> CGFloat { LB - CGFloat(min(max(v, 0), 1)) * (LB - LT) }
+            ctx.withState { ctx.setAlpha(0.45); ctx.stroke(line(0, LY(lane.warnAt), vbW, LY(lane.warnAt)), theme.amber, width: 0.8, dash: [2, 2]) }
+            func span(_ s: Double, _ e: Double) -> (CGFloat, CGFloat) {
+                let x1 = X(s) + 0.6
+                return (x1, max(x1 + 2.6, X(e) - 0.6))
+            }
+            for s in lane.sessions {
+                let (x1, x2) = span(s.start, s.end)
+                ctx.fill(topRounded(x1, LY(s.peak), x2 - x1, LB - LY(s.peak), 1.5),
+                         sessionColor(peak: s.peak, hit: s.hitLimit, warnAt: lane.warnAt, theme: theme))
+                if s.hitLimit { limitCross(at: CGPoint(x: (x1 + x2) / 2, y: LT - 6), theme: theme, ctx: ctx) }
+                region(CGRect(x: x1 - 0.6, y: LT - 12, width: x2 - x1 + 1.2, height: LB - LT + 12), s.tooltip)
+            }
+            if let c = lane.current {
+                let (x1, x2) = span(c.start, c.end)
+                let color = c.level == .normal ? laneBarStrong(theme)
+                    : sessionColor(peak: c.used, hit: c.hitLimit, warnAt: lane.warnAt, theme: theme)
+                let track = rounded(CGRect(x: x1, y: LT, width: x2 - x1, height: LB - LT), 2)
+                ctx.fill(track, theme.isDark ? white(0.045) : black(0.04))
+                ctx.stroke(track, color, width: 0.8, dash: [1.6, 1.4])
+                // Where the recent rate takes it by the reset.
+                if let p = c.projectedUsed, !c.hitLimit, x2 - 0.4 > nx {
+                    ctx.stroke(line(nx, LY(p), x2 - 0.4, LY(p)), color, width: 1.3, dash: [0.1, 2.4], cap: .round)
+                }
+                let fillW = max(1.5, min(nx, x2) - x1)
+                ctx.fill(topRounded(x1, LY(c.used), fillW, LB - LY(c.used), 1.5), color)
+                if let out = c.runsOutAt {
+                    let wx = X(out), wy = LT - 8
+                    let halo = CGMutablePath(); halo.addEllipse(in: CGRect(x: wx - 6, y: wy - 6, width: 12, height: 12))
+                    ctx.fill(halo, theme.rose.fade(0.18))
+                    Glyph.warning(in: CGRect(x: wx - 5.25, y: wy - 5.5, width: 10.5, height: 10.5), fill: theme.rose, ink: theme.cardSolid, ctx: ctx)
+                }
+                if c.hitLimit { limitCross(at: CGPoint(x: (x1 + x2) / 2, y: LT - 6), theme: theme, ctx: ctx) }
+                region(CGRect(x: x1 - 0.6, y: LT - 12, width: x2 - x1 + 1.2, height: LB - LT + 12), c.tooltip)
+            }
+        case .daily:
+            let mx = max(lane.days.compactMap(\.used).max() ?? 0, (lane.days.map(\.even).max() ?? 0) * 1.5, 0.01)
+            func LY(_ v: Double) -> CGFloat { LB - CGFloat(min(max(v / mx, 0), 1)) * (LB - LT) }
+            for d in lane.days {
+                let x1 = X(d.start) + 3, x2 = X(d.end) - 3, w = x2 - x1
+                guard w >= 3 else { continue }
+                ctx.stroke(line(x1 - 1, LY(d.even), x2 + 1, LY(d.even)), theme.chartDash, width: 0.9, dash: [2, 2])
+                guard let used = d.used else { continue }
+                let color = d.isToday ? state.fade(0.85) : d.isHeavy ? theme.amber : laneBar(theme)
+                ctx.fill(topRounded(x1, LY(used), w, LB - LY(used), 2), color)
+                if w >= 18, let label = d.label {
+                    let lc = d.isToday ? state : d.isHeavy ? theme.amber : theme.chartLabel
+                    Text(label, F.sf(7.5, 700, tabular: true), lc).draw(x: (x1 + x2) / 2, baseline: LY(used) - 3, align: .center, in: ctx)
+                }
+                if let tip = d.tooltip { region(CGRect(x: x1 - 3, y: LT - 12, width: w + 6, height: LB - LT + 12), tip) }
+            }
+        }
     }
 
     /// Appends `smoothPath(pts)` to the current subpath of `p`, joined to it by a straight line.

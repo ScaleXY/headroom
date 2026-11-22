@@ -176,7 +176,7 @@ enum SettingsStage {
             (.sessionWarning, "Claude: 5-hour session 84% used", "16% left · resets 10:48 AM. At this rate it runs out around 10:41 AM."),
             (.sessionLimit, "Claude: 5-hour limit reached", "Back at 10:48 AM, in 48m."),
             (.sessionReset, "Claude: 5-hour session is back", "A fresh session is ready. The full allowance is available again."),
-            (.weeklyTight, "Codex: getting tight this week", "Runs out Thursday 11:31 PM at today's pace."),
+            (.weeklyTight, "Codex: getting tight this week", "Runs out Thursday 11:31 PM at today's rate."),
             (.creditsExpiring, "Codex: a reset credit lapses soon", "It expires Thu 6:00 AM. Headroom never redeems one for you."),
         ]
         let on = samples.filter { settings.notifies($0.0) }

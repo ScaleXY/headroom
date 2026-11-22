@@ -47,7 +47,7 @@ import HeadroomKit
         #expect(Summary.sessionLine(runsOut, style: style, now: now, calendar: cal, locale: loc)?.contains("5-hour session 50% left · runs out ~") == true)
         #expect(Summary.sessionLine(runsOut, style: style, now: now, calendar: cal, locale: loc)?.hasSuffix("2h early") == true)
         let calm = SessionSnapshot(used: 0.2, left: 0.8, resetsAt: now.addingTimeInterval(3600), level: "normal", outlook: "comfortable", leftAtReset: 0.6)
-        #expect(Summary.sessionLine(calm, style: style, now: now, calendar: cal, locale: loc)?.hasSuffix("~60% spare at this pace") == true)
+        #expect(Summary.sessionLine(calm, style: style, now: now, calendar: cal, locale: loc)?.hasSuffix("~60% spare at this rate") == true)
         let idle = SessionSnapshot(used: 0, left: 1, resetsAt: nil, level: "normal", outlook: "idle")
         #expect(Summary.sessionLine(idle, style: style, now: now, calendar: cal, locale: loc) == nil)
         // Snapshots from older apps carry no outlook: only the warning, as before.
@@ -60,7 +60,7 @@ import HeadroomKit
         let (code, out) = run([], url: url)
         #expect(code == 0)
         #expect(out.contains("Claude  🟦🟦🟦🟦⬛   82% · renews in 20h ⏳"))
-        #expect(out.contains("↳ plenty · 80% renews unused at this pace"))
+        #expect(out.contains("↳ plenty · 80% renews unused at this rate"))
         #expect(out.contains("↳ ⚠ 5-hour session 16% left · resets"))
         #expect(out.contains("Codex   🟨🟨🟨⬛⬛   59% · renews in 4d"))
         #expect(out.contains("↳ tight · runs out"))

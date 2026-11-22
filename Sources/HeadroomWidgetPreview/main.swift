@@ -156,8 +156,58 @@ if args.contains("--mobile") {
         }
     }
     mobileCount += renderRuns()
+    mobileCount += await renderScreens()
     print("rendered \(mobileCount) image(s) to \(out.path)")
     exit(0)
+}
+
+/// A phone model reading `records`, loaded.
+@MainActor
+func phoneModel(_ records: SyncRecords, at time: Date) async -> MobileModel {
+    let m = MobileModel(live: nil, cloudKit: false, prefs: MobilePreferences(defaults: UserDefaults(suiteName: "headroom.preview") ?? .standard))
+    m.reader.clock = { time }
+    await m.reader.use(FixtureSyncStore(records), isDemo: true)
+    return m
+}
+
+/// The phone's screens in both appearances: the Limits tab and an account page for the demo
+/// accounts, each of the Mac's Limits fixtures, the Activity tab in every range (and without cached
+/// reads), and past weeks.
+@MainActor
+func renderScreens() async -> Int {
+    var count = 0
+    // The Mac's fixture moment, so these line up with `HeadroomApp --render` (a Tuesday, 10 AM).
+    let now = Demo.now
+    func page(_ v: some View, dark: Bool) -> some View {
+        v.background(dark ? Color(red: 0.08, green: 0.086, blue: 0.10) : Color(red: 0.95, green: 0.95, blue: 0.96))
+            .environment(\.colorScheme, dark ? .dark : .light)
+    }
+    let demo = await phoneModel(DemoRecords.make(.twoMacs, now: now), at: now)
+    for dark in [true, false] {
+        let suffix = dark ? "dark" : "light"
+        render(page(MobileScreenPreview.limits(demo), dark: dark), to: "mobile-screen-limits-\(suffix).png")
+        render(page(MobileScreenPreview.limitsDetail(demo), dark: dark), to: "mobile-screen-limits-detail-\(suffix).png")
+        for range in ActivityRange.allCases {
+            render(page(MobileScreenPreview.activity(demo, range: range, mode: .all), dark: dark),
+                   to: "mobile-screen-activity-\(range.label.lowercased())-\(suffix).png")
+        }
+        render(page(MobileScreenPreview.activity(demo, range: .day, mode: .newOnly), dark: dark), to: "mobile-screen-activity-new-24h-\(suffix).png")
+        render(page(MobileScreenPreview.activity(demo, range: .day, mode: .all, selection: 4..<8), dark: dark), to: "mobile-screen-activity-selection-\(suffix).png")
+        render(page(MobileScreenPreview.pastWeeks(demo), dark: dark), to: "mobile-screen-pastweeks-\(suffix).png")
+        count += 8
+    }
+    // Claude alone: no split on the summary card.
+    let solo = await phoneModel(DemoRecords.records([Demo.claudeMockup(now: now)], now: now), at: now)
+    render(page(MobileScreenPreview.activity(solo, range: .day, mode: .all), dark: true), to: "mobile-screen-activity-claude-only-dark.png")
+    count += 1
+    for scenario in Demo.limitsScenarios(now: now) {
+        let m = await phoneModel(DemoRecords.records(scenario.inputs, now: now), at: now)
+        for dark in [true, false] {
+            render(page(MobileScreenPreview.limitsDetail(m), dark: dark), to: "mobile-screen-\(scenario.name)-\(dark ? "dark" : "light").png")
+            count += 1
+        }
+    }
+    return count
 }
 
 /// Every run fixture as one Mac syncs it (with or without task names), plus a run on a second

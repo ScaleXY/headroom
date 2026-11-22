@@ -146,7 +146,7 @@ public struct SessionActivityCompactLeading: View {
     @Environment(\.colorScheme) private var scheme
 
     public var body: some View {
-        MarkShape(provider: provider).fill(state.level >= .amber ? Palette(.dark).tone(state.tone).text : BrandColors.of(provider).light)
+        MarkShape(provider: provider).fill(state.level >= .amber ? Palette(.dark).tone(state.tone).text : Palette(.dark).providerTone(provider))
             .frame(width: 16, height: 16)
     }
 }
@@ -209,7 +209,7 @@ public struct SessionActivityWatch: View {
         HStack(spacing: 8) {
             ZStack {
                 SessionActivityRing(state: state, width: 4)
-                MarkShape(provider: provider).fill(BrandColors.of(provider).light).frame(width: 12, height: 12)
+                MarkShape(provider: provider).fill(Palette(.dark).providerTone(provider)).frame(width: 12, height: 12)
             }
             .frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 0) {

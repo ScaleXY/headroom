@@ -35,7 +35,7 @@ public enum HeadroomWidgetKind: String, CaseIterable, Sendable {
 
     public var summary: String {
         switch self {
-        case .burn: "How fast you're spending, against the pace that lasts to the reset."
+        case .burn: "How fast you're spending, against the rate that lasts to the reset."
         case .pace: "What's left this week, where it's heading and when it renews."
         case .session: "Time to the 5-hour reset, and how the session is going."
         case .accounts: "Every account at a glance, the one that needs watching first."
@@ -102,7 +102,8 @@ public struct HeadroomWidgetView: View {
         .padding(family == .systemSmall ? 13 : 15)
     }
 
-    /// The surface for this widget: the focus provider's orb and, when it's hot, the state's glow.
+    /// The surface for this widget: the focus provider's top-edge light and, when the widget shows a
+    /// pacing state, that state's glow from the top-right corner.
     public static func surface(kind: HeadroomWidgetKind, feed: WidgetFeed?, account: String? = nil) -> WidgetSurface {
         let focus = account.flatMap { feed?.account($0) } ?? feed?.focus(for: kind)
         var accent: PacingState?
@@ -113,7 +114,7 @@ public struct HeadroomWidgetView: View {
         case .pace: accent = focus?.week?.state
         case .accounts, .activity: accent = nil
         case .session:
-            if let s = focus?.session { accent = s.level >= .amber ? (s.level == .amber ? .tight : .veryTight) : nil }
+            if let s = focus?.session { accent = s.level >= .amber ? (s.level == .amber ? .tight : .veryTight) : s.tone }
         }
         return WidgetSurface(provider: focus?.id, accent: accent)
     }
@@ -485,7 +486,7 @@ public struct PaceWidget: View {
                 HStack {
                     StateChip(state: w.state, title: w.verdictTitle)
                     Spacer()
-                    if let m = w.multiple { Text(NumberFormat.multiple(m, suffix: "pace")).font(Fonts.number(10, .semibold)).foregroundStyle(p.muted) }
+                    if let m = w.multiple { Text(NumberFormat.headroom(m)).font(Fonts.number(10, .semibold)).foregroundStyle(p.muted) }
                 }
                 .padding(.top, 8)
                 Text(w.verdict).font(Fonts.text(11, .medium)).foregroundStyle(p.ink).lineLimit(2).padding(.top, 5)

@@ -231,7 +231,7 @@ final class OnboardingView: CanvasControlView {
         switch step {
         case 0: ("Room to spare,\nat a glance.", "Headroom compares what's left of your Claude and Codex allowance with the time left until it renews, and tells you whether to use more, keep going, or ease off.")
         case 1: ("What do you use?", "Pick the tools to keep an eye on. Headroom reads limits from the apps you're already signed in to. Nothing is sent anywhere.")
-        case 2: ("Shape your menu bar.", "Five cells per tool: blue means room to spare, white means on pace, amber and rose mean slow down. The preview on the left updates as you choose.")
+        case 2: ("Shape your menu bar.", "Five cells per tool: blue means room to spare, white means on track, amber and rose mean slow down. The preview on the left updates as you choose.")
         case 3: ("Never get cut off\nmid-session.", "The 5-hour session is the limit you hit first. Headroom forecasts it, warns you in time, and tells you when it's back.")
         default: ("You're all set.", "Headroom lives in your menu bar. Click it for the full picture, or right-click any card to share it. Everything here is in Settings too.")
         }
@@ -243,7 +243,7 @@ final class OnboardingView: CanvasControlView {
         let t = theme
         let items: [(PacingState, String, String)] = [
             (.plenty, "Plenty available", "Use more. It renews before you'd run out."),
-            (.onPace, "On pace", "Keep going. It lasts to the renewal."),
+            (.onPace, "On track", "Keep going. It lasts to the renewal."),
             (.tight, "Getting tight", "Ease off a little to make it."),
             (.veryTight, "Very tight", "Slow down, or it runs out early."),
         ]

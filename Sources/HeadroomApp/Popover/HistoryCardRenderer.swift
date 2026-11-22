@@ -14,10 +14,10 @@ enum HistoryCardRenderer {
         guard let ctx else { return h }
         CardChrome.draw(CGRect(x: origin.x, y: origin.y, width: width, height: h), provider: provider, theme: theme, ctx: ctx)
         var y = origin.y + 13
-        BrandMark.drawTile(provider, in: CGRect(x: x0, y: y, width: 28, height: 28), ctx: ctx)
+        BrandMark.drawTile(provider, in: CGRect(x: x0, y: y, width: 28, height: 28), theme: theme, ctx: ctx)
         Text(provider.displayName, F.sf(15, 650), theme.ink, kern: -0.075).draw(x: x0 + 37, capCenter: y + 14, in: ctx)
         guard let r = record else {
-            Text("This week is still running — see the Pace tab.", F.sf(12.5), theme.muted).draw(x: x0, baseline: y + 60, in: ctx)
+            Text("This week is still running — see the Limits tab.", F.sf(12.5), theme.muted).draw(x: x0, baseline: y + 60, in: ctx)
             return h
         }
         let title = "Week to \(TimeFormat.monthDay(r.scheduledEnd, calendar: calendar, locale: locale)) · \(Int((r.finalUsed * 100).rounded()))% used"

@@ -15,6 +15,9 @@ final class PopoverController: NSObject {
     private var panel: NSPanel?
     private var root: PopoverRootView?
     private var monitors: [Any] = []
+    /// The opening screen's usable height, until the panel is on a screen.
+    private var openingScreenMax: CGFloat = 884
+    private var resizeTimer: Timer?
     var isShown: Bool { panel != nil }
 
     init(model: AppModel, updater: AppUpdater? = nil) {
@@ -47,6 +50,8 @@ final class PopoverController: NSObject {
         // NSGlassEffectView and NSVisualEffectView both render in-process with Metal and map a
         // ~190 MB shader archive on open (measured: 163–171 MB peaks vs 35 MB drawn), which breaks
         // the popover memory budget (PLAN §4.4).
+        let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        openingScreenMax = Self.screenMax(of: NSScreen.screens.first { $0.frame.contains(buttonRect.origin) } ?? NSScreen.main)
         let root = PopoverRootView(model: model, controller: self, tab: tab)
         if tab == PopoverRootView.runsTab { root.openRun(run) }
         // A plain container: a layer-backed `updateLayer` view as the content view itself leaves
@@ -61,8 +66,8 @@ final class PopoverController: NSObject {
         model.popoverOpen = true
         root.rebuild(animated: false)
 
-        let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
-        position(panel, under: buttonRect, height: root.preferredHeight)
+        // Every opening starts at the resting height, scrolled to the top (redesign §4).
+        position(panel, under: buttonRect, height: root.windowHeight)
         panel.makeKeyAndOrderFront(nil)
         panel.invalidateShadow()
         installMonitors()
@@ -78,20 +83,50 @@ final class PopoverController: NSObject {
         panel.setFrame(NSRect(x: x, y: y, width: PopoverChrome.width, height: h), display: true)
     }
 
-    /// Re-fits the panel after content changes, keeping its top edge fixed.
-    func resize(to height: CGFloat) {
+    /// The tallest the panel may be: the screen's usable height less a margin.
+    var screenMax: CGFloat { panel?.screen.map(Self.screenMax(of:)) ?? openingScreenMax }
+
+    private static func screenMax(of screen: NSScreen?) -> CGFloat {
+        (screen?.visibleFrame.height ?? 900) - 16
+    }
+
+    /// Re-fits the panel, keeping its top edge fixed. `animated` eases there over 0.24 s (a tab
+    /// switch back to the resting height); scrolling resizes 1:1 without it.
+    func resize(to height: CGFloat, animated: Bool = false) {
         guard let panel else { return }
-        let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let h = min(height, visible.height - 16)
+        resizeTimer?.invalidate()
+        resizeTimer = nil
+        let h = min(height, screenMax)
+        let from = panel.frame.height
+        guard abs(from - h) > 0.5 else { return }
+        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return setHeight(h) }
+        let start = Date()
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel != nil else { return }
+                let p = min(1, Date().timeIntervalSince(start) / 0.24)
+                let eased = 1 - pow(1 - p, 3)
+                self.setHeight(from + (h - from) * CGFloat(eased))
+                if p >= 1 { self.resizeTimer?.invalidate(); self.resizeTimer = nil }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        resizeTimer = t
+    }
+
+    private func setHeight(_ h: CGFloat) {
+        guard let panel else { return }
         var f = panel.frame
-        guard abs(f.height - h) > 0.5 else { return }
         let top = f.maxY
-        f.size.height = h
-        f.origin.y = top - h
+        f.size.height = h.rounded()
+        f.origin.y = top - f.size.height
         panel.setFrame(f, display: true)
+        panel.invalidateShadow()
     }
 
     func close() {
+        resizeTimer?.invalidate()
+        resizeTimer = nil
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors.removeAll()
         panel?.orderOut(nil)
@@ -168,7 +203,7 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     static let runsTab = 2
     /// The Runs tab is there only while task tracking is on.
     private var showsRuns: Bool { model.settings.taskTracking }
-    private var tabs: [String] { showsRuns ? ["Pace", "Activity", "Runs"] : ["Pace", "Activity"] }
+    private var tabs: [String] { showsRuns ? ["Limits", "Activity", "Runs"] : ["Limits", "Activity"] }
 
     private var showsBanner: Bool { cards.historyWeek == nil && UpdateBannerRenderer.shows(controller?.updater) }
     private var bannerSpace: CGFloat { showsBanner ? UpdateBannerRenderer.space : 0 }
@@ -177,7 +212,50 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     var topHeight: CGFloat { PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + (hasControls ? 36 : 0) }
     var bottomHeight: CGFloat { PopoverChrome.footerHeight + PopoverChrome.pad }
 
-    var preferredHeight: CGFloat { topHeight + cards.contentHeight + bottomHeight }
+    // MARK: Window size (redesign §4)
+
+    /// Growth beyond the resting height from scrolling down; 0 at rest.
+    private var extra: CGFloat = 0
+    /// The "Scroll for more" pill shows until the first scroll of this opening.
+    private(set) var scrolledOnce = false
+
+    /// The Limits tab's natural height, measured without drawing, whichever tab is showing.
+    private var limitsNatural: CGFloat {
+        PopoverChrome.pad + PopoverChrome.headerHeight + bannerSpace + cards.limitsHeight + bottomHeight
+    }
+
+    private var sizing: WindowSizing {
+        let screenMax = Double(controller?.screenMax ?? 884)
+        let rest = WindowSizing.resting(limitsNatural: Double(limitsNatural), screenMax: screenMax)
+        return WindowSizing(resting: rest, screenMax: screenMax, chrome: Double(topHeight + bottomHeight), content: Double(cards.contentHeight),
+                            height: rest + Double(extra), offset: Double(cards.offset))
+    }
+
+    /// The height the panel should have now.
+    var windowHeight: CGFloat { CGFloat(sizing.height) }
+
+    /// Takes a sizing: the panel's height (top edge fixed) and the cards' scroll position.
+    private func apply(_ s: WindowSizing, animated: Bool = false) {
+        extra = CGFloat(s.height - s.resting)
+        cards.setOffset(CGFloat(s.offset))
+        controller?.resize(to: CGFloat(s.height), animated: animated)
+        layoutCards()
+        cards.needsDisplay = true
+    }
+
+    /// Scrolling: grow the window first, then scroll; back up, scroll to the top, then shrink.
+    func scroll(down dy: CGFloat, momentum: Bool) {
+        guard dy != 0 else { return }
+        if !scrolledOnce { scrolledOnce = true; cards.needsDisplay = true }
+        var s = sizing
+        let before = s
+        s.scroll(down: Double(dy), shrink: !momentum)
+        guard s != before else { return }
+        if s.height != before.height { needsDisplay = true }
+        apply(s)
+    }
+
+    override func scrollWheel(with event: NSEvent) { cards.scrollWheel(with: event) }
 
     /// A run's page: "‹ Runs" back to the list on the left, where the run sits on the right.
     static func drawRunCrumb(position: String?, x: CGFloat, y: CGFloat, width: CGFloat, theme t: Theme, ctx: CGContext, out: RenderOutput?) {
@@ -194,6 +272,18 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         }
     }
 
+    /// Activity's fixed control row: what the range covers on the left ("Last 24 hours" over
+    /// "since Sat 11 AM"), the 24H · 7D · 30D control on the right.
+    static func drawActivityControls(title: (title: String, since: String), range: ActivityRange, x: CGFloat, y: CGFloat, width: CGFloat,
+                                     theme t: Theme, ctx: CGContext, out: RenderOutput?) {
+        let ranges = Segmented(items: ActivityRange.allCases.map(\.label), selected: range.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
+        let r = CGRect(x: x + width - 1 - ranges.width, y: y, width: ranges.width, height: 26)
+        ranges.draw(in: r, theme: t, ctx: ctx, out: out) { .activityRange($0) }
+        let room = r.minX - 8 - (x + 3)
+        Text(ActivityCardRenderer.fit(title.title, font: F.sf(13, 650), width: room), F.sf(13, 650), t.ink, kern: -0.065).draw(x: x + 3, capCenter: y + 6, in: ctx)
+        Text(ActivityCardRenderer.fit(title.since, font: F.sf(11, 500), width: room), F.sf(11, 500), t.muted).draw(x: x + 3, capCenter: y + 21, in: ctx)
+    }
+
     /// Opens a run's own page (nil: the list), before the first rebuild.
     func openRun(_ id: String?) { cards.detailRun = id }
 
@@ -201,16 +291,19 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
     func goBack() -> Bool {
         guard tab == Self.runsTab, cards.detailRun != nil else { return false }
         cards.detailRun = nil
-        rebuild(animated: false)
+        rebuild(animated: false, resetSize: true)
         return true
     }
 
-    func rebuild(animated: Bool) {
+    /// `resetSize` returns to the resting height and the top (a tab switch or a new page);
+    /// otherwise the window keeps its height within what the content now allows.
+    func rebuild(animated: Bool, resetSize: Bool = false) {
         if !showsRuns, tab == Self.runsTab { tab = 0 }
         cards.tab = tab
         cards.rebuild(animated: animated)
-        controller?.resize(to: preferredHeight)
-        layoutCards()
+        var s = sizing
+        if resetSize { s.reset() }
+        apply(s, animated: resetSize && window?.isVisible == true)
         needsDisplay = true
     }
 
@@ -219,11 +312,20 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         layoutCards()
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        guard changed else { return }
+        layoutCards()
+        needsDisplay = true
+    }
+
     /// The card view is only as tall as the visible area and scrolls itself, so no tall backing
     /// store exists (a tall one gets GPU tiling, which maps CoreAnimation's Metal archive).
     private func layoutCards() {
         let h = max(bounds.height - topHeight - bottomHeight, 40)
-        cards.frame = NSRect(x: 0, y: topHeight, width: bounds.width, height: h)
+        let frame = NSRect(x: 0, y: topHeight, width: bounds.width, height: h)
+        if cards.frame != frame { cards.frame = frame; cards.needsDisplay = true }
         cards.clampOffset()
     }
 
@@ -257,11 +359,8 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
             UpdateBannerRenderer.draw(state, rect: r, theme: t, ctx: ctx, out: out)
         }
         if tab == 1 && cards.historyWeek == nil {
-            let y = pad + PopoverChrome.headerHeight + bannerSpace
-            let modes = Segmented(items: ["All", "New only"], selected: model.settings.activityMode.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
-            modes.draw(in: CGRect(x: pad + 1, y: y, width: modes.width, height: 26), theme: t, ctx: ctx, out: out) { .activityMode($0) }
-            let ranges = Segmented(items: ActivityRange.allCases.map(\.label), selected: model.settings.activityRange.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
-            ranges.draw(in: CGRect(x: pad + cw - 1 - ranges.width, y: y, width: ranges.width, height: 26), theme: t, ctx: ctx, out: out) { .activityRange($0) }
+            Self.drawActivityControls(title: cards.rangeTitle, range: model.settings.activityRange, x: pad, y: pad + PopoverChrome.headerHeight + bannerSpace,
+                                      width: cw, theme: t, ctx: ctx, out: out)
         }
         if tab == Self.runsTab && hasControls {
             let y = pad + PopoverChrome.headerHeight + bannerSpace
@@ -282,12 +381,9 @@ final class PopoverRootView: NSView, NSViewToolTipOwner {
         case .tab(let i):
             if i < 0 { cards.historyWeek = nil } else { tab = i }
             cards.detailRun = nil
-            rebuild(animated: false)
+            rebuild(animated: false, resetSize: true)
         case .closeRun:
             _ = goBack()
-        case .activityMode(let i):
-            model.settings.activityMode = ActivityMode(rawValue: i) ?? .all
-            rebuild(animated: false)
         case .activityRange(let i):
             model.settings.activityRange = ActivityRange(rawValue: i) ?? .day
             cards.selection = nil
@@ -356,11 +452,15 @@ final class CardsView: NSView, NSViewToolTipOwner {
     var selection: Range<Int>?
     var historyWeek: (provider: Provider, index: Int)?
     private(set) var contentHeight: CGFloat = 200
+    /// The Limits tab's card stack, measured on every tab: it sets the window's resting height.
+    private(set) var limitsHeight: CGFloat = 200
+    /// Activity's control row: "Last 24 hours" over "since Sat 11 AM".
+    private(set) var rangeTitle: (title: String, since: String) = ("", "")
 
     private var paceCards: [PaceCardModel] = []
     private var activityCards: [ActivityCardModel] = []
+    private var summary: ActivitySummaryModel?
     private var weeks: [PastWeeksModel] = []
-    private var sessionHistories: [SessionHistoryModel] = []
     private var runsPage = RunsPageModel()
     /// The run whose own page is open in the Runs tab; nil for the list.
     var detailRun: String? { didSet { if detailRun != oldValue { offset = 0 } } }
@@ -411,15 +511,11 @@ final class CardsView: NSView, NSViewToolTipOwner {
             let aggregates = model.aggregates()
             let range = model.settings.activityRange
             activityCards = model.settings.enabledProviders.sorted().map { ap.card($0, aggregates: aggregates, range: range, selection: selection) }
-            weeks = model.settings.enabledProviders.sorted().map { pastWeeks($0, presenter: presenter) }
+            summary = activityCards.isEmpty ? nil : ap.summary(activityCards, range: range, mode: model.settings.activityMode)
+            rangeTitle = ap.rangeTitle(range)
+            weeks = model.settings.enabledProviders.sorted().map { pastWeeks($0, presenter: presenter, now: now) }
             recentRuns = model.settings.taskTracking
                 ? RecentRunsPresenter(now: now, pricing: model.pricingEngine).model(RunHistory.shared.records(now: now)) : nil
-            sessionHistories = model.settings.enabledProviders.sorted().compactMap { p in
-                let input = model.paceInput(p)
-                guard let reading = input.reading, reading.session != nil else { return nil }
-                let sessions = model.history.account(p, reading.accountKey)?.recentSessions(now: now) ?? []
-                return SessionHistoryRenderer.model(p, sessions: sessions, warnAt: model.settings.sessionWarnAt, now: now)
-            }
         }
         if tab == PopoverRootView.runsTab {
             runsPage = RunsPresenter(now: now, pricing: model.pricingEngine).page(model.taskRuns, expanded: expandedRuns, opened: openRows, allRecent: allRecent)
@@ -427,7 +523,10 @@ final class CardsView: NSView, NSViewToolTipOwner {
             if detailRun != nil, detailCard == nil { detailRun = nil }
         }
         if animated, states != lastStates, !lastStates.isEmpty, window != nil { beginFade() }
-        contentHeight = measure()
+        let w = bounds.width > 0 ? bounds.width : PopoverChrome.width
+        // Limits first: measuring writes the card rects, and the current tab's must win.
+        limitsHeight = layout(ctx: nil, width: w, tab: 0, page: false)
+        contentHeight = layout(ctx: nil, width: w)
         lastStates = states
         needsDisplay = true
     }
@@ -441,7 +540,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
         let rect = bounds.integral
         guard let image = CPUCanvas.image(for: self, rect: rect, { ctx in
             ctx.translateBy(x: 0, y: -self.offset)
-            _ = self.layout(ctx: ctx, width: self.bounds.width)
+            self.layout(ctx: ctx, width: self.bounds.width)
         }) else { return }
         fade = (image, rect, Date())
         fadeTimer?.invalidate()
@@ -457,27 +556,27 @@ final class CardsView: NSView, NSViewToolTipOwner {
         fadeTimer = t
     }
 
-    private func pastWeeks(_ p: Provider, presenter: Presenter) -> PastWeeksModel {
+    private func pastWeeks(_ p: Provider, presenter: Presenter, now: Date) -> PastWeeksModel {
         let input = model.paceInput(p)
         let acct = input.reading.flatMap { model.history.account(p, $0.accountKey) }
         let records = Array((acct?.weeks ?? []).suffix(7))
         weekRecords[p] = records
+        // The old 5-hour sessions section's count lives on here, for accounts with a 5-hour limit.
+        let sessions = input.reading?.session != nil ? acct?.recentSessions(now: now) ?? [] : nil
         return HistoryPresenter.pastWeeks(input, records: records, sessionHitsThisWindow: acct?.sessionHitsThisWindow ?? 0,
-                                          earlyResetAt: acct?.earlyResetAt)
+                                          earlyResetAt: acct?.earlyResetAt, sessions: sessions, now: now)
     }
 
-    private func measure() -> CGFloat {
-        let w = bounds.width > 0 ? bounds.width : PopoverChrome.width
-        return layout(ctx: nil, width: w)
-    }
-
-    /// Lays out (and draws when ctx != nil) the card stack. Returns the height.
+    /// Lays out (and draws when ctx != nil) the card stack. Returns the height. `tab` lays out
+    /// another tab (the Limits tab, to measure the resting height); `page` false ignores an open
+    /// week's page.
     @discardableResult
-    private func layout(ctx: CGContext?, width: CGFloat) -> CGFloat {
+    private func layout(ctx: CGContext?, width: CGFloat, tab: Int? = nil, page: Bool = true) -> CGFloat {
+        let tab = tab ?? self.tab
         let pad = PopoverChrome.pad, cw = width - pad * 2, t = theme
         var y: CGFloat = 0
         cardRects.removeAll()
-        if let week = historyWeek, let records = weekRecords[week.provider], week.index < records.count || week.index == records.count {
+        if page, let week = historyWeek, let records = weekRecords[week.provider], week.index < records.count || week.index == records.count {
             let h = HistoryCardRenderer.draw(provider: week.provider, record: week.index < records.count ? records[week.index] : nil,
                                              origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx)
             cardRects.append((week.provider, CGRect(x: pad, y: y, width: cw, height: h)))
@@ -509,6 +608,9 @@ final class CardsView: NSView, NSViewToolTipOwner {
                                             width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 2
         }
         let mode = model.settings.activityMode, kind = model.settings.breakdown
+        if let summary {
+            y += SummaryCardRenderer.draw(summary, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out) + 10
+        }
         for (i, card) in activityCards.enumerated() {
             if i > 0 { y += 10 }
             var layout = ActivityCardRenderer.Layout()
@@ -531,18 +633,6 @@ final class CardsView: NSView, NSViewToolTipOwner {
             if let ctx { PastWeeksRenderer.drawLegend(x: pad, y: y, width: cw, theme: t, ctx: ctx) }
             y += PastWeeksRenderer.legendHeight
         }
-        if !sessionHistories.isEmpty {
-            y += 6
-            if let ctx { SessionHistoryRenderer.drawSectionHeader(x: pad, y: y, width: cw, warnAt: model.settings.sessionWarnAt, theme: t, ctx: ctx) }
-            y += SessionHistoryRenderer.sectionHeaderHeight
-            for (i, sh) in sessionHistories.enumerated() {
-                if i > 0 { y += 10 }
-                let h = SessionHistoryRenderer.draw(sh, origin: CGPoint(x: pad, y: y), width: cw, theme: t, ctx: ctx, out: ctx == nil ? nil : out)
-                cardRects.append((sh.provider, CGRect(x: pad, y: y, width: cw, height: h)))
-                y += h
-            }
-            y += 4
-        }
         if let recent = recentRuns {
             y += 12
             if let ctx { RecentRunsRenderer.drawSectionHeader(recent, x: pad, y: y, width: cw, theme: t, ctx: ctx) }
@@ -563,6 +653,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
             self.layout(ctx: ctx, width: self.bounds.width)
             Hover.draw(self.out.regions, at: self.hoverPoint.map { CGPoint(x: $0.x, y: $0.y + self.offset) }, theme: self.theme, ctx: ctx)
             ctx.restoreGState()
+            self.drawScrollCue(ctx)
             if let f = self.fade, let a = fadeAlpha {
                 ctx.saveGState()
                 ctx.setAlpha(a)
@@ -593,12 +684,56 @@ final class CardsView: NSView, NSViewToolTipOwner {
         offset = min(max(offset, 0), maxOffset)
     }
 
+    func setOffset(_ value: CGFloat) {
+        guard value != offset else { return }
+        offset = value
+        needsDisplay = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { needsDisplay = true }
+    }
+
+    /// Scrolling grows the window first (redesign §4): the root decides, 1:1 with the deltas.
     override func scrollWheel(with event: NSEvent) {
         let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 10
-        let before = offset
-        offset -= dy
-        clampOffset()
-        if offset != before { needsDisplay = true }
+        root?.scroll(down: -dy, momentum: event.momentumPhase != [])
+    }
+
+    /// Content sits below the visible area.
+    var hasMoreBelow: Bool { contentHeight - offset - bounds.height > 4 }
+
+    /// While more sits below: a fade into the window color, and until the first scroll of this
+    /// opening a "Scroll for more" pill 8 pt above the bottom.
+    private func drawScrollCue(_ ctx: CGContext) {
+        guard hasMoreBelow else { return }
+        let t = theme
+        let fade = CGRect(x: 0, y: bounds.height - 46, width: bounds.width, height: 46)
+        ctx.fillLinear(CGPath(rect: fade, transform: nil), [t.windowFill.alpha(0), t.windowFill],
+                       from: CGPoint(x: 0, y: fade.minY), to: CGPoint(x: 0, y: fade.maxY))
+        guard root?.scrolledOnce == false else { return }
+        Self.drawScrollPill(centerX: bounds.midX, bottom: bounds.height - 8, theme: t, ctx: ctx)
+    }
+
+    /// "↓ Scroll for more": a small capsule, its bottom at `bottom`.
+    static func drawScrollPill(centerX: CGFloat, bottom: CGFloat, theme t: Theme, ctx: CGContext) {
+        let label = Text("Scroll for more", F.sf(11, 600), t.ink)
+        let w = 8 + 9 + 5 + label.width + 10, h: CGFloat = 21
+        let r = CGRect(x: (centerX - w / 2).rounded(), y: bottom - h, width: w, height: h)
+        let shape = rounded(r, h / 2)
+        ctx.withState {
+            ctx.setShadow(offset: CGSize(width: 0, height: -4), blur: 14, color: black(t.isDark ? 0.4 : 0.12).cgColor)
+            ctx.fill(shape, t.isDark ? rgb(0x2A2B30) : white(0.96))
+        }
+        ctx.innerStroke(shape, t.isDark ? white(0.12) : black(0.08), width: 0.5)
+        let a = CGRect(x: r.minX + 8, y: r.midY - 4.5, width: 9, height: 9)
+        let arrow = CGMutablePath()
+        arrow.move(to: CGPoint(x: a.midX, y: a.minY + 1)); arrow.addLine(to: CGPoint(x: a.midX, y: a.maxY - 1))
+        arrow.move(to: CGPoint(x: a.minX + 1.5, y: a.minY + 5)); arrow.addLine(to: CGPoint(x: a.midX, y: a.maxY - 1)); arrow.addLine(to: CGPoint(x: a.maxX - 1.5, y: a.minY + 5))
+        ctx.stroke(arrow, t.ink, width: 1.5, cap: .round, join: .round)
+        label.draw(x: a.maxX + 5, capCenter: r.midY, in: ctx)
     }
 
     /// View point → content point.
@@ -641,14 +776,14 @@ final class CardsView: NSView, NSViewToolTipOwner {
             case .breakdownMenu: showBreakdownMenu(at: v); return
             case .openWeek(let prov, let i):
                 historyWeek = (prov, i)
-                root?.rebuild(animated: false)
+                root?.rebuild(animated: false, resetSize: true)
                 return
             case .toggleRun(let id):
                 toggleRun(id)
                 return
             case .openRun(let id):
                 detailRun = id
-                root?.rebuild(animated: false)
+                root?.rebuild(animated: false, resetSize: true)
                 return
             case .closeRun:
                 _ = root?.goBack()
@@ -681,6 +816,15 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 return
             case .connectAgents:
                 root?.controller?.openRunsSettings()
+                return
+            case .activityMode(let i):
+                model.settings.activityMode = ActivityMode(rawValue: i) ?? .all
+                root?.rebuild(animated: false)
+                return
+            case .clearSelection:
+                selection = nil
+                dragAnchor = nil
+                root?.rebuild(animated: false)
                 return
             default: break
             }

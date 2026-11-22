@@ -73,7 +73,7 @@ final class PreviewTests: CaptureCase {
         pause(2.2)
         go("Macs")
         pause(2.6)
-        go("Now")
+        go("Limits")
         pause(1.8)
         mark("end")
     }

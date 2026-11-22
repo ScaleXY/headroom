@@ -56,6 +56,37 @@ public struct Palette {
         }
     }
 
+    /// The provider's tone (Claude clay, Codex jade) at `strength` opacity: marks, plan pills, the
+    /// card's top-edge light and Activity data. Named strengths live on `ProviderTone`
+    /// (`cachedReads`, `newInput`, `output`, `modelBar`, `pastWeek`, `pillFill`, `pillStroke`, ...).
+    /// A tone is a signature: it never glows.
+    public func providerTone(_ provider: Provider, _ strength: Double = 1) -> Color {
+        hex(ProviderTone.hex(provider, dark: dark), strength)
+    }
+
+    /// The Limits card's top-right glow in the state color (signals glow; tones never do).
+    public func stateGlow(_ state: PacingState) -> Color {
+        let g = state.cardGlow(dark: dark)
+        return hex(g.hex, g.alpha)
+    }
+
+    /// The Limits lane's neutral bars: ink at 34% (26% on light, where ink is darker).
+    public var laneBar: Color { ink.opacity(dark ? 0.34 : 0.26) }
+    /// The running session's outline below the warning level, and the lane's key.
+    public var laneBarStrong: Color { ink.opacity(dark ? 0.62 : 0.55) }
+
+    /// A 5-hour session's bar: neutral, amber from the warning level, rose once it hit the limit.
+    public func laneSession(peak: Double, hit: Bool, warnAt: Double = 0.75) -> Color {
+        hit || peak >= 0.999 ? rose : peak >= warnAt - 1e-9 ? amber : laneBar
+    }
+
+    /// The neutral mark tile `BrandTile` draws (the mark sits on it in the provider's tone).
+    public var markTileTop: Color { dark ? hex(0x34363C) : hex(0xFFFFFF) }
+    public var markTileBottom: Color { dark ? hex(0x232428) : hex(0xF1F1F4) }
+    public var markTileStroke: Color { dark ? white(0.12) : black(0.08) }
+    public var markTileHighlight: Color { dark ? white(0.10) : white(1) }
+    public var markTileShadow: Color { dark ? black(0.35) : black(0.10) }
+
     /// The 5-hour level's color: the forecast's pacing tone until it warns, then amber and rose.
     public func session(_ s: WidgetSession) -> Tone {
         switch s.level {
@@ -83,7 +114,8 @@ public struct Tone {
     }
 }
 
-/// Brand identity colors (`Brand` in the app): identity only, never a pacing state.
+/// Brand identity colors (`Brand` in the app): identity only, never a pacing state. In the UI a
+/// provider is drawn in its tone (`BrandColors.tone`, `Palette.providerTone`); these stay for pure identity.
 public struct BrandColors {
     public let base: Color, light: Color, tileTop: Color, tileBottom: Color, markInk: Color, orbDark: Color, orbLight: Color
 
@@ -97,6 +129,11 @@ public struct BrandColors {
     }
 
     public func pill(_ p: Palette) -> Color { p.dark ? light : base }
+
+    /// The provider's tone for `palette` at `strength` opacity (same as `Palette.providerTone`).
+    public static func tone(_ provider: Provider, _ palette: Palette, _ strength: Double = 1) -> Color {
+        palette.providerTone(provider, strength)
+    }
 
     public init(base: Color, light: Color, tileTop: Color, tileBottom: Color, markInk: Color, orbDark: Color, orbLight: Color) {
         self.base = base; self.light = light; self.tileTop = tileTop; self.tileBottom = tileBottom
@@ -119,7 +156,7 @@ extension WidgetSession {
 
 /// Type in the app's voice: SF with the mockup's weights and tracking.
 public enum Fonts {
-    /// Small capitals label: "EVEN PACE", "5-HOUR".
+    /// Small capitals label: "ON TRACK", "5-HOUR".
     public static func caps(_ size: CGFloat = 8.5, _ weight: Font.Weight = .bold) -> Font { .system(size: size, weight: weight) }
     public static func number(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight).monospacedDigit() }
     public static func text(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font { .system(size: size, weight: weight) }

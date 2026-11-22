@@ -55,15 +55,10 @@ enum OnboardingStage {
             let on = settings.enabledProviders.contains(p)
             let x = rect.midX - side - gap / 2 + CGFloat(i) * (side + gap)
             let tile = CGRect(x: x, y: y, width: side, height: side)
-            let brand = Brand.of(p)
-            if on {
-                ctx.fillRadial(in: CGPath(rect: rect, transform: nil), center: CGPoint(x: tile.midX, y: tile.midY), radii: CGSize(width: 90, height: 90),
-                               color: brand.base.fade(t.isDark ? 0.5 : 0.35), fadeAt: 1)
-            }
             ctx.withState {
                 ctx.setAlpha(on ? 1 : 0.28)
                 ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-                BrandMark.drawTile(p, in: tile, ctx: ctx)
+                BrandMark.drawTile(p, in: tile, theme: t, ctx: ctx)
                 ctx.endTransparencyLayer()
             }
             Text(p == .claude ? "Claude Code" : "Codex", F.sf(13, 650), t.ink.fade(on ? 1 : 0.4)).draw(x: tile.midX, capCenter: tile.maxY + 22, align: .center, in: ctx)
@@ -131,7 +126,7 @@ enum OnboardingStage {
         let mh = PaceCardRenderer.sessionModuleHeight(module, width: w - cardPad * 2)
         let card = CGRect(x: x, y: y, width: w, height: 28 + 12 + mh + cardPad)
         CardChrome.draw(card, provider: .claude, theme: t, ctx: ctx)
-        BrandMark.drawTile(.claude, in: CGRect(x: card.minX + cardPad, y: card.minY + 12, width: 22, height: 22), ctx: ctx)
+        BrandMark.drawTile(.claude, in: CGRect(x: card.minX + cardPad, y: card.minY + 12, width: 22, height: 22), theme: t, ctx: ctx)
         Text("Claude", F.sf(13.5, 650), t.ink).draw(x: card.minX + cardPad + 30, capCenter: card.minY + 23, in: ctx)
         PaceCardRenderer.drawSessionModule(module, rect: CGRect(x: card.minX + cardPad, y: card.minY + 28 + 12, width: w - cardPad * 2, height: mh), theme: t, ctx: ctx)
         let note = status.level >= .amber ? "Warns from \(Int((settings.sessionWarnAt * 100).rounded()))% · this one is at 84%"

@@ -191,10 +191,8 @@ class CanvasControlView: NSView {
         let r = CGRect(x: c.x - 11, y: c.y - 11, width: 22, height: 22)
         let circle = CGMutablePath(); circle.addEllipse(in: r)
         if on {
-            ctx.withState {
-                ctx.setShadow(offset: .zero, blur: 8, color: tint.fade(0.6).cgColor)
-                ctx.fill(circle, tint)
-            }
+            // No glow: the tint is a provider tone, and tones never glow (redesign §2 rule 6).
+            ctx.fill(circle, tint)
             let tick = CGMutablePath()
             tick.move(to: CGPoint(x: c.x - 5, y: c.y + 0.5))
             tick.addLine(to: CGPoint(x: c.x - 1.5, y: c.y + 4))
@@ -259,23 +257,22 @@ class CanvasControlView: NSView {
         let t = theme
         let hover = isHovered(action)
         let shape = rounded(r, 16)
-        let brand = Brand.of(p)
+        let tone = t.providerTone(p)
         ctx.fill(shape, t.isDark ? white(hover ? 0.07 : 0.045) : (hover ? rgb(0xFAFAFC) : .white))
         if on {
-            ctx.fillRadial(in: shape, center: CGPoint(x: r.minX, y: r.minY), radii: CGSize(width: 260, height: 120),
-                           color: t.isDark ? brand.orbDark : brand.orbLight, fadeAt: 0.8)
-            ctx.innerStroke(shape, brand.base.fade(t.isDark ? 0.75 : 0.6), width: 1.5)
+            // A tone signature, never a glow (redesign §2 rules 6 and 7).
+            ctx.innerStroke(shape, tone.fade(t.isDark ? 0.75 : 0.6), width: 1.5)
         } else {
             ctx.innerStroke(shape, t.isDark ? white(0.08) : black(0.08), width: 1)
         }
         let side = min(40, r.height - 24)
-        BrandMark.drawTile(p, in: CGRect(x: r.minX + 16, y: r.midY - side / 2, width: side, height: side), ctx: ctx)
+        BrandMark.drawTile(p, in: CGRect(x: r.minX + 16, y: r.midY - side / 2, width: side, height: side), theme: t, ctx: ctx)
         let tx = r.minX + 16 + side + 14
         Text(p == .claude ? "Claude Code" : "Codex", F.sf(14.5, 650), t.ink, kern: -0.1).draw(x: tx, capCenter: r.midY - 9, in: ctx)
         let sc: NSColor = status.good == true ? t.ok : (status.good == false ? t.amber : t.muted2)
         drawStatusDot(center: CGPoint(x: tx + 3, y: r.midY + 11), color: sc, ctx: ctx)
         Text(status.text, F.sf(12, 500), t.muted).draw(x: tx + 13, capCenter: r.midY + 11, in: ctx)
-        drawCheck(on: on, center: CGPoint(x: r.maxX - 26, y: r.midY), tint: brand.base, ctx: ctx)
+        drawCheck(on: on, center: CGPoint(x: r.maxX - 26, y: r.midY), tint: tone, ctx: ctx)
         hit(r, action)
     }
 

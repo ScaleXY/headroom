@@ -50,7 +50,7 @@ struct NowView: View {
             .padding(16)
         }
         .background(Palette(scheme).pageBackground)
-        .navigationTitle("Now")
+        .navigationTitle("Limits")
         .refreshable { await reader.reload() }
     }
 }

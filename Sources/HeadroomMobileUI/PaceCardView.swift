@@ -4,8 +4,9 @@ import HeadroomSync
 import HeadroomWidgetUI
 import SwiftUI
 
-/// The Pace card, as the Mac's popover draws it, from the same `Presenter`: header, the 5-hour
-/// panel, what's left, the meter, the glide, the verdict, callouts and details.
+/// The Limits card, as the Mac's popover draws it, from the same `Presenter`: header, the 5-hour
+/// banner, what's left, the meter, the keys, one chart (the week with its lane underneath), the
+/// caption, the stat strip, the verdict, callouts and details.
 struct PaceCardView: View {
     var model: MobileModel
     var account: MergedAccount
@@ -17,12 +18,10 @@ struct PaceCardView: View {
         let now = model.reader.now
         let presenter = Presenter(now: now, calendar: .current, locale: .current, policy: account.policy)
         let card = presenter.paceCard(account.paceInput(now: now))
-        let feed = model.reader.feed.account(account.id)
         let p = Palette(scheme)
         VStack(alignment: .leading, spacing: 12) {
             header(card, p: p)
             if let fault = card.fault { FaultBanner(model: fault) }
-            if let module = card.sessionModule, module.onTop { SessionModuleView(module: module, chart: feed?.session?.chart) }
             if let banner = card.session { SessionBannerView(banner: banner) }
             if let hero = card.hero {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -40,28 +39,39 @@ struct PaceCardView: View {
                 }
             }
             if let meter = card.meter, card.showsMeter {
-                CellMeter(state: meter.state, cells: meter.cells, caret: meter.caret, height: 13, dim: meter.opacity < 1)
+                CellMeter(state: meter.state, cells: meter.cells, caret: meter.caret, height: 13, dim: meter.opacity < 1, caretLabel: "On track")
             }
-            if card.showsGlide, let chart = feed?.week?.chart, let state = card.meter?.state {
-                GlideChartView(chart: chart, tone: p.tone(state)).frame(height: full ? 170 : 120)
+            if card.showsGlide, let glide = card.glide {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !card.keys.isEmpty { LimitsKeysRow(keys: card.keys) }
+                    LimitsChartView(glide: glide, lane: card.lane, plotHeight: full ? 150 : 104)
+                }
+                .padding(.top, 2)
             }
+            if let caption = card.chartCaption { ChartCaption(text: caption) }
+            if !card.stats.isEmpty { StatStrip(cells: card.stats) }
             if let verdict = card.verdict {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(verdict.primary).font(.subheadline.weight(.medium)).foregroundStyle(p.ink).fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(verdict.primary).font(.subheadline.weight(.medium)).foregroundStyle(p.ink).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if !verdict.multiple.isEmpty {
+                            Text(verdict.multiple).font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(p.muted)
+                                .lineLimit(1).fixedSize()
+                        }
+                    }
                     if full, !verdict.secondary.isEmpty {
                         Text(verdict.secondary).font(.footnote).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
-            if let module = card.sessionModule, !module.onTop { SessionModuleView(module: module, chart: feed?.session?.chart) }
             if let callout = card.callout { CalloutView(callout: callout) }
             if full, !card.rows.isEmpty {
                 VStack(spacing: 8) { ForEach(Array(card.rows.enumerated()), id: \.offset) { DetailRow(row: $0.element) } }
             }
         }
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(p.cardSolid))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(p.groupBorder, lineWidth: 0.5))
+        .signatureCard(account.provider, state: card.meter?.state ?? card.verdict?.state)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spoken(card))
     }
@@ -106,42 +116,6 @@ struct PaceCardView: View {
         if let m = card.sessionModule { parts.append("5-hour session: \(m.title). \(m.forecast)") }
         if let f = card.fault { parts.append(f.message) }
         return parts.joined(separator: ". ")
-    }
-}
-
-/// The detailed 5-hour panel: cells, the session's graph with its trail, and the forecast.
-struct SessionModuleView: View {
-    var module: SessionModuleModel
-    var chart: WidgetChart?
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let p = Palette(scheme)
-        let tone = module.level >= .amber ? p.tone(module.level == .amber ? .tight : .veryTight) : p.tone(module.tone)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                if module.level >= .amber { WarningGlyph(fill: tone.text, ink: p.cardSolid, size: 13) }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(module.title).font(.subheadline.weight(.semibold)).foregroundStyle(module.level >= .amber ? tone.text : p.ink)
-                    Text(module.subtitle).font(.caption).foregroundStyle(p.muted)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(module.countdown).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(module.level >= .amber ? tone.text : p.ink)
-                    Caps(module.caption, size: 8)
-                }
-            }
-            if let meter = module.meter {
-                CellMeter(state: meter.state, cells: meter.cells, caret: meter.caret, height: 10, dim: meter.opacity < 1)
-            }
-            if let chart, module.glide != nil {
-                GlideChartView(chart: chart, tone: tone).frame(height: 96)
-            }
-            Text(module.forecast).font(.footnote.weight(.medium))
-                .foregroundStyle(module.outlook == .runsOut || module.outlook == .blocked ? tone.text : p.muted)
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(module.level >= .amber ? tone.text.opacity(0.10) : p.groupFill))
     }
 }
 
@@ -220,7 +194,7 @@ struct DetailRow: View {
                 case .hourglass(let highlight):
                     Hourglass(color: highlight ? p.tone(.plenty).text : p.muted, height: 13)
                 case .coin(let provider):
-                    MarkShape(provider: provider).fill(BrandColors.of(provider).base)
+                    MarkShape(provider: provider).fill(p.providerTone(provider))
                 }
             }
             .frame(width: 18, height: 18)
