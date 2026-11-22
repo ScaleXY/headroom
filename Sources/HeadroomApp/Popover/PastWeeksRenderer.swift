@@ -2,15 +2,35 @@ import AppKit
 import HeadroomKit
 import HeadroomPresent
 
-/// Past weeks (PLAN §7): used share of each renewal week against a ghost track to 100%.
+/// Past weeks (redesign §5): each renewal week as a little level meter of 8 cells, lit for the
+/// share used, in the provider's tone. A week that ran out is rose; this week is dimmer with a
+/// dashed outline, and its projection is outlined above it.
 @MainActor
 enum PastWeeksRenderer {
     static let sectionHeaderHeight: CGFloat = 30
+    static let cells = 8
 
     static func drawSectionHeader(x: CGFloat, y: CGFloat, width: CGFloat, theme: Theme, ctx: CGContext) {
         let mid = y + 14
         Text("Past weeks", F.sf(15, 650), theme.ink, kern: -0.15).draw(x: x + 3, capCenter: mid, in: ctx)
         Text("used by each renewal", F.sf(11.5, 500), theme.muted).draw(x: x + width - 3, capCenter: mid, align: .right, in: ctx)
+    }
+
+    /// Lit cells for a share used: rounded, at least one for any real use, all of them when it ran out.
+    static func litCells(used: Double, ranOut: Bool, cells n: Int = cells) -> Int {
+        if ranOut { return n }
+        let u = min(max(used, 0), 1)
+        return min(n, max(Int((u * Double(n)).rounded()), u >= 0.03 ? 1 : 0))
+    }
+
+    static func chipColor(_ dot: PastWeeksModel.ChipDot, theme: Theme) -> NSColor {
+        switch dot {
+        case .rose: theme.rose
+        case .azure: theme.azure
+        case .spark: rgb(0x8CC2FF)
+        case .amber: theme.amber
+        case .muted: theme.ink.fade(0.4)
+        }
     }
 
     @discardableResult
@@ -21,20 +41,22 @@ enum PastWeeksRenderer {
         let x0 = origin.x + 14, w = width - 28
         var y = origin.y + 13
         BrandMark.drawTile(m.provider, in: CGRect(x: x0, y: y, width: 20, height: 20), theme: theme, ctx: ctx)
-        Text(m.provider.displayName, F.sf(14, 650), theme.ink, kern: -0.07).draw(x: x0 + 20 + 8, capCenter: y + 10, in: ctx)
-        // Chips, right-aligned.
+        let name = Text(m.provider.displayName, F.sf(14, 650), theme.ink, kern: -0.07)
+        name.draw(x: x0 + 20 + 8, capCenter: y + 10, in: ctx)
+        // Chips, right-aligned; the leftmost ones give way when they don't fit beside the name.
         var cx = x0 + w
+        let minX = x0 + 20 + 8 + name.width + 10
         for chip in m.chips.reversed() {
             let t = Text(chip.text, F.sf(10.5, 600, tabular: true), theme.ink)
-            let cw = 7 + 6 + 5 + t.width + 7
+            let cw = 7 + 5 + 5 + t.width + 7
+            guard cx - cw >= minX else { break }
             let r = CGRect(x: cx - cw, y: y + 10 - 9, width: cw, height: 18)
             ctx.fill(rounded(r, 7), theme.chipFill)
-            ctx.innerStroke(rounded(r, 7), theme.chipBorder, width: 0.5)
-            let dot = CGRect(x: r.minX + 7, y: r.midY - 3, width: 6, height: 6)
-            switch chip.color {
-            case .rose: let p = CGMutablePath(); p.addEllipse(in: dot); ctx.fill(p, theme.rose)
-            case .azure: let p = CGMutablePath(); p.addEllipse(in: dot); ctx.fill(p, theme.azure)
-            case .spark: Glyph.spark(in: dot.insetBy(dx: -1, dy: -1), color: rgb(0x8CC2FF), ctx: ctx)
+            let dot = CGRect(x: r.minX + 7, y: r.midY - 2.5, width: 5, height: 5)
+            if chip.color == .spark {
+                Glyph.spark(in: dot.insetBy(dx: -1.5, dy: -1.5), color: chipColor(.spark, theme: theme), ctx: ctx)
+            } else {
+                let p = CGMutablePath(); p.addEllipse(in: dot); ctx.fill(p, chipColor(chip.color, theme: theme))
             }
             t.draw(x: dot.maxX + 5, capCenter: r.midY, in: ctx)
             cx = r.minX - 5
@@ -50,45 +72,39 @@ enum PastWeeksRenderer {
             return h
         }
 
-        let brand = Brand.of(m.provider)
         let n = max(m.weeks.count, 1)
         let dividers = m.planChange == nil ? 0 : 1
-        let gap: CGFloat = 6
+        let gap: CGFloat = 10
         let colW = (w - gap * CGFloat(n - 1 + dividers) - CGFloat(dividers)) / CGFloat(n)
         let colsTop = y, colTop = y + 20, colH: CGFloat = 64
+        let cellGap: CGFloat = 2
+        let cellH = (colH - cellGap * CGFloat(cells - 1)) / CGFloat(cells)
+        let unlit = theme.ink.fade(0.06)
         var x = x0
         var centers: [CGFloat] = []
         for (i, week) in m.weeks.enumerated() {
             let r = CGRect(x: x, y: colTop, width: colW, height: colH)
-            let track = rounded(r, 7)
-            ctx.fill(track, theme.isDark ? white(0.04) : black(0.035))
-            ctx.innerStroke(track, theme.isDark ? white(0.07) : black(0.05), width: 0.5)
-            let used = CGFloat(min(max(week.used, 0), 1))
-            let ranOut = week.used >= 1
-            if used > 0 {
-                let fr = CGRect(x: r.minX, y: r.maxY - colH * used, width: r.width, height: colH * used)
-                let fill = rounded(fr, 7)
-                if ranOut { ctx.withState { ctx.setShadow(offset: CGSize(width: 0, height: 2), blur: 10, color: rgb(0xFF6982, 0.45).cgColor); ctx.fill(fill, brand.base) } }
-                ctx.fillVertical(fill, brand.light, brand.base)
-                ctx.withState {
-                    ctx.addPath(fill); ctx.clip()
-                    let ring = CGMutablePath(); ring.addPath(fill); ring.addPath(rounded(fr.offsetBy(dx: 0, dy: 1), 7))
-                    ctx.addPath(ring); ctx.setFillColor(white(0.35).cgColor); ctx.fillPath(using: .evenOdd)
+            let ranOut = week.used >= 1 || week.ranOutHoursEarly != nil
+            let lit = litCells(used: week.used, ranOut: ranOut)
+            let projected = week.isCurrent ? max(lit, litCells(used: week.projected ?? week.used, ranOut: false)) : lit
+            let litColor = ranOut ? theme.rose : theme.providerTone(m.provider, CGFloat(week.isCurrent ? ProviderTone.pastWeekCurrent : ProviderTone.pastWeek))
+            for c in 0..<cells {
+                let cell = CGRect(x: r.minX, y: r.maxY - CGFloat(c + 1) * cellH - CGFloat(c) * cellGap, width: r.width, height: cellH)
+                let shape = rounded(cell, 2)
+                if c < lit {
+                    ctx.fill(shape, litColor)
+                    if week.isCurrent { ctx.stroke(rounded(cell.insetBy(dx: 0.4, dy: 0.4), 1.8), theme.ink.fade(0.6), width: 0.8, dash: [2, 1.5]) }
+                } else if c < projected {
+                    ctx.fill(shape, unlit)
+                    ctx.stroke(rounded(cell.insetBy(dx: 0.4, dy: 0.4), 1.8), theme.ink.fade(0.32), width: 0.8, dash: [2, 1.5])
+                } else {
+                    ctx.fill(shape, unlit)
                 }
-            }
-            if ranOut {
-                let cap = rounded(CGRect(x: r.minX + 3, y: r.minY - 1, width: r.width - 6, height: 2), 1)
-                ctx.withState { ctx.setShadow(offset: .zero, blur: 8, color: rgb(0xFF6982).cgColor); ctx.fill(cap, rgb(0xFF6982)) }
-            }
-            if week.isCurrent, let p = week.projected, p > week.used {
-                let top = r.maxY - colH * CGFloat(min(p, 1)), bottom = r.maxY - colH * used
-                let outline = roundedTop(CGRect(x: r.minX + 0.75, y: top + 0.75, width: r.width - 1.5, height: bottom - top), 7)
-                ctx.stroke(outline, brand.light.fade(0.8), width: 1.5, dash: [3, 2.5])
             }
             if week.isCurrent {
                 Text("NOW", F.sf(9, 700), theme.muted, kern: 0.54).draw(x: r.midX + 0.27, baseline: colTop - 7, align: .center, in: ctx)
             } else if let early = week.ranOutHoursEarly {
-                Text("−\(early)H", F.sf(9, 700), rgb(0xFF6982), kern: 0.54).draw(x: r.midX + 0.27, baseline: colTop - 7, align: .center, in: ctx)
+                Text("−\(early)H", F.sf(9, 750), theme.rose, kern: 0.54).draw(x: r.midX + 0.27, baseline: colTop - 7, align: .center, in: ctx)
             }
             out?.add(CGRect(x: r.minX, y: colsTop, width: r.width, height: 84 + 18), tooltip: week.caption, action: .openWeek(m.provider, i))
             centers.append(r.midX)
@@ -103,7 +119,7 @@ enum PastWeeksRenderer {
             }
         }
 
-        // Markers under each week: ⏸ 5-hour hits, ✦ early resets.
+        // Markers under each week: ‖ 5-hour hits, ✦ early resets.
         let my = colTop + colH + 6 + 6
         for (i, week) in m.weeks.enumerated() {
             var parts: [(CGFloat, (CGFloat) -> Void)] = []
@@ -140,11 +156,10 @@ enum PastWeeksRenderer {
         item(6.8, "hit 5-hour limit") { px, py in Glyph.pause(in: CGRect(x: px, y: py - 4, width: 6.8, height: 8), color: color, ctx: ctx) }
         item(9, "early reset") { px, py in Glyph.spark(in: CGRect(x: px, y: py - 4.5, width: 9, height: 9), color: rgb(0x8CC2FF), ctx: ctx) }
         item(12, "ran out (hours early)") { px, py in
-            let r = rounded(CGRect(x: px, y: py - 1, width: 12, height: 2), 1)
-            ctx.withState { ctx.setShadow(offset: .zero, blur: 6, color: rgb(0xFF6982).cgColor); ctx.fill(r, rgb(0xFF6982)) }
+            ctx.fill(rounded(CGRect(x: px, y: py - 3, width: 12, height: 6), 2), theme.rose)
         }
-        item(11, "projected") { px, py in
-            ctx.stroke(roundedTop(CGRect(x: px, y: py - 3.5, width: 11, height: 7), 3), color, width: 1.4, dash: [2, 1.6])
+        item(12, "projected") { px, py in
+            ctx.stroke(rounded(CGRect(x: px + 0.4, y: py - 2.6, width: 11.2, height: 5.2), 1.8), theme.ink.fade(0.4), width: 0.8, dash: [2, 1.5])
         }
     }
 }

@@ -307,7 +307,10 @@ public enum ActivityRange: Int, CaseIterable, Equatable { case day, week, month
     public var label: String { ["24H", "7D", "30D"][rawValue] }
 }
 
-public enum ActivityMode: Int, Equatable { case all, newOnly }
+/// The "Include cached reads" switch: `.all` when on, `.newOnly` when off. Raw values are persisted.
+public enum ActivityMode: Int, Equatable { case all, newOnly
+    public var includesCachedReads: Bool { self == .all }
+}
 
 public enum BreakdownKind: Int, CaseIterable, Equatable { case model, project, tokenClass
     public var title: String { ["By model", "By project", "By token class"][rawValue] }
@@ -372,6 +375,121 @@ public struct ActivityCardModel: Equatable {
     }
 }
 
+extension ActivityCardModel {
+    /// Part of the range is selected (not the whole of it): the header shows the span chip with its ×.
+    public var isSubRange: Bool { !bars.isEmpty && selection.count < bars.count }
+    /// Tokens over the whole range, whatever is selected.
+    public var rangeTokens: TokenCounts { bars.reduce(TokenCounts.zero) { $0 + $1.tokens } }
+    /// API value over the whole range, whatever is selected.
+    public var rangeMicros: Int64 { bars.reduce(Int64(0)) { $0 + $1.micros } }
+
+    /// The tokens the card's header counts: everything, or only new tokens with cached reads off.
+    public func shownTokens(_ mode: ActivityMode) -> Int64 { mode.includesCachedReads ? totals.total : totals.fresh }
+
+    /// The composition bar and its three-column key, for the selection.
+    public func composition(_ mode: ActivityMode) -> [TokenPart] { TokenPart.parts(totals, mode: mode) }
+}
+
+/// One class of tokens in an Activity card's composition bar, chart bars and key.
+public struct TokenPart: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case cachedReads, newInput, cacheWrite, output
+
+        public var label: String {
+            switch self {
+            case .cachedReads: "Cached reads"
+            case .newInput: "New input"
+            case .cacheWrite: "Cache write"
+            case .output: "Output"
+            }
+        }
+
+        /// Alpha of the provider tone this class is drawn in (redesign §2 rule 5: 26 / 62 / 100%).
+        public var toneStrength: Double {
+            switch self {
+            case .cachedReads, .cacheWrite: ProviderTone.cachedReads
+            case .newInput: ProviderTone.newInput
+            case .output: ProviderTone.output
+            }
+        }
+    }
+
+    public var kind: Kind
+    public var tokens: Int64
+    /// Share of the parts' sum (0 when there are no tokens).
+    public var share: Double
+    public var label: String { kind.label }
+
+    public init(kind: Kind, tokens: Int64, share: Double) {
+        self.kind = kind
+        self.tokens = tokens
+        self.share = share
+    }
+
+    /// With cached reads: cached reads, new input (cache writes included) and output. Without:
+    /// new input, cache write and output. Always three parts, in that order.
+    public static func parts(_ t: TokenCounts, mode: ActivityMode) -> [TokenPart] {
+        let raw: [(Kind, Int64)] = mode.includesCachedReads
+            ? [(.cachedReads, t.cacheRead), (.newInput, t.newInput + t.cacheWrite), (.output, t.output)]
+            : [(.newInput, t.newInput), (.cacheWrite, t.cacheWrite), (.output, t.output)]
+        let sum = raw.reduce(Int64(0)) { $0 + $1.1 }
+        return raw.map { TokenPart(kind: $0.0, tokens: $0.1, share: sum > 0 ? Double($0.1) / Double(sum) : 0) }
+    }
+}
+
+/// Activity's summary card: the API value of the range across the enabled providers, and the
+/// split between them (redesign §5).
+public struct ActivitySummaryModel: Equatable, Sendable {
+    public struct Slice: Equatable, Sendable {
+        public var provider: Provider
+        public var micros: Int64
+        /// Share of the summary's API value (by tokens when nothing is priced).
+        public var share: Double
+
+        public init(provider: Provider, micros: Int64, share: Double) {
+            self.provider = provider
+            self.micros = micros
+            self.share = share
+        }
+    }
+
+    /// "API value · last 24 hours" (drawn uppercased).
+    public var eyebrow: String
+    public var micros: Int64
+    /// Every token with cached reads on, new tokens only with it off.
+    public var tokens: Int64
+    public var includesCachedReads: Bool
+    /// Cached reads' share of all tokens, whatever the switch says.
+    public var cachedShare: Double
+    /// "tokens · 96% cached", or "new tokens" with cached reads off.
+    public var tokensCaption: String
+    /// One per enabled provider, in the cards' order.
+    public var slices: [Slice]
+
+    /// The split and its legend only mean something with two providers.
+    public var showsSplit: Bool { slices.count > 1 }
+
+    /// Cells of an `n`-cell split given to the first provider: never all or none while both have a share.
+    public func leadingCells(_ n: Int = ActivitySummaryModel.splitCells) -> Int {
+        guard let first = slices.first, slices.count > 1 else { return n }
+        let k = Int((first.share * Double(n)).rounded())
+        let others = slices.dropFirst().contains { $0.share > 0 }
+        return first.share > 0 && others ? min(max(k, 1), n - 1) : k
+    }
+
+    public static let splitCells = 20
+
+    public init(eyebrow: String, micros: Int64, tokens: Int64, includesCachedReads: Bool, cachedShare: Double, tokensCaption: String, slices: [Slice]) {
+        self.eyebrow = eyebrow
+        self.micros = micros
+        self.tokens = tokens
+        self.includesCachedReads = includesCachedReads
+        self.cachedShare = cachedShare
+        self.tokensCaption = tokensCaption
+        self.slices = slices
+    }
+}
+
 // MARK: - Past weeks
 
 public struct WeekColumn: Equatable {
@@ -401,20 +519,40 @@ public struct PastWeeksModel: Equatable {
     public var planChange: (after: Int, pill: String)?
     public var chips: [(color: ChipDot, text: String)]
     public var collecting: Bool
+    /// The last seven days of 5-hour sessions (moved here from Activity's old sessions section):
+    /// nil without a 5-hour limit or any finished session. Also one of `chips`.
+    public var sessionsHit: SessionsHit?
 
-    public enum ChipDot: Equatable { case rose, azure, spark }
+    /// `amber`: sessions hit the limit; `muted`: a count of nothing to worry about.
+    public enum ChipDot: Equatable { case rose, azure, spark, amber, muted }
+
+    /// "3 of 13 sessions hit".
+    public struct SessionsHit: Equatable, Sendable {
+        public var hit: Int
+        public var total: Int
+        public var text: String { "\(hit) of \(total) sessions hit" }
+        public var chip: (color: ChipDot, text: String) { (hit > 0 ? .amber : .muted, text) }
+
+        public init(hit: Int, total: Int) {
+            self.hit = hit
+            self.total = total
+        }
+    }
 
     public static func == (a: PastWeeksModel, b: PastWeeksModel) -> Bool {
         a.provider == b.provider && a.weeks == b.weeks && a.planChange?.after == b.planChange?.after
-            && a.planChange?.pill == b.planChange?.pill && a.chips.map(\.text) == b.chips.map(\.text) && a.collecting == b.collecting
+            && a.planChange?.pill == b.planChange?.pill && a.chips.map(\.text) == b.chips.map(\.text) && a.chips.map(\.color) == b.chips.map(\.color)
+            && a.collecting == b.collecting && a.sessionsHit == b.sessionsHit
     }
 
-    public init(provider: Provider, weeks: [WeekColumn], planChange: (after: Int, pill: String)? = nil, chips: [(color: ChipDot, text: String)], collecting: Bool) {
+    public init(provider: Provider, weeks: [WeekColumn], planChange: (after: Int, pill: String)? = nil, chips: [(color: ChipDot, text: String)], collecting: Bool,
+                sessionsHit: SessionsHit? = nil) {
         self.provider = provider
         self.weeks = weeks
         self.planChange = planChange
         self.chips = chips
         self.collecting = collecting
+        self.sessionsHit = sessionsHit
     }
 }
 

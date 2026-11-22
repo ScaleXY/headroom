@@ -29,18 +29,7 @@ enum RenderCommand {
             }
         }
         if name == "all" || name == "activity" {
-            for theme in themes {
-                for mode in [ActivityMode.all, .newOnly] {
-                    for range in ActivityRange.allCases where mode == .all || range == .day {
-                        if let rep = PopoverPage.renderActivity(theme: theme, mode: mode, range: range, collecting: false) {
-                            write(rep, to: outDir.appendingPathComponent("activity-\(mode == .all ? "all" : "new")-\(range.label.lowercased())-\(theme.isDark ? "dark" : "light").png")); written += 1
-                        }
-                    }
-                }
-                if let rep = PopoverPage.renderActivity(theme: theme, mode: .all, range: .day, collecting: true) {
-                    write(rep, to: outDir.appendingPathComponent("activity-collecting-\(theme.isDark ? "dark" : "light").png")); written += 1
-                }
-            }
+            written += PopoverPage.writeActivityFixtures(themes: themes, to: outDir)
         }
         if name == "all" || name == "statusitem" {
             // The status item alone on a transparent background (3×), for marketing images.
@@ -67,13 +56,6 @@ enum RenderCommand {
                     if let cg = StatusItemRenderer.renderBitmap(items, size: size, dark: dark, scale: 3) {
                         write(NSBitmapImageRep(cgImage: cg), to: outDir.appendingPathComponent("statusitem-\(option)-\(dark ? "dark" : "light").png")); written += 1
                     }
-                }
-            }
-        }
-        if name == "all" || name == "sessions" {
-            for theme in themes {
-                if let rep = PopoverPage.renderSessionHistory(theme: theme) {
-                    write(rep, to: outDir.appendingPathComponent("sessions-\(theme.isDark ? "dark" : "light").png")); written += 1
                 }
             }
         }
@@ -227,59 +209,6 @@ enum PopoverPage {
                 y += PaceCardRenderer.draw(c, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
             }
             PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: y, width: cw, theme: theme, ctx: ctx, out: nil)
-        }
-    }
-
-    static func renderActivity(theme: Theme, mode: ActivityMode, range: ActivityRange, collecting: Bool) -> NSBitmapImageRep? {
-        let now = Demo.activityNow
-        let pricing = (try? PriceTable.bundled()).map { PricingEngine(table: $0) }
-        let presenter = ActivityPresenter(now: now, locale: Locale(identifier: "en_US"), pricing: pricing)
-        let aggregates = pricing.map { Demo.activityAggregates(now: now, pricing: $0) } ?? []
-        let selection: Range<Int>? = range == .day ? 4..<8 : nil
-        let cards = [Provider.claude, .codex].map { presenter.card($0, aggregates: aggregates, range: range, selection: selection) }
-        let weeks = Demo.pastWeeks(collecting: collecting)
-        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
-        func layout(_ ctx: CGContext?) -> CGFloat {
-            var y = pad + PopoverChrome.headerHeight
-            if let ctx {
-                let modes = Segmented(items: ["All", "New only"], selected: mode.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
-                modes.draw(in: CGRect(x: pad + 1, y: y, width: modes.width, height: 26), theme: theme, ctx: ctx, out: nil) { .activityMode($0) }
-                let ranges = Segmented(items: ActivityRange.allCases.map(\.label), selected: range.rawValue, font: F.sf(11.5, 600), padX: 10, height: 26)
-                ranges.draw(in: CGRect(x: pad + cw - 1 - ranges.width, y: y, width: ranges.width, height: 26), theme: theme, ctx: ctx, out: nil) { .activityRange($0) }
-            }
-            y += 26 + 10
-            for (i, c) in cards.enumerated() {
-                if i > 0 { y += 10 }
-                y += ActivityCardRenderer.draw(c, mode: mode, breakdown: .model, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
-            }
-            y += 16
-            if let ctx { PastWeeksRenderer.drawSectionHeader(x: pad, y: y, width: cw, theme: theme, ctx: ctx) }
-            y += PastWeeksRenderer.sectionHeaderHeight
-            for (i, wk) in weeks.enumerated() {
-                if i > 0 { y += 10 }
-                y += PastWeeksRenderer.draw(wk, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
-            }
-            if !collecting {
-                if let ctx { PastWeeksRenderer.drawLegend(x: pad, y: y, width: cw, theme: theme, ctx: ctx) }
-                y += PastWeeksRenderer.legendHeight
-            }
-            y += 6
-            if let ctx { SessionHistoryRenderer.drawSectionHeader(x: pad, y: y, width: cw, warnAt: 0.75, theme: theme, ctx: ctx) }
-            y += SessionHistoryRenderer.sectionHeaderHeight
-            for (i, p) in [Provider.claude, .codex].enumerated() {
-                if i > 0 { y += 10 }
-                let m = SessionHistoryRenderer.model(p, sessions: collecting ? [] : Demo.sessionHistory(p, now: Demo.now), warnAt: 0.75, now: Demo.now)
-                y += SessionHistoryRenderer.draw(m, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
-            }
-            y += 4
-            if let ctx { PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: y, width: cw, theme: theme, ctx: ctx, out: nil) }
-            return y + PopoverChrome.footerHeight + pad
-        }
-        let measured = measureHeight(layout)
-        return renderImage(size: CGSize(width: w, height: measured)) { ctx in
-            PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: measured), theme: theme, ctx: ctx)
-            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: 1, theme: theme, ctx: ctx, out: nil)
-            _ = layout(ctx)
         }
     }
 
@@ -502,23 +431,6 @@ enum PopoverPage {
         ("urgent", PresentationOptions(alwaysShowSessionTimer: true), .mostUrgent),
     ]
 
-    /// The Activity tab's 5-hour sessions section on its own.
-    static func renderSessionHistory(theme: Theme) -> NSBitmapImageRep? {
-        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
-        let models = [Provider.claude, .codex].map { SessionHistoryRenderer.model($0, sessions: Demo.sessionHistory($0, now: Demo.now), warnAt: 0.75, now: Demo.now) }
-        let h = pad + SessionHistoryRenderer.sectionHeaderHeight + models.reduce(0) { $0 + SessionHistoryRenderer.draw($1, origin: .zero, width: cw, theme: theme, ctx: nil) } + 10 + pad
-        return renderImage(size: CGSize(width: w, height: h)) { ctx in
-            ctx.fill(CGPath(rect: CGRect(x: 0, y: 0, width: w, height: h), transform: nil), theme.windowFill)
-            var y = pad
-            SessionHistoryRenderer.drawSectionHeader(x: pad, y: y, width: cw, warnAt: 0.75, theme: theme, ctx: ctx)
-            y += SessionHistoryRenderer.sectionHeaderHeight
-            for (i, m) in models.enumerated() {
-                if i > 0 { y += 10 }
-                y += SessionHistoryRenderer.draw(m, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
-            }
-        }
-    }
-
     static func demoShares() -> [ShareModel] {
         let now = Demo.activityNow
         let pricing = (try? PriceTable.bundled()).map { PricingEngine(table: $0) }
@@ -529,6 +441,149 @@ enum PopoverPage {
         return [Provider.claude, .codex].enumerated().map { i, p in
             let card = ap.card(p, aggregates: aggregates, range: .day, selection: 4..<8)
             return ShareBuilder.make(activity: card, pace: paces[i], mode: .all, includeCost: true, burnInSpan: i == 0 ? 0.01 : 0.06, durationText: "4 hours")
+        }
+    }
+}
+
+// MARK: - Activity tab fixtures (redesign §4 window size, §5 Activity)
+
+/// The Activity tab drawn offscreen from the demo data with the popover's own renderers: whole
+/// pages for each range and the cached-reads switch, a selection, one provider, and the popover at
+/// its resting height with the scroll cue.
+@MainActor
+extension PopoverPage {
+    struct ActivityFixture {
+        var name: String
+        var mode: ActivityMode = .all
+        var range: ActivityRange = .day
+        var selection: Range<Int>? = nil
+        var providers: [Provider] = [.claude, .codex]
+        var collecting = false
+        /// The popover at its resting height (cut off, with the scroll cue) instead of the whole page.
+        var resting = false
+    }
+
+    static let activityFixtures: [ActivityFixture] = [
+        ActivityFixture(name: "activity-all-24h", selection: 4..<8),
+        ActivityFixture(name: "activity-all-7d", range: .week),
+        ActivityFixture(name: "activity-all-30d", range: .month),
+        ActivityFixture(name: "activity-new-24h", mode: .newOnly),
+        ActivityFixture(name: "activity-new-7d", mode: .newOnly, range: .week, selection: 30..<36),
+        ActivityFixture(name: "activity-new-30d", mode: .newOnly, range: .month),
+        ActivityFixture(name: "activity-claude-only-24h", providers: [.claude]),
+        ActivityFixture(name: "activity-collecting", collecting: true),
+        ActivityFixture(name: "popover-activity-resting", resting: true),
+        ActivityFixture(name: "popover-activity-resting-new", mode: .newOnly, range: .week, resting: true),
+    ]
+
+    static func writeActivityFixtures(themes: [Theme], to dir: URL) -> Int {
+        var written = 0
+        for theme in themes {
+            for f in activityFixtures {
+                guard let rep = renderActivity(f, theme: theme) else { continue }
+                RenderCommand.write(rep, to: dir.appendingPathComponent("\(f.name)-\(theme.isDark ? "dark" : "light").png")); written += 1
+            }
+            if let rep = renderPastWeeks(theme: theme) {
+                RenderCommand.write(rep, to: dir.appendingPathComponent("pastweeks-\(theme.isDark ? "dark" : "light").png")); written += 1
+            }
+        }
+        return written
+    }
+
+    /// Past weeks for the demo, with the 5-hour sessions count from the demo sessions.
+    static func demoPastWeeks(_ providers: [Provider], collecting: Bool) -> [PastWeeksModel] {
+        Demo.pastWeeks(collecting: collecting).filter { providers.contains($0.provider) }.map { m in
+            guard !m.collecting, let hit = HistoryPresenter.sessionsHit(Demo.sessionHistory(m.provider, now: Demo.now), now: Demo.now) else { return m }
+            var m = m
+            m.sessionsHit = hit
+            m.chips = [m.chips[0], hit.chip]
+            return m
+        }
+    }
+
+    /// The Activity tab's card stack from `y`: summary, provider cards, Past weeks. Returns its height.
+    static func drawActivityStack(_ f: ActivityFixture, theme: Theme, ctx: CGContext?, y y0: CGFloat) -> CGFloat {
+        let now = Demo.activityNow
+        let presenter = ActivityPresenter(now: now, locale: Locale(identifier: "en_US"), pricing: demoPricing)
+        let aggregates = demoPricing.map { Demo.activityAggregates(now: now, pricing: $0) } ?? []
+        let cards = f.providers.map { presenter.card($0, aggregates: aggregates, range: f.range, selection: f.selection) }
+        let summary = presenter.summary(cards, range: f.range, mode: f.mode)
+        let weeks = demoPastWeeks(f.providers, collecting: f.collecting)
+        let pad = PopoverChrome.pad, cw = PopoverChrome.width - pad * 2
+        var y = y0
+        y += SummaryCardRenderer.draw(summary, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx) + 10
+        for (i, c) in cards.enumerated() {
+            if i > 0 { y += 10 }
+            y += ActivityCardRenderer.draw(c, mode: f.mode, breakdown: .model, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+        }
+        y += 16
+        if let ctx { PastWeeksRenderer.drawSectionHeader(x: pad, y: y, width: cw, theme: theme, ctx: ctx) }
+        y += PastWeeksRenderer.sectionHeaderHeight
+        for (i, wk) in weeks.enumerated() {
+            if i > 0 { y += 10 }
+            y += PastWeeksRenderer.draw(wk, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+        }
+        if !f.collecting {
+            if let ctx { PastWeeksRenderer.drawLegend(x: pad, y: y, width: cw, theme: theme, ctx: ctx) }
+            y += PastWeeksRenderer.legendHeight
+        }
+        return y - y0 + 2
+    }
+
+    /// The Limits tab's natural height for the mockup accounts: what sets the resting height.
+    static func limitsNaturalHeight(theme: Theme) -> CGFloat {
+        let presenter = Presenter(now: Demo.now, locale: Locale(identifier: "en_US"))
+        let cards = [Demo.claudeMockup(now: Demo.now), Demo.codexMockup(now: Demo.now)].map { presenter.paceCard($0) }
+        let pad = PopoverChrome.pad, cw = PopoverChrome.width - pad * 2
+        let content = cards.enumerated().reduce(CGFloat(0)) { $0 + ($1.offset > 0 ? 10 : 0) + PaceCardRenderer.draw($1.element, origin: .zero, width: cw, theme: theme, ctx: nil) } + 2
+        return pad + PopoverChrome.headerHeight + content + PopoverChrome.footerHeight + pad
+    }
+
+    static func renderActivity(_ f: ActivityFixture, theme: Theme) -> NSBitmapImageRep? {
+        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
+        let top = pad + PopoverChrome.headerHeight + 36, bottom = PopoverChrome.footerHeight + pad
+        let content = measureHeight { ctx in drawActivityStack(f, theme: theme, ctx: ctx, y: 0) }
+        // A 13-inch laptop's usable height, less the margin.
+        let screenMax: Double = 900 - 24 - 16
+        let resting = CGFloat(WindowSizing.resting(limitsNatural: Double(limitsNaturalHeight(theme: theme)), screenMax: screenMax))
+        let h = f.resting ? resting : top + content + bottom
+        let title = ActivityPresenter(now: Demo.activityNow, locale: Locale(identifier: "en_US")).rangeTitle(f.range)
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
+            PopoverChrome.drawHeader(x: pad, y: pad, width: cw, selected: 1, theme: theme, ctx: ctx, out: nil)
+            PopoverRootView.drawActivityControls(title: title, range: f.range, x: pad, y: pad + PopoverChrome.headerHeight, width: cw, theme: theme, ctx: ctx, out: nil)
+            let area = CGRect(x: 0, y: top, width: w, height: h - top - bottom)
+            ctx.withState {
+                ctx.clip(to: area)
+                _ = drawActivityStack(f, theme: theme, ctx: ctx, y: top)
+                if f.resting, content > area.height + 4 {
+                    // The cue, as CardsView draws it over the bottom of the card area.
+                    let fade = CGRect(x: 0, y: area.maxY - 46, width: w, height: 46)
+                    ctx.fillLinear(CGPath(rect: fade, transform: nil), [theme.windowFill.alpha(0), theme.windowFill],
+                                   from: CGPoint(x: 0, y: fade.minY), to: CGPoint(x: 0, y: fade.maxY))
+                    CardsView.drawScrollPill(centerX: w / 2, bottom: area.maxY - 8, theme: theme, ctx: ctx)
+                }
+            }
+            PopoverChrome.drawFooter(FooterModel(text: "All systems normal", status: .fresh), x: pad, y: h - bottom, width: cw, theme: theme, ctx: ctx, out: nil)
+        }
+    }
+
+    /// Past weeks on its own: the meter-cell columns and the sessions chips.
+    static func renderPastWeeks(theme: Theme) -> NSBitmapImageRep? {
+        let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
+        let weeks = demoPastWeeks([.claude, .codex], collecting: false)
+        let cardsH = weeks.enumerated().reduce(CGFloat(0)) { $0 + ($1.offset > 0 ? 10 : 0) + PastWeeksRenderer.draw($1.element, origin: .zero, width: cw, theme: theme, ctx: nil) }
+        let h = pad + PastWeeksRenderer.sectionHeaderHeight + cardsH + PastWeeksRenderer.legendHeight + pad
+        return renderImage(size: CGSize(width: w, height: h)) { ctx in
+            ctx.fill(CGPath(rect: CGRect(x: 0, y: 0, width: w, height: h), transform: nil), theme.windowFill)
+            var y = pad
+            PastWeeksRenderer.drawSectionHeader(x: pad, y: y, width: cw, theme: theme, ctx: ctx)
+            y += PastWeeksRenderer.sectionHeaderHeight
+            for (i, m) in weeks.enumerated() {
+                if i > 0 { y += 10 }
+                y += PastWeeksRenderer.draw(m, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+            }
+            PastWeeksRenderer.drawLegend(x: pad, y: y, width: cw, theme: theme, ctx: ctx)
         }
     }
 }

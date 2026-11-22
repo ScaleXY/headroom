@@ -13,6 +13,8 @@ struct HitRegion {
         case tab(Int)
         case activityMode(Int)
         case activityRange(Int)
+        /// The × on an Activity card's span chip: back to the whole range.
+        case clearSelection
         case update
         case dismissUpdate
         /// Show or hide a run card's finished rows (and the rows past the cap).
