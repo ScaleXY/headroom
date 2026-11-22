@@ -351,8 +351,9 @@ struct RunBuilder {
             if let branch = TaskText.clean(branch, limit: 400) { self.branch = branch }
         case .add(let spec):
             let existed = tasks[spec.id] != nil
-            if !existed, byAgent || byPerson, TaskPath.isValid(spec.id), TaskPath.parent(spec.id) == nil, planFinished() {
-                // Everything declared has an outcome and a new top-level task arrives: a new job.
+            if byAgent || byPerson, TaskPath.isValid(spec.id), tasks[TaskPath.components(spec.id)[0]] == nil, planFinished() {
+                // Everything declared has an outcome and a task arrives under a new top-level id
+                // ("logo", or "ship/tag" where nothing is under "ship" yet): a new job.
                 jobStart = e.at; jobs += 1
                 firstStart = nil; scopeChanges = 0
             }
@@ -1247,12 +1248,13 @@ struct RunBuilder {
         // Given up on: never "done", whatever its tasks say.
         if abandoned { state = mapped == nil || mapped == .done ? .partial : mapped!; reason = nil }
         // Stopped with work open: the person's move while the session is there, else left. A run
-        // held at a usage limit is waiting on the limit, not on anyone, so it never settles here.
+        // held at a usage limit waits on the limit, not on anyone, so time alone never settles it;
+        // its session ending does, like any other.
         var left = false
         if state == .stopped {
             let atLimit = (root.state == .waiting && root.waitReason == .limit) || runWait?.reason == .limit
             let idle = now.timeIntervalSince(lastActivity)
-            left = !atLimit && (gone || (stoppedAt != nil ? idle > TaskFold.leftAfterTurn : silent))
+            left = gone || (!atLimit && (stoppedAt != nil ? idle > TaskFold.leftAfterTurn : silent))
         }
 
         var progress = root.progress
@@ -1304,10 +1306,10 @@ struct RunBuilder {
             }
         }
 
-        // A new job with no title of its own is named by its first task.
+        // A new job with no title of its own is named by the first task declared in it.
         var name = title
         if let js = jobStart, titleAt.map({ $0 < js.addingTimeInterval(-TaskFold.jobTitleGrace) }) ?? true,
-           let first = order.first(where: { TaskPath.parent($0) == nil && tasks[$0]!.declared && tasks[$0]!.createdAt >= js }) {
+           let first = order.first(where: { tasks[$0]!.declared && !tasks[$0]!.mirrored && tasks[$0]!.createdAt >= js }) {
             name = tasks[first]!.title
         }
         var turnSeconds: Double?

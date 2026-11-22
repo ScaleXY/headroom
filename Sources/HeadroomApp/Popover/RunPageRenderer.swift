@@ -135,7 +135,7 @@ enum RunPageRenderer {
         let title = clamp(m.title, F.sf(14.5, 650), t.ink, width: right - tx, lineHeight: 18, lines: 2, kern: -0.08)
         // Under the buttons only when the title took two lines.
         let subWidth = (title.height > 18 ? x + w : right) - tx
-        let sub = RunCardRenderer.fit(m.subtitle, F.sf(11.5, 500), t.muted, width: subWidth)
+        let sub = RunCardRenderer.fitParts(m.subtitle, F.sf(11.5, 500), t.muted, width: subWidth)
         let h = max(tileSize, title.height + 2 + 14)
         guard let ctx else { return h }
         let tone = RunCardRenderer.color(m.tone, t, glyph: m.glyph)

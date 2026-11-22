@@ -285,7 +285,7 @@ enum RunListRenderer {
         }
         let tx = x + leadTile + 10
         let title = RunPageRenderer.clamp(c.title, F.sf(14.5, 650), t.ink, width: right - tx, lineHeight: 18, lines: 2, kern: -0.08)
-        let sub = RunCardRenderer.fit(c.subtitle, F.sf(11.5, 500), t.muted, width: (title.height > 18 ? x + w : right) - tx)
+        let sub = RunCardRenderer.fitParts(c.subtitle, F.sf(11.5, 500), t.muted, width: (title.height > 18 ? x + w : right) - tx)
         let h = max(leadTile, title.height + 2 + 14)
         guard let ctx else { return h }
         RunCardRenderer.drawTile(c, rect: CGRect(x: x, y: y + 1, width: leadTile, height: leadTile), tone: tone(c, t), theme: t, ctx: ctx)

@@ -396,6 +396,14 @@ enum RunCardRenderer {
         }
     }
 
+    /// A " · " line in one row: parts drop off the end until it fits (so "updated 8m ago" goes
+    /// whole rather than as "upda…"), and a single part too long is cut.
+    static func fitParts(_ s: String, _ font: NSFont, _ color: NSColor, width: CGFloat) -> Text {
+        var parts = s.components(separatedBy: " · ")
+        while parts.count > 1, Text(parts.joined(separator: " · "), font, color).width > width { parts.removeLast() }
+        return fit(parts.joined(separator: " · "), font, color, width: width)
+    }
+
     /// `s` in one line, cut with an ellipsis to fit `width`.
     static func fit(_ s: String, _ font: NSFont, _ color: NSColor, width: CGFloat, kern: CGFloat = 0) -> Text {
         let full = Text(s, font, color, kern: kern)

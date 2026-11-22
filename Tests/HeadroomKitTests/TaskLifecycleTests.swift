@@ -67,9 +67,9 @@ import Testing
         tl.at(310, .wait(task: "a", attempt: nil, reason: .limit, note: nil))
         let r = tl.fold(310 + 5 * 3600)
         #expect(r.state == .waiting && r.waitReason == .limit && !r.left)
-        // Even once the session ended: not left (the limit holds it).
+        // Its session ending settles it like any other run: resuming picks it up after the reset.
         tl.at(400, .end, .hook)
-        #expect(!tl.fold(500).left)
+        #expect(tl.fold(500).state == .stopped && tl.fold(500).left)
     }
 
     @Test func workThatIsYoursIsNeverAQuestion() {
@@ -127,6 +127,28 @@ import Testing
         var named = tl
         named.at(2005, .meta(title: "Release with the new logo", project: nil, harness: nil))
         #expect(named.fold(2610).title == "Release with the new logo")
+    }
+
+    @Test func aNewGroupAfterTheLastPlanFinishedIsANewJob() {
+        var tl = TL()
+        tl.add(0, "api", title: "Port the API")
+        tl.session(0, 900)
+        tl.at(0, .start(task: "api")); tl.at(800, .done(task: "api", evidence: nil))
+        tl.at(901, .stop(blocked: false), .hook)
+        // New work arrives as tasks under a group nothing has named yet.
+        tl.session(2000, 2600)
+        tl.add(2010, "ship/tag", title: "Tag the release"); tl.add(2010, "ship/notes", title: "Write the notes")
+        let r = tl.fold(2610)
+        #expect(r.jobs == 2 && r.title == "Tag the release")
+        #expect(r.jobNodes.map(\.id).sorted() == ["ship", "ship/notes", "ship/tag"])
+        #expect(r.earlierJobs.map(\.id) == ["api"])
+        // A task added under a group that's already there is more of the same job.
+        var more = TL()
+        more.add(0, "api/a"); more.session(0, 900)
+        more.at(0, .start(task: "api/a")); more.at(800, .done(task: "api/a", evidence: nil))
+        more.at(901, .stop(blocked: false), .hook)
+        more.session(2000, 2600); more.add(2010, "api/b")
+        #expect(more.fold(2610).jobs == nil)
     }
 
     @Test func aPivotWithinATurnStaysOneJob() {
