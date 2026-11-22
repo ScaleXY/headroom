@@ -28,8 +28,6 @@ STORE = ROOT / "appstore/screenshots/2880x1800"
 RENDERS = {
     "pace-mockup": "pace-mockup-dark", "pace-plenty": "pace-plenty-dark", "pace-onpace": "pace-onpace-dark",
     "pace-tight": "pace-tight-dark", "pace-verytight": "pace-verytight-dark",
-    "session-comfortable": "session-comfortable-dark", "session-runsout": "session-runsout-dark",
-    "session-amber": "session-amber-dark", "session-rose": "session-rose-dark", "session-blocked": "session-blocked-dark",
     "activity-all-7d": "activity-all-7d-dark", "share-card-claude": "share-card-claude",
     "settings-2": "settings-2-dark", "onboarding-3": "onboarding-3-dark",
     # Agent runs: the list in its three styles, and a run's page in the states the page walks through.
@@ -42,6 +40,9 @@ RENDERS = {
 # sessions tile shows the Limits chart's session lane, from the legend to the stat row.
 CROPS = {
     "sessions": ("pace-limits-session-dark", "768x642+0+398", (768, 660)),
+    # The 5-hour section's states: the Limits card from its top, below the popover's header; the
+    # page fades its foot out.
+    **{f"limits-{s}": (f"pace-limits-{s}-dark", "768x1150+0+96", (768, 1150)) for s in ("session", "runsout", "amber", "blocked", "daily")},
 }
 # Menu bar items, drawn on a transparent background.
 STATUS_ITEMS = ["default", "percent", "session", "tighter", "urgent", "runs-one", "runs-several", "runs-input", "runs-quiet"]

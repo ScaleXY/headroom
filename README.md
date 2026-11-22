@@ -61,25 +61,25 @@ Add the percentage beside each meter, keep the 5-hour timer always visible, show
 
 ## Settings, with a live preview
 
-<img src="media/settings.png" alt="Settings: the Pace Card section with meter and graph toggles beside a live card, and the 5-hour session section with the warning level and a sample alert">
+<img src="media/settings.png" alt="Settings: the Limits card section with meter and graph toggles beside a live card, and the 5-hour session section with the warning level and a sample alert">
 
 Settings looks and works like the welcome window. Each section shows a live preview of what it changes, so you see the card, menu bar or alert before you leave. Turn the meter and the graph on or off for the week and for the 5-hour session, set prices for your plan, and install the `headroom` command.
 
-## Pace, not just a percentage
+## Not just a percentage
 
-<img src="media/pace.png" alt="The four pacing states: Plenty available, On pace, Getting tight, Very tight">
+<img src="media/pace.png" alt="The four states of the Limits card: Plenty available, On track, Getting tight, Very tight">
 
-82% left sounds great until you notice it renews tomorrow. Headroom compares what's left with the time left, draws your week so far, and tells you in one sentence whether to use more, keep going, or ease off, and roughly when you'd run out.
+82% left sounds great until you notice it renews tomorrow. The **Limits** tab fills one level, the Reservoir, to what's left this week, with when it renews beside it. Headroom compares what's left with the time left, draws your week so far, and tells you in one sentence whether to use more, keep going, or ease off, and roughly when you'd run out.
 
 ## First-class 5-hour limits
 
-<img src="media/session.png" alt="The 5-hour panel: not started, on track with a forecast, a heads-up that it runs out before the reset, amber and rose warnings, and paused until reset">
+<img src="media/session.png" alt="The Limits card with each 5-hour session under the week: sessions so far, a heads-up that this one runs out before the reset, the amber warning, and paused until reset">
 
-The 5-hour session is usually the limit you hit first, so it gets its own panel on every card, built like the week: five cells for what's left with even pace marked, a graph of the five hours so far and where they're heading, and a forecast from your recent pace: *about 25% left when it resets*, or *runs out around 11:52 AM, 20m before the reset*. Once it crosses your warning level (75% by default, or 50, 60 or 90%) it moves to the top of the card and turns amber, then rose. At the limit it tells you exactly when you're back, and how much of the week is still waiting.
+The 5-hour session is usually the limit you hit first. Under the week's graph, on the same time axis, each session is a bar as tall as you used it: amber from your warning level (75% by default, or 50, 60 or 90%), rose with a × when it hit the limit. The running one shows where it's heading, and a note says when it will run out before the reset: *runs out around 10:54 AM at this rate, 1h 17m before the reset*. Past the warning level a banner counts down to the reset, and at the limit Headroom tells you exactly when you're back, and how much of the week is still waiting. Plans without a 5-hour limit see each day's share of the week instead.
 
-<img src="media/sessions.png" alt="Recent 5-hour sessions in the Activity tab, showing each session's peak and which ones hit the limit">
+<img src="media/sessions.png" alt="Each 5-hour session's peak in the Limits chart, and Past weeks counting the sessions that hit the limit">
 
-The Activity tab keeps your recent sessions, so a run of near-misses stands out. Optional notifications tell you when a session is nearly used, when you hit the limit, and the moment it's back. Prefer the old single row? Choose **A single row** in Settings.
+A run of near-misses stands out, and Past weeks count the sessions that hit the limit. Optional notifications tell you when a session is nearly used, when you hit the limit, and the moment it's back.
 
 ## Caps, early resets and expiring credits
 
@@ -97,7 +97,7 @@ Offline, signed out, a service outage: Headroom says what happened and how to fi
 
 <img src="media/activity.png" alt="The Activity tab with hourly token bars and cost, and Past weeks">
 
-The Activity tab shows your tokens hour by hour for the last day, week or month, and what they would have cost at API prices. Drag across the bars to price any stretch of time, and break it down by model or project. **Past weeks** shows how much of each week you used, which weeks ran out early, and how much renewed unused.
+The Activity tab opens with what your usage is worth at API prices across Claude and Codex, then shows your tokens hour by hour for the last day, week or month. Turn **Include cached reads** off to see only fresh tokens. Drag across the bars to price any stretch of time, and break it down by model or project. **Past weeks** shows how much of each week you used, which weeks ran out early, and how much renewed unused.
 
 ## Share your burn
 

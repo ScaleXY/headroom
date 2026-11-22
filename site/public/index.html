@@ -243,7 +243,8 @@ section { position: relative; }
 .session-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(560px, auto); gap: 20px; align-items: stretch; }
 .session-grid .shot { padding: clamp(24px, 4vw, 48px); display: grid; place-items: center; background:
   radial-gradient(70% 60% at 50% 40%, rgba(244,165,31,.13), transparent 70%), var(--tile); }
-.session-grid .shot img { width: 100%; max-width: 440px; border-radius: 20px; box-shadow: 0 30px 70px rgba(0,0,0,.6); transition: opacity .3s var(--ease); }
+.session-grid .shot img { width: 100%; max-width: 440px; border-radius: 20px; box-shadow: 0 30px 70px rgba(0,0,0,.6); transition: opacity .3s var(--ease);
+  -webkit-mask-image: linear-gradient(#000 84%, transparent); mask-image: linear-gradient(#000 84%, transparent); }
 .rail { list-style: none; padding: clamp(20px, 3vw, 36px); display: flex; flex-direction: column; justify-content: center; }
 .rail li + li { border-top: 1px solid var(--hair); }
 .rail button { width: 100%; text-align: left; padding: 20px 4px; display: block; position: relative; }
@@ -627,7 +628,7 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
       <figcaption>Your week and your 5-hour session, one click from the menu bar.</figcaption>
     </figure>
     <figure class="slide" aria-roledescription="slide" aria-label="2 of 10">
-      <img src="/img/store/02-pace-1200.webp" srcset="/img/store/02-pace-1200.webp 1200w, /img/store/02-pace-2400.webp 2400w" sizes="(max-width: 1280px) calc(100vw - 40px), 1200px" width="2400" height="1500" loading="lazy" decoding="async" alt="Plenty available, On pace, Getting tight and Very tight cards side by side">
+      <img src="/img/store/02-pace-1200.webp" srcset="/img/store/02-pace-1200.webp 1200w, /img/store/02-pace-2400.webp 2400w" sizes="(max-width: 1280px) calc(100vw - 40px), 1200px" width="2400" height="1500" loading="lazy" decoding="async" alt="Plenty available, On track, Getting tight and Very tight cards side by side">
       <figcaption>Four colors tell you whether to use more, keep going, or ease off.</figcaption>
     </figure>
     <figure class="slide" aria-roledescription="slide" aria-label="3 of 10">
@@ -674,8 +675,8 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
 <section class="sec flush" id="pace">
   <div class="wide">
     <div class="sec-head center reveal">
-      <p class="eyebrow grad-azure">Pace</p>
-      <h2 class="hl-1">Not just a percentage. A pace.</h2>
+      <p class="eyebrow grad-azure">Limits</p>
+      <h2 class="hl-1">Not just a percentage. An answer.</h2>
       <p class="intro">82% left sounds great, until you notice it renews tomorrow. Headroom compares <strong>what's left with the time left</strong>, draws your week so far, and says in one sentence what to do about it.</p>
     </div>
 
@@ -683,7 +684,7 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
       <div class="seg-wrap">
         <div class="seg" role="tablist" aria-label="Pacing state">
           <button role="tab" aria-selected="true" data-state="plenty" style="--c:var(--azure)"><i></i>Plenty</button>
-          <button role="tab" aria-selected="false" data-state="onpace" style="--c:var(--pearl)"><i></i>On pace</button>
+          <button role="tab" aria-selected="false" data-state="onpace" style="--c:var(--pearl)"><i></i>On track</button>
           <button role="tab" aria-selected="false" data-state="tight" style="--c:var(--amber)"><i></i>Getting tight</button>
           <button role="tab" aria-selected="false" data-state="verytight" style="--c:var(--rose)"><i></i>Very tight</button>
         </div>
@@ -693,11 +694,11 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
           <div><div class="readout-pct" id="r-pct">82<small>%</small></div><div class="readout-sub">left this week</div></div>
           <div class="readout-renew"><b id="r-renew">18h</b><span id="r-when">renews Wed 4:00 AM</span></div>
         </div>
-        <div class="meter" id="r-meter"><span></span><span></span><span></span><span></span><span></span><div class="even" id="r-even">▲ Even pace</div></div>
+        <div class="meter" id="r-meter"><span></span><span></span><span></span><span></span><span></span><div class="even" id="r-even">▲ On track</div></div>
         <div class="verdict" aria-live="polite">
           <span class="pill"><i></i><span id="r-name">Plenty available</span></span>
           <p id="r-say">Spend it before it renews tomorrow at 4 AM.</p>
-          <small id="r-sub">At today's pace, 80% renews unused.</small>
+          <small id="r-sub">At today's rate, 80% renews unused.</small>
         </div>
       </div>
       <div class="pace-shot readout" id="pace-shot" data-state="plenty">
@@ -720,24 +721,24 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
     <div class="sec-head center reveal">
       <p class="eyebrow grad-warm">5-hour limits</p>
       <h2 class="hl-1">The limit you hit first, front and center.</h2>
-      <p class="intro">The 5-hour session gets a panel of its own, built like the week: <strong>five cells with even pace marked</strong>, a graph of the hours so far, and a forecast from your recent pace.</p>
+      <p class="intro">Every 5-hour session is a bar under the week's graph, <strong>on the same time axis</strong>, as tall as you used it. The running one shows where it's heading, and a note says when it will run out before the reset.</p>
     </div>
 
     <div class="session-grid reveal">
-      <div class="tile shot"><img id="session-img" src="/img/session-comfortable.webp" width="768" height="740" alt="On track"></div>
+      <div class="tile shot"><img id="session-img" src="/img/limits-session.webp" width="768" height="1150" alt="On track"></div>
       <ol class="tile rail auto" id="rail" role="tablist" aria-label="5-hour session states">
-        <li><button role="tab" data-img="session-comfortable" aria-selected="true"><strong>On track.</strong><span>About 52% left when it resets, at your recent pace.</span><i class="bar"></i></button></li>
-        <li><button role="tab" data-img="session-runsout" aria-selected="false"><strong>A heads-up, early.</strong><span>Runs out around 11:52 AM, 20 minutes before the reset.</span><i class="bar"></i></button></li>
-        <li><button role="tab" data-img="session-amber" aria-selected="false"><strong>Amber past your warning level.</strong><span>75% by default, or 50, 60 or 90%. It moves to the top of the card.</span><i class="bar"></i></button></li>
-        <li><button role="tab" data-img="session-rose" aria-selected="false"><strong>Rose when it's nearly gone.</strong><span>And a countdown appears in your menu bar.</span><i class="bar"></i></button></li>
-        <li><button role="tab" data-img="session-blocked" aria-selected="false"><strong>Paused, with a time you're back.</strong><span>Plus how much of the week is still waiting for you.</span><i class="bar"></i></button></li>
+        <li><button role="tab" data-img="limits-session" aria-selected="true"><strong>Every session, under the week.</strong><span>Amber from your warning level, rose with a × when it hit the limit.</span><i class="bar"></i></button></li>
+        <li><button role="tab" data-img="limits-runsout" aria-selected="false"><strong>A heads-up, early.</strong><span>Runs out around 10:54 AM at this rate, 1h 17m before the reset.</span><i class="bar"></i></button></li>
+        <li><button role="tab" data-img="limits-amber" aria-selected="false"><strong>Amber past your warning level.</strong><span>75% by default, or 50, 60 or 90%. A banner counts down to the reset.</span><i class="bar"></i></button></li>
+                <li><button role="tab" data-img="limits-blocked" aria-selected="false"><strong>Paused, with a time you're back.</strong><span>Plus how much of the week is still waiting for you.</span><i class="bar"></i></button></li>
+        <li><button role="tab" data-img="limits-daily" aria-selected="false"><strong>No 5-hour limit?</strong><span>Each day's share of the week instead, against an even day.</span><i class="bar"></i></button></li>
       </ol>
     </div>
 
     <div class="tile sessions-tile reveal">
       <div>
         <h3 class="hl-3">A run of near-misses stands out.</h3>
-        <p>Activity keeps your recent sessions with each one's peak, so you can see which hit the limit. <strong>Optional notifications</strong> tell you when a session is nearly used, when you hit the limit, and the moment it's back.</p>
+        <p>Each bar is a session's peak, and Past weeks count the sessions that hit the limit. <strong>Optional notifications</strong> tell you when a session is nearly used, when you hit the limit, and the moment it's back.</p>
       </div>
       <img src="/img/sessions.webp" width="768" height="660" alt="Recent 5-hour sessions for Claude and Codex, with each session's peak and the ones that hit the limit">
     </div>
@@ -834,7 +835,7 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
     </div>
     <div class="legend reveal">
       <span><span class="cells" style="--t:var(--azure-top);--b:var(--azure-bot)"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>Room to spare</span>
-      <span><span class="cells" style="--t:var(--pearl-top);--b:var(--pearl-bot)"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>On pace</span>
+      <span><span class="cells" style="--t:var(--pearl-top);--b:var(--pearl-bot)"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>On track</span>
       <span><span class="cells" style="--t:var(--amber-top);--b:var(--amber-bot)"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>Getting tight</span>
       <span><span class="cells" style="--t:var(--rose-top);--b:var(--rose-bot)"><i class="on"></i><i></i><i></i><i></i><i></i></span>Very tight</span>
     </div>
@@ -1260,13 +1261,13 @@ Claude <span class="c-azure">▮▮▮▮</span><span class="d">▯</span> 82% <
   // Pacing states.
   const STATES = {
     plenty:    { pct: 82, cells: 4, even: 20, renew: "18h", when: "renews Wed 4:00 AM", name: "Plenty available",
-                 say: "Spend it before it renews tomorrow at 4 AM.", sub: "At today's pace, 80% renews unused." },
-    onpace:    { pct: 60, cells: 3, even: 59, renew: "3d", when: "renews Fri 10:00 PM", name: "On pace",
-                 say: "Roughly on pace for the week.", sub: "At this pace it lasts to renewal." },
+                 say: "Spend it before it renews tomorrow at 4 AM.", sub: "At today's rate, 80% renews unused." },
+    onpace:    { pct: 60, cells: 3, even: 59, renew: "3d", when: "renews Fri 10:00 PM", name: "On track",
+                 say: "Roughly on track for the week.", sub: "At this rate it lasts to renewal." },
     tight:     { pct: 38, cells: 2, even: 57, renew: "3d", when: "renews Fri 6:00 PM", name: "Getting tight",
-                 say: "Runs out Thursday 3:56 PM at today's pace.", sub: "26 hours early · ease off ~35% to reach Friday." },
+                 say: "Runs out Thursday 3:56 PM at today's rate.", sub: "26 hours early · ease off ~35% to reach Friday." },
     verytight: { pct: 18, cells: 1, even: 67, renew: "4d", when: "renews Sat 10:00 AM", name: "Very tight",
-                 say: "At even pace you run out tomorrow 4:14 PM, 66 hours early.", sub: "Slow to about a third of your usual pace." },
+                 say: "At an even rate you run out tomorrow 4:14 PM, 66 hours early.", sub: "Slow to about a third of your usual rate." },
   };
   const readout = $("pace-readout"), shot = $("pace-shot"), img = $("pace-img");
   const paceCells = [...document.querySelectorAll("#r-meter span")];

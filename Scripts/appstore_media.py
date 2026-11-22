@@ -87,6 +87,18 @@ h1 {{ margin-top: 20px; font: 800 60px/1.02 -apple-system, "SF Pro Display", sys
 def run(cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
+def chrome(args, out):
+    """Headless Chrome screenshot to `out`. Its own profile, so a Chrome already open can't take the
+    launch over; judged by the file it wrote, since Chrome 157 exits 2 from its teardown even then."""
+    for _ in range(3):
+        out.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory() as profile:
+            subprocess.run([CHROME, f"--user-data-dir={profile}", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        if out.exists() and out.stat().st_size > 0:
+            return
+    sys.exit(f"Chrome didn't write {out}")
+
+
 
 def png_size(path):
     with open(path, "rb") as f:
@@ -143,9 +155,8 @@ class Slide:
 def capture(html_body, h, scale, out, work):
     page = work / f"{out.stem}-{h}.html"
     page.write_text(f"<!doctype html><meta charset=utf-8><style>{BASE_CSS}</style><body style='width:{W}px;height:{h}px'>{html_body}</body>")
-    run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--force-device-scale-factor={scale}",
-         f"--window-size={W},{h}", f"--screenshot={out}", "--allow-file-access-from-files", page.as_uri()],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome(["--headless=new", "--disable-gpu", "--hide-scrollbars", f"--force-device-scale-factor={scale}",
+            f"--window-size={W},{h}", f"--screenshot={out}", "--allow-file-access-from-files", page.as_uri()], out)
     # App Store Connect rejects screenshots with an alpha channel; flatten to opaque RGB.
     run(["sips", "-s", "format", "jpeg", str(out), "--out", str(out.with_suffix(".jpg"))], stdout=subprocess.DEVNULL)
     run(["sips", "-s", "format", "png", str(out.with_suffix(".jpg")), "--out", str(out)], stdout=subprocess.DEVNULL)
@@ -173,21 +184,21 @@ def slides(raw):
     states = [("Plenty", "plenty", STATE["plenty"]), ("On track", "onpace", STATE["onpace"]),
               ("Getting tight", "tight-projection", STATE["tight"]), ("Very tight", "verytight", STATE["verytight"])]
     cards = "".join(f"<div>{label(t, c)}{crop(f'{raw}/pace-{s}-dark.png', 384, 760, fade=0.8)}</div>" for t, s, c in states)
-    pace = Slide("02-pace", "blue", "Pace, not just a percentage", "Use more, keep going, or ease off.",
+    pace = Slide("02-pace", "blue", "Not just a percentage", "Use more, keep going, or ease off.",
                  "82% left means little if it renews tomorrow. Headroom weighs what's left against the time left.",
                  f'<div style="display:flex;gap:36px">{cards}</div>', 4 * 384 + 3 * 36, 794, accent=STATE["onpace"])
 
-    # 3. The 5-hour session through its stages.
-    levels = [("Not started", "idle", None), ("On track", "comfortable", STATE["onpace"]),
-              ("Runs out early", "runsout", STATE["tight"]), ("75% · amber", "amber", STATE["tight"]),
-              ("90% · rose", "rose", STATE["verytight"]), ("Paused until reset", "blocked", STATE["verytight"])]
-    cell = 384
-    row_h = [max(png_size(raw / f"session-{levels[i + j][1]}-dark.png")[1] / 2 for j in range(3)) for i in (0, 3)]
-    grid = "".join(f"<div>{label(t, c)}<div class='shot pop'><img src='{raw}/session-{s}-dark.png'></div></div>" for t, s, c in levels)
+    # 3. The 5-hour session through its stages, as the Limits card draws them under the week.
+    levels = [("Every session, under the week", "session", STATE["onpace"]), ("Runs out early", "runsout", STATE["tight"]),
+              ("75% · amber", "amber", STATE["tight"]), ("Paused until reset", "blocked", STATE["verytight"])]
+    # The renders differ in height (a banner adds a row), so each is drawn at the column's width and
+    # cut at the same height, keeping the four cards at one scale.
+    fade = "-webkit-mask-image:linear-gradient(180deg,#000 80%,transparent)"
+    cards = "".join(f"<div>{label(t, c)}<div class='shot pop' style='width:384px;height:760px;overflow:hidden;{fade}'>"
+                    f"<img src='{raw}/pace-limits-{s}-dark.png' style='width:100%;height:auto'></div></div>" for t, s, c in levels)
     session = Slide("03-session", "amber", "5-hour sessions", "The limit you hit first, front and center.",
-                    "A forecast for every session, amber from 75%, rose from 90%, and exactly when you're back.",
-                    f'<div style="display:grid;grid-template-columns:repeat(3,{cell}px);gap:34px 30px;align-items:start">{grid}</div>',
-                    3 * cell + 2 * 30, round(sum(row_h) + 2 * 34 + 34), accent=STATE["tight"])
+                    "Every session as a bar under the week, a heads-up before it runs out, and exactly when you're back.",
+                    f'<div style="display:flex;gap:36px">{cards}</div>', 4 * 384 + 3 * 36, 794, accent=STATE["tight"])
 
     # 4. Menu bar meters and their options.
     options = [("Default", "default"), ("With percentages", "percent"), ("Tracks the 5-hour session", "session"),

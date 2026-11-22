@@ -53,6 +53,18 @@ MENU_ROWS_CSS = """
 def run(cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
+def chrome(args, out):
+    """Headless Chrome screenshot to `out`. Its own profile, so a Chrome already open can't take the
+    launch over; judged by the file it wrote, since Chrome 157 exits 2 from its teardown even then."""
+    for _ in range(3):
+        out.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory() as profile:
+            subprocess.run([CHROME, f"--user-data-dir={profile}", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        if out.exists() and out.stat().st_size > 0:
+            return
+    sys.exit(f"Chrome didn't write {out}")
+
+
 
 def eyebrow(label, color=None):
     dot = f'<i style="background:{color};box-shadow:0 0 10px {color}"></i>' if color else ""
@@ -94,10 +106,9 @@ def capture(name, body, width, height, raw, work, extra_css=""):
     page.write_text(f"<!doctype html><meta charset=utf-8><style>{BASE_CSS}{extra_css}</style>"
                     f"<body style='width:{width}px;height:{height}px'>{body}</body>")
     out = MEDIA / f"{name}.png"
-    run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2",
-         "--default-background-color=00000000", f"--window-size={width},{height}",
-         f"--screenshot={out}", "--allow-file-access-from-files", page.as_uri()],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome(["--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2",
+            "--default-background-color=00000000", f"--window-size={width},{height}",
+            f"--screenshot={out}", "--allow-file-access-from-files", page.as_uri()], out)
     if shutil.which("pngquant"):
         subprocess.run(["pngquant", "--force", "--skip-if-larger", "--quality", "82-96", "--output", out, out],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -209,18 +220,12 @@ def main():
         panel("welcome", f'<div class="grid" style="grid-template-columns:1fr 1fr">{grid}</div>', 960, grid_height(2, step_h), raw, work,
               ".win { border-radius: 12px; box-shadow: 0 14px 34px rgba(0,0,0,.45); }")
 
-        # 5-hour session: the detailed panel through its states, 2 x 3.
-        levels = [("Not started", "idle", None), ("On track · forecast", "comfortable", STATE["onpace"]),
+        # 5-hour session: the Limits card's session lane through its states, 2 x 2.
+        levels = [("Every session, under the week", "session", STATE["onpace"]),
                   ("Heads-up · runs out before the reset", "runsout", STATE["tight"]), ("75% · amber warning", "amber", STATE["tight"]),
-                  ("90% · rose warning", "rose", STATE["verytight"]), ("100% · paused until reset", "blocked", STATE["verytight"])]
-        heights = []
-        for _, s_, _ in levels:
-            w_, h_ = png_size(raw / f"session-{s_}-dark.png")
-            heights.append(cell_w * h_ / w_)
-        row_h = [max(heights[i], heights[i + 1]) for i in (0, 2, 4)]
-        grid = "".join(f"<div>{eyebrow(t, c)}<div class='shot'><img src='{raw}/session-{s_}-dark.png'></div></div>" for t, s_, c in levels)
-        panel("session", f'<div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">{grid}</div>', 960,
-              round(72 + sum(30 + h for h in row_h) + 2 * 30), raw, work)
+                  ("100% · paused until reset", "blocked", STATE["verytight"])]
+        grid = "".join(f"<div>{eyebrow(t, c)}{shot(f'{raw}/pace-limits-{s_}-dark.png', 600, fade=0.84)}</div>" for t, s_, c in levels)
+        panel("session", f'<div class="grid" style="grid-template-columns:1fr 1fr">{grid}</div>', 960, grid_height(2, 600), raw, work)
 
         # 5-hour sessions: each one's peak in the Limits chart's session lane, and the weeks they hit.
         sw, sh = png_size(raw / "pastweeks-dark.png")

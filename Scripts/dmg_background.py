@@ -62,10 +62,21 @@ body {{ width: {WIDTH}px; height: {HEIGHT}px; position: relative; overflow: hidd
 </body>"""
 
 
+def chrome(args, out):
+    """Headless Chrome screenshot to `out`. Its own profile, so a Chrome already open can't take the
+    launch over; judged by the file it wrote, since Chrome 157 exits 2 from its teardown even then."""
+    for _ in range(3):
+        out.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory() as profile:
+            subprocess.run([CHROME, f"--user-data-dir={profile}", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        if out.exists() and out.stat().st_size > 0:
+            return
+    sys.exit(f"Chrome didn't write {out}")
+
+
 def capture(html_path, out, scale):
-    subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--force-device-scale-factor={scale}",
-                    f"--window-size={WIDTH},{HEIGHT}", f"--screenshot={out}", html_path.as_uri()],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome(["--headless=new", "--disable-gpu", "--hide-scrollbars", f"--force-device-scale-factor={scale}",
+            f"--window-size={WIDTH},{HEIGHT}", f"--screenshot={out}", html_path.as_uri()], Path(out))
 
 
 def main():
