@@ -865,6 +865,9 @@ public actor TaskObserver {
     }
 
     private func publish() -> Int {
+        // What this pass marks as written is taken back if the journal can't take it (a full
+        // disk, a folder that can't be made): the next pass writes it again.
+        let before = (state, pending, touchedAttempts, touchedSessions)
         let wall = now().timeIntervalSince1970
         var events: [TaskEvent] = []
         func event(_ at: Double, _ run: String, _ op: TaskEvent.Op) { events.append(TaskEvent(at: Date(timeIntervalSince1970: at), run: run, source: .harness, op: op)) }
@@ -1013,7 +1016,13 @@ public actor TaskObserver {
         touchedAttempts = []
         touchedSessions = []
         guard !events.isEmpty else { return 0 }
-        try? TaskJournal.append(events, stream: .observed, home: home)
+        do {
+            try TaskJournal.append(events, stream: .observed, home: home)
+        } catch {
+            // Some may have gone out before it failed; written again, they fold to the same thing.
+            (state, pending, touchedAttempts, touchedSessions) = before
+            return 0
+        }
         changed = true
         return events.count
     }

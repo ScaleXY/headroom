@@ -1,4 +1,5 @@
 import Foundation
+import HeadroomKit
 import Testing
 @testable import HeadroomCore
 
@@ -149,5 +150,29 @@ private func withBytes<T>(_ text: String, _ body: (UnsafePointer<UInt8>, Int) ->
         _ = await o.ingest(paths: [h.path("s1.jsonl"), h.path("s1/subagents/agent-a1.jsonl")])
         #expect(tokens("agent:a1") == first)
         #expect(tokens("session:s1") == session)
+    }
+
+    @Test func eventsTheJournalCouldNotTakeAreWrittenOnTheNextPass() async throws {
+        let h = try ObserverHome()
+        try h.write("s1.jsonl", [
+            Fx.assistant(1, "s1", id: "m1", tokens: 100, [Fx.agentCall("tu1", "Survey the API", prompt: "look around")]),
+            Fx.user(2, "s1", Fx.toolResult("tu1", "Async agent launched"), result: ["status": "async_launched", "agentId": "a1"]),
+        ])
+        try h.write("s1/subagents/agent-a1.jsonl", [Fx.assistant(4, "s1", id: "x1", tokens: 300, [Fx.text("working")], agent: "a1")])
+        // A file where the observed journals' folder goes: nothing can be appended.
+        let folder = TaskJournal.directory(.observed, home: h.home)
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: folder)
+        let o = h.observer()
+        #expect(await o.scan(since: Fx.t0.addingTimeInterval(-86400)).events == 0)
+        try FileManager.default.removeItem(at: folder)
+        #expect(h.events("s1").isEmpty)
+        // Nothing new in the transcripts: the next pass still writes what the first couldn't.
+        h.clock.now += 120
+        #expect(await o.ingest(paths: [h.path("s1.jsonl")]).events > 0)
+        let ops = h.events("s1").map(\.op)
+        #expect(ops.contains { if case .attempt(let a) = $0 { a.key == "agent:a1" } else { false } })
+        #expect(ops.contains { if case .attempt(let a) = $0 { a.key == "session:s1" } else { false } })
     }
 }
