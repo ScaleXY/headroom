@@ -44,7 +44,9 @@
 #                        the cask update is skipped.
 #
 # iPhone, iPad and Watch (TestFlight): signed with App Store distribution profiles, so no registered
-# devices are needed. Without the certificate secret, the mobile job is skipped.
+# devices are needed. Without the certificate secret, the mobile job is skipped. The job builds on
+# the Xcode 27 image: from April 2027 App Store Connect only takes builds made with the iOS 27 SDK
+# or later (ITMS-90725), and macos-26 stops at Xcode 26.
 #   APPLE_DEVELOPER_ACCOUNT_APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64     base64 of the Apple Distribution certificate and key (.p12)
 #   APPLE_DEVELOPER_ACCOUNT_APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD       the .p12's export password
 #   APPLE_DEVELOPER_ACCOUNT_PROFILE_COM_SCALEXY_HEADROOM_IOS_APP_STORE_BASE64                   App Store profile, com.scalexy.headroom
@@ -272,7 +274,8 @@ jobs:
   mobile:
     name: Upload iPhone, iPad and Watch to TestFlight
     needs: release
-    runs-on: macos-26
+    # Xcode 27 on macOS 27, a preview image; move to macos-27 once that label exists.
+    runs-on: xcode-27
     timeout-minutes: 60
     env:
       TAG: ${{ github.ref_name }}
@@ -291,6 +294,18 @@ jobs:
 
       - uses: actions/checkout@v5
         if: steps.secrets.outputs.ready == 'true'
+
+      # Before anything is signed or uploaded: an image whose default Xcode is older would deliver
+      # a build App Store Connect warns about now and refuses from April 2027.
+      - name: Check the iOS SDK
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          if [ "${sdk%%.*}" -lt 27 ]; then
+            echo "::error::This runner builds with the iOS $sdk SDK. App Store Connect needs the iOS 27 SDK or later (Xcode 27)."
+            exit 1
+          fi
 
       - name: Set the version from the tag
         if: steps.secrets.outputs.ready == 'true'
