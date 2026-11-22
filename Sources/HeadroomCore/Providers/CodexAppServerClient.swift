@@ -67,7 +67,15 @@ public actor CodexAppServerClient {
             return first
         }
         await channel.close()
-        return result ?? .failure(.failed(reason: "Codex didn't answer within 10 seconds."))
+        return result ?? .failure(.failed(reason: "Codex didn't answer within \(Self.spoken(limit))."))
+    }
+
+    /// "10 seconds", or "150 ms" under a second: the limit this read actually had.
+    static func spoken(_ d: Duration) -> String {
+        let s = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+        if s < 1 { return "\(Int((s * 1000).rounded())) ms" }
+        let n = Int(s.rounded())
+        return n == 1 ? "1 second" : "\(n) seconds"
     }
 
     static func exchange(_ channel: any JSONLineChannel, clock: any ProviderClock) async -> ProviderReadOutcome {

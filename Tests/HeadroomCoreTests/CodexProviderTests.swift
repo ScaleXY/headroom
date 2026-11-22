@@ -247,12 +247,13 @@ func happyChannel(account: String = "codex/openai-free-account-read.json", limit
         let silent = FakeChannel(script: [:], silent: true)
         let client = CodexAppServerClient(factory: FakeFactory([silent]), daemon: FixedProbe(listening: false), clock: clock,
                                           timeout: .milliseconds(150), locateCodex: { "/bin/codex" })
-        let start = Date()
         let outcome = await client.read()
         #expect(outcome.fault?.code == "error")
         #expect(silent.closed)
-        // Well short of the 10s default; a busy CI machine can hold the timer up for seconds.
-        #expect(Date().timeIntervalSince(start) < 8)
+        // The short limit was the one used, not the 10s default. Said by the message rather than
+        // timed: a busy CI machine can hold any timer up for seconds.
+        #expect(outcome.fault.map { "\($0)" }?.contains("within 150 ms") == true)
+        #expect(CodexAppServerClient.spoken(.seconds(10)) == "10 seconds")
     }
 
     @Test func rateLimitErrorResponse() async {
