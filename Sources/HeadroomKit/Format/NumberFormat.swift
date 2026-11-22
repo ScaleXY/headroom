@@ -82,9 +82,9 @@ public enum NumberFormat {
     public static func headroom(_ s: Double) -> String {
         guard s.isFinite else { return "—" }
         let s = max(0, s)
-        // Within half a percent of even, either way, there's nothing spare or short to name.
+        // Within half a percent of even: nothing spare, nothing short.
         let n = Int((abs(s - 1) * 100).rounded())
-        if n == 0 { return "exactly enough" }
+        if n == 0 { return "no room to spare" }
         if s < 1 { return "\(n)% short" }
         if s < 2 { return "\(n)% spare" }
         return fixed(s, 1) + "× what's needed"
