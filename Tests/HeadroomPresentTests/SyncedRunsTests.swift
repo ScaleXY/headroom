@@ -17,7 +17,7 @@ private let presenter: RunsPresenter = {
     return RunDigest(id: "mac:" + r.id, mac: mac, harness: r.harness, state: r.state, waitReason: r.waitReason, stale: r.stale,
                      progress: r.progress, mustHaves: r.mustHaves, etaSeconds: r.etaSeconds, tokens: r.tokens, warning: r.warning,
                      hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
-                     title: names ? r.agentTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
+                     title: names ? r.bestTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
                      finishedRows: names ? picked.finished : 0, finishedEarlier: r.finishedEarlier ?? 0, lastSeen: lastSeen)
 }
 
@@ -68,16 +68,21 @@ private let presenter: RunsPresenter = {
         let c = presenter.card(digest(Demo.declaredRun(now: now), names: true))
         #expect(c.title == "Move checkout to the new payments API")
         #expect(c.subtitle == "MacBook Pro · Claude Code · updated 1m ago")
-        // No title of its own: the Mac, never the project.
+        // Not declared: the session's own title; never the project or repo, and the Mac stays in the subtitle.
         let observed = presenter.card(digest(Demo.observedRun(now: now), names: true))
-        #expect(observed.title == "Run on MacBook Pro")
+        #expect(observed.title == "Audit the design tokens for contrast")
+        #expect(observed.subtitle.hasPrefix("MacBook Pro · "))
         #expect(!observed.subtitle.contains("design-system"))
+        // No title at all: what ran it.
+        var untitled = Demo.observedRun(now: now)
+        untitled.sessionTitle = nil
+        #expect(presenter.card(digest(untitled, names: true)).title == "Claude Code session")
     }
 
     @Test func withoutNamesTheTitleIsTheMacAndTheRowsOneLineOfCounts() {
         let c = presenter.card(digest(Demo.declaredRun(now: now), names: false))
-        #expect(c.title == "Run on MacBook Pro")
-        #expect(c.subtitle == "Claude Code · updated 1m ago")
+        #expect(c.title == "Claude Code session")
+        #expect(c.subtitle == "MacBook Pro · updated 1m ago")
         #expect(c.rows.count == 1)
         #expect(c.rows[0].kind == .counts)
         #expect(c.rows[0].title == "3 running · 5 done · 2 planned")
@@ -100,9 +105,9 @@ private let presenter: RunsPresenter = {
     }
 
     @Test func runsWithTheSameTitleSayWhenTheyStarted() {
-        let a = digest(Demo.declaredRun(now: now), names: false), b = digest(Demo.inputRun(now: now), names: false)
+        let a = digest(Demo.declaredRun(now: now), names: false), b = digest(Demo.limitRun(now: now), names: false)
         let page = presenter.page([b, a])
-        #expect(page.live.allSatisfy { $0.title.hasPrefix("Run on MacBook Pro · ") })
+        #expect(page.live.count == 2 && page.live.allSatisfy { $0.title.hasPrefix("Claude Code session · ") })
     }
 
     @Test func aRunOnAQuietMacReadsLastSeen() {
@@ -120,8 +125,8 @@ private let presenter: RunsPresenter = {
         let named = digest(Demo.inputRun(now: now), names: true)
         #expect(presenter.needsInputAlert(named) == RunAlertCopy(title: "Database upgrade needs your input", body: "Answer it on MacBook Pro"))
         let unnamed = digest(Demo.failedRun(now: now), names: false)
-        #expect(presenter.finishedAlert(unnamed).title == "Run on MacBook Pro failed")
-        #expect(presenter.finishedAlert(unnamed).body == "50% done · must-haves 0 of 1 · 101K tokens")
+        #expect(presenter.finishedAlert(unnamed).title == "Claude Code session failed")
+        #expect(presenter.finishedAlert(unnamed).body == "On MacBook Pro. 50% done · must-haves 0 of 1 · 101K tokens")
         #expect(presenter.stoppedAlert(digest(Demo.stoppedRun(now: now), names: true)).title == "Tidy the settings module stopped with work left")
     }
 

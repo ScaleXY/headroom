@@ -19,7 +19,7 @@ import HeadroomPresent
             return RunDigest(id: "studio:" + r.id, mac: "Mac Studio", harness: r.harness, state: r.state, waitReason: r.waitReason, stale: r.stale,
                              progress: r.progress, mustHaves: r.mustHaves, etaSeconds: r.etaSeconds, tokens: r.tokens, warning: r.warning,
                              hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
-                             title: names ? r.agentTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
+                             title: names ? r.bestTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
                              finishedRows: names ? picked.finished : 0, finishedEarlier: r.finishedEarlier ?? 0,
                              lastSeen: r.state.isTerminal ? nil : lastSeen)
         }

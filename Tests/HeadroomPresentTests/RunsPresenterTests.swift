@@ -22,28 +22,35 @@ private func node(_ id: String, _ state: TaskState, parent: String? = nil, depth
 
 private func run(_ id: String = "r", title: String? = nil, project: String? = nil, harness: String? = nil, state: TaskRunState = .running,
                  wait: TaskWaitReason? = nil, stale: Bool = false, declared: Bool = true, nodes: [TaskNode] = [], updated: Double = -1,
-                 warning: String? = nil, earlier: Int? = nil) -> TaskRun {
+                 warning: String? = nil, earlier: Int? = nil, session: String? = nil, repo: String? = nil, branch: String? = nil) -> TaskRun {
     TaskRun(id: id, title: title ?? id, project: project, harness: harness, startedAt: at(-60), updatedAt: at(updated), state: state, waitReason: wait,
             stale: stale, progress: TaskProgress(done: 0.46, inFlight: 0.3, estimate: 0.57), mustHaves: TaskMustHaves(done: 1, total: 2),
-            etaSeconds: 25 * 60, tokens: 2_310_000, warning: warning, hasDeclaredTasks: declared, nodes: nodes, finishedEarlier: earlier)
+            etaSeconds: 25 * 60, tokens: 2_310_000, warning: warning, hasDeclaredTasks: declared, nodes: nodes, finishedEarlier: earlier,
+            sessionTitle: session, repo: repo, branch: branch)
 }
 
 @Suite struct RunTitleTests {
-    @Test func fallsBackFromTheSessionID() {
+    @Test func aRunIsTitledByWhatItIsAndPlacedInTheSubtitle() {
         let uuid = "3f9b8c1e-6a0d-4c52-9e7a-1b2c3d4e5f60"
         #expect(presenter.displayTitle(run(title: "Ship it")) == "Ship it")
-        #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code")) == "storefront")
-        #expect(presenter.displayTitle(run(uuid, harness: "claude-code")) == "Claude Code run")
-        #expect(presenter.displayTitle(run(uuid, harness: "codex")) == "Codex run")
+        // The session's own title (Claude Code's or Codex's), below the agent's declared one.
+        #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code", session: "Fix the refund webhook")) == "Fix the refund webhook")
+        #expect(presenter.displayTitle(run(title: "Ship it", session: "Fix the refund webhook")) == "Ship it")
+        // Never the folder, the id or the device: with no name it says what ran it.
+        #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code")) == "Claude Code session")
+        #expect(presenter.displayTitle(run(uuid, harness: "codex")) == "Codex session")
         #expect(presenter.displayTitle(run(uuid)) == "Agent run")
-        // The project moves out of the subtitle once it's the title.
-        #expect(presenter.card(run(uuid, project: "storefront", harness: "claude-code")).subtitle == "Claude Code · updated 1m ago")
+        // Where it runs is additional: the repo (else the folder), and a branch that isn't the default.
+        #expect(presenter.card(run(uuid, project: "storefront", harness: "claude-code", session: "Fix the refund webhook", repo: "ScaleXY/storefront",
+                                   branch: "refund-webhook")).subtitle == "ScaleXY/storefront · refund-webhook · Claude Code · updated 1m ago")
+        #expect(presenter.card(run(uuid, project: "storefront", harness: "claude-code", branch: "main")).subtitle == "storefront · updated 1m ago")
         #expect(presenter.card(run(title: "Ship it", project: "storefront")).subtitle == "storefront · updated 1m ago")
     }
 
     @Test func clashingTitlesSayWhenTheyStarted() {
-        let page = presenter.page([run("a", project: "web"), run("b", project: "web"), run("c", project: "api")])
-        #expect(page.live.map(\.title) == ["web · today 7 AM", "web · today 7 AM", "api"])
+        let page = presenter.page([run("a", project: "web", harness: "codex"), run("b", project: "web", harness: "codex"),
+                                   run("c", project: "api", harness: "codex", session: "Rename the billing tables")])
+        #expect(page.live.map(\.title) == ["Codex session · today 7 AM", "Codex session · today 7 AM", "Rename the billing tables"])
     }
 }
 

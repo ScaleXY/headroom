@@ -97,7 +97,7 @@ enum RunListRenderer {
     }
 
     /// A run's name. One synced from another Mac carries a small computer after it, unless the name
-    /// already says where it is ("Run on Mac Studio"): its tooltip and its page name the Mac.
+    /// already says where it is: its tooltip and its page name the Mac.
     static func drawTitle(_ c: RunCardModel, _ font: NSFont, _ color: NSColor, x: CGFloat, capCenter: CGFloat, width: CGFloat, theme t: Theme,
                           ctx: CGContext) {
         let marked = c.mac.map { !c.title.contains($0) } ?? false

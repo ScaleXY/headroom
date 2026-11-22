@@ -255,7 +255,8 @@ extension RunsPresenter {
         return RunsPageModel(live: live.map(make), recent: recent.map(make), moreRecent: finished.count - recent.count)
     }
 
-    /// The Mac's card for a synced run. Without names the title is "Run on <Mac>" and the rows are
+    /// The Mac's card for a synced run. Without names the title is what ran it ("Claude Code
+    /// session"), the Mac goes in the subtitle, and the rows are
     /// one line of counts; notes, failure reasons and evidence never sync, so rows say only their
     /// state's plain words.
     public func card(_ d: RunDigest, expanded: Bool = false, sayStart: Bool = false) -> RunCardModel {
@@ -369,13 +370,12 @@ extension RunsPresenter {
         return sayStart ? base + " · " + TimeFormat.shortDayTime(d.startedAt, now: now, calendar: calendar, locale: locale) : base
     }
 
-    func baseTitle(_ d: RunDigest) -> String { d.title ?? "Run on \(d.mac)" }
+    func baseTitle(_ d: RunDigest) -> String { d.title ?? Self.untitled(d.harness) }
 
-    /// The Mac (unless the title already names it), what ran it, and how long ago it moved.
+    /// The Mac, what ran it (unless the title already says), and how long ago it moved.
     func subtitle(_ d: RunDigest) -> String {
-        var parts: [String] = []
-        if d.title != nil { parts.append(d.mac) }
-        if let h = Self.harnessName(d.harness) { parts.append(h) }
+        var parts = [d.mac]
+        if let h = Self.harnessName(d.harness), !baseTitle(d).hasPrefix(h) { parts.append(h) }
         let age = TimeFormat.freshness(since: d.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
         parts.append(d.state.isTerminal ? "finished \(ago)" : "updated \(ago)")
@@ -545,10 +545,8 @@ extension RunsPresenter {
         d.hasDeclaredTasks || d.mirrored ? "\(headlinePercent(d))%" : "\(d.counts.finished)/\(d.counts.total)"
     }
 
-    /// The line under a compact title: the Mac, or what ran it when the title already names the Mac.
-    public func source(_ d: RunDigest) -> String {
-        d.title == nil ? (Self.harnessName(d.harness) ?? "Agent run") : d.mac
-    }
+    /// The line under a compact title: the Mac it runs on.
+    public func source(_ d: RunDigest) -> String { d.mac }
 
     // MARK: Alerts
 
@@ -584,7 +582,6 @@ extension RunsPresenter {
             facts.append(d.counts.line)
         }
         if d.tokens > 0 { facts.append("\(NumberFormat.tokens(d.tokens)) tokens") }
-        let body = (d.title == nil ? "" : "On \(d.mac). ") + facts.joined(separator: " · ")
-        return body.isEmpty ? "On \(d.mac)." : body
+        return facts.isEmpty ? "On \(d.mac)." : "On \(d.mac). " + facts.joined(separator: " · ")
     }
 }

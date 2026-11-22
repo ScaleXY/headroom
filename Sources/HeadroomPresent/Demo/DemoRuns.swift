@@ -68,7 +68,7 @@ extension Demo {
         var d = RunDigest(id: device + ":" + r.id, mac: mac, harness: r.harness, state: r.state, waitReason: r.waitReason, stale: r.stale,
                           progress: r.progress, mustHaves: r.mustHaves, etaSeconds: r.etaSeconds, tokens: r.tokens, warning: r.warning,
                           hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
-                          title: names ? r.agentTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
+                          title: names ? r.bestTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
                           finishedRows: names ? picked.finished : 0, finishedEarlier: r.finishedEarlier ?? 0,
                           lastSeen: r.state.isTerminal ? nil : lastSeen)
         d.mirrored = r.mirrored
@@ -158,7 +158,7 @@ extension Demo {
                        etaSeconds: 26 * 60, tokens: 2_310_000, hasDeclaredTasks: true, nodes: nodes,
                        time: TaskTimeSplit(working: mins(66), waitingInput: mins(4), idle: mins(2)),
                        tokensByModel: ["claude-opus-5-5": 1_900_000, "claude-haiku-5-5": 410_000], host: "com.googlecode.iterm2",
-                       cwd: "/Users/demo/src/storefront")
+                       cwd: "/Users/demo/src/storefront", repo: "acme/storefront", branch: "payments-api")
     }
 
     /// Nothing declared: nine agents a session spawned, one of which spawned two more.
@@ -182,7 +182,7 @@ extension Demo {
                        harness: "claude-code", startedAt: ago(now, 46), updatedAt: ago(now, 2), state: .running,
                        progress: TaskProgress(done: 0.75, inFlight: 0.25, estimate: 0.75), etaSeconds: 9 * 60, tokens: 1_470_000,
                        hasDeclaredTasks: false, nodes: nodes, time: TaskTimeSplit(working: mins(44), idle: mins(2)),
-                       cwd: "/Users/demo/src/design-system")
+                       cwd: "/Users/demo/src/design-system", sessionTitle: "Audit the design tokens for contrast", repo: "acme/design-system")
     }
 
     /// An agent asked a question and is waiting for the answer.
@@ -200,7 +200,8 @@ extension Demo {
                        question: TaskQuestion(text: "May I drop the unused audit table? Nothing has read it since March, and the new driver doesn't map its column types.",
                                               options: ["Drop it", "Keep it for now", "Rename it to audit_old"], task: "migrate", askedAt: ago(now, 4)),
                        time: TaskTimeSplit(working: mins(33), waitingInput: mins(4), idle: mins(1)),
-                       tokensByModel: ["gpt-6-sol": 406_000], host: "com.apple.Terminal", cwd: "/Users/demo/src/inventory-service")
+                       tokensByModel: ["gpt-6-sol": 406_000], host: "com.apple.Terminal", cwd: "/Users/demo/src/inventory-service",
+                       repo: "acme/inventory-service")
     }
 
     /// Forecast to empty the 5-hour window an hour in, pause until it resets, then finish.
@@ -413,7 +414,8 @@ extension Demo {
         let run = TaskRun(id: "8d2f4a6b-91c3-4e7d-a5b0-c4d3e2f1a0b9", title: "8d2f4a6b-91c3-4e7d-a5b0-c4d3e2f1a0b9", project: "support-backlog",
                           harness: "claude-code", startedAt: ago(now, 5762), updatedAt: ago(now, 1), state: .running,
                           progress: TaskProgress(done: 0.93, inFlight: 0.05, estimate: 0.94), tokens: 118_400_000, hasDeclaredTasks: false, nodes: nodes,
-                          time: TaskTimeSplit(working: mins(4100), waitingInput: mins(300), idle: mins(1300)))
+                          time: TaskTimeSplit(working: mins(4100), waitingInput: mins(300), idle: mins(1300)),
+                          sessionTitle: "Triage the support backlog", repo: "acme/support")
         return TaskCompaction.compact(run, now: now)
     }
 }

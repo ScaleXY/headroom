@@ -120,10 +120,17 @@ private struct DevicePayloadBeforeRuns: Decodable {
         for w in secrets(runs) { #expect(!text.contains(w), "\(w) synced") }
         #expect(text.contains("Move checkout to the new payments API"))
         #expect(text.contains("Switch the queries over"))
-        // A run with no title of its own (a session UUID) never falls back to its project.
-        let observed = try #require(RunSummaryBuilder.summaries([Demo.observedRun(now: now)], includeNames: true, now: now)?.first)
-        #expect(observed.title == nil)
+        // A run the agent didn't name takes the session's own title, never its project or repo.
+        let run = Demo.observedRun(now: now)
+        let observed = try #require(RunSummaryBuilder.summaries([run], includeNames: true, now: now)?.first)
+        #expect(observed.title == "Audit the design tokens for contrast")
         #expect(observed.rows?.isEmpty == false)
+        let observedText = try jsonText(device([observed]))
+        for w in [run.project, run.repo, run.cwd].compactMap({ $0 }) { #expect(!observedText.contains(w), "\(w) synced") }
+        // Untitled altogether: no title, and still not the project.
+        var untitled = run
+        untitled.sessionTitle = nil
+        #expect(RunSummaryBuilder.summaries([untitled], includeNames: true, now: now)?.first?.title == nil)
     }
 
     @Test func runIDsAreHashedAndStable() {

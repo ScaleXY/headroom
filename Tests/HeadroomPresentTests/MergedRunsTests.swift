@@ -105,9 +105,9 @@ private func remote(_ id: String, title: String? = nil, _ state: TaskRunState = 
         #expect(titles["studio:3"]?.hasPrefix("Ship the release · ") == true)
         #expect(titles["2"] == "Fix the build")
         #expect(titles["studio:4"] == "Port the tests")
-        // Two unnamed runs on one Mac share "Run on <Mac>".
+        // Two unnamed runs share "Agent run", so each says when it started.
         let unnamed = presenter.page([local("1")], remote: [remote("5"), remote("6", updated: 3)])
-        #expect(unnamed.live.filter { $0.id.hasPrefix("studio:") }.allSatisfy { $0.title.hasPrefix("Run on Mac Studio · ") })
+        #expect(unnamed.live.filter { $0.id.hasPrefix("studio:") }.allSatisfy { $0.title.hasPrefix("Agent run · ") })
     }
 
     @Test func syncedCardsHaveNoActionsAndThisMacsKeepTheirs() {

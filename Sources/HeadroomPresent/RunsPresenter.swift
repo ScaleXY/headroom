@@ -535,17 +535,33 @@ public struct RunsPresenter: Sendable {
         return RunVerdictModel(figure: figure, primary: primary, secondary: s.isEmpty ? nil : s.prefix(1).uppercased() + s.dropFirst())
     }
 
-    /// The agent's title; else the project folder; else what ran it. Never the session id.
+    /// What the run is: the agent's declared title, else the title Claude Code or Codex gave the
+    /// session. Where it runs (repo, folder, branch, Mac) goes in the subtitle, not here. Never
+    /// the session id.
     public func displayTitle(_ r: TaskRun, sayStart: Bool = false) -> String {
         let base = baseTitle(r)
         return sayStart ? base + " · " + TimeFormat.shortDayTime(r.startedAt, now: now, calendar: calendar, locale: locale) : base
     }
 
     func baseTitle(_ r: TaskRun) -> String {
-        if let t = r.agentTitle { return t }
-        if let p = r.project?.trimmingCharacters(in: .whitespaces), !p.isEmpty { return p }
-        if let h = Self.harnessName(r.harness) { return "\(h) run" }
-        return "Agent run"
+        r.bestTitle ?? Self.untitled(r.harness)
+    }
+
+    /// A run nobody named: what ran it. Runs with the same name say when they started.
+    static func untitled(_ harness: String?) -> String {
+        harnessName(harness).map { "\($0) session" } ?? "Agent run"
+    }
+
+    /// Where a run works: the GitHub org and repo (else the project folder), and the branch
+    /// unless it's the default one.
+    static func place(repo: String?, project: String?, branch: String?) -> [String] {
+        var parts: [String] = []
+        if let r = repo?.trimmingCharacters(in: .whitespaces), !r.isEmpty { parts.append(r) }
+        else if let p = project?.trimmingCharacters(in: .whitespaces), !p.isEmpty { parts.append(p) }
+        if let b = branch?.trimmingCharacters(in: .whitespaces), !b.isEmpty, !["main", "master", "trunk", "develop"].contains(b), b != "HEAD" {
+            parts.append(b)
+        }
+        return parts
     }
 
     /// "Claude Code", "Codex", or the harness as written.
@@ -559,9 +575,8 @@ public struct RunsPresenter: Sendable {
     }
 
     func subtitle(_ r: TaskRun) -> String {
-        var parts: [String] = []
-        if let p = r.project, !p.isEmpty, p != baseTitle(r) { parts.append(p) }
-        if let h = Self.harnessName(r.harness) { parts.append(h) }
+        var parts = Self.place(repo: r.repo, project: r.project, branch: r.branch).filter { $0 != baseTitle(r) }
+        if let h = Self.harnessName(r.harness), !baseTitle(r).hasPrefix(h) { parts.append(h) }
         let age = TimeFormat.freshness(since: r.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
         parts.append(Self.isFinished(r) ? "finished \(ago)" : "updated \(ago)")

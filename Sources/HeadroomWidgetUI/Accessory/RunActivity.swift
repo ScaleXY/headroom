@@ -153,7 +153,7 @@ public struct RunStateCapsule: View {
 /// ActivityKit's 4 KB), and the finish is a fixed time, so it stays right between updates. Fields
 /// added later are optional, so an activity started by an older build still decodes.
 public struct RunActivityState: Codable, Hashable, Sendable {
-    /// The run's title, or "Run on <Mac>" when the Mac doesn't share names.
+    /// The run's title, or what ran it ("Claude Code session") when the Mac doesn't share names.
     public var title: String
     /// "Needs your input", "Running", "Mac last seen 2h ago".
     public var stateText: String
