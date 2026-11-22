@@ -151,7 +151,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             switch self {
             case .general: ("The essentials.", "Which tools Headroom watches, how it looks, and how it starts.")
             case .menuBar: ("Shape your menu bar.", "Five cells per tool: blue means room to spare, white means on track, amber and rose mean slow down.")
-            case .card: ("Your Limits card.", "Meters and graphs for the week and for the 5-hour session. Keep what you read, hide what you don't.")
+            case .card: ("Your Limits card.", "The week's meter and graph, with each 5-hour session underneath. Keep what you read, hide what you don't.")
             case .session: ("Never get cut off\nmid-session.", "Pick when the session starts warning. From there it turns amber, counts down in the menu bar and can let you know.")
             case .notifications: ("Only what's worth a ping.", "Each alert fires once per session or week. Headroom never repeats itself.")
             case .sync: ("Your headroom,\nin your pocket.", "These readings on iPhone, iPad and Apple Watch, with widgets, complications and a Live Activity.")
@@ -685,27 +685,19 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         var cy = y
         sectionLabel("THIS WEEK", x: x, y: cy, ctx: ctx)
         cy += 14
-        toggleRow("Meter", "Five cells for what's left, with the on-track point marked.", on: settings.shows(.weekMeter),
-                  action: Action.part(.weekMeter), x: x, y: cy, w: w, ctx: ctx)
-        cy += 48
-        toggleRow("Graph", "The week so far, and where your rate takes it.", on: settings.shows(.weekGraph),
-                  action: Action.part(.weekGraph), x: x, y: cy, w: w, ctx: ctx)
-        cy += 48 + 14
-        sectionLabel("5-HOUR SESSION", x: x, y: cy, ctx: ctx)
-        cy += 14
-        let detailed = settings.sessionDetail == .detailed
-        segmented(["Its own panel", "A single row"], selected: detailed ? 0 : 1, x: x, y: cy, w: w,
-                  actions: [AnyHashable(Action.detail(.detailed)), AnyHashable(Action.detail(.compact))], ctx: ctx)
-        cy += 30 + 14
-        toggleRow("Meter", "Five cells for what's left of the session.", on: settings.shows(.sessionMeter),
-                  action: Action.part(.sessionMeter), x: x, y: cy, w: w, enabled: detailed, ctx: ctx)
-        cy += 48
-        toggleRow("Graph", "The five hours so far, and where they're heading.", on: settings.shows(.sessionGraph),
-                  action: Action.part(.sessionGraph), x: x, y: cy, w: w, enabled: detailed, ctx: ctx)
-        cy += 48
-        if !detailed {
-            Text("The row turns into a banner once the session warns.", F.sf(12, 500), theme.muted2).draw(x: x, capCenter: cy + 6, in: ctx)
+        // `sessionMeter` went with the 5-hour panel: it still decodes, but has no toggle.
+        for part in CardPart.toggles {
+            let lane = part == .sessionGraph
+            if lane {
+                cy += 14
+                sectionLabel("UNDER THE GRAPH", x: x, y: cy, ctx: ctx)
+                cy += 14
+            }
+            toggleRow(part.title, part.detail, on: settings.shows(part), action: Action.part(part), x: x, y: cy, w: w,
+                      enabled: !lane || settings.shows(.weekGraph), ctx: ctx)
+            cy += 48
         }
+        Text("The session banner still shows once a session warns.", F.sf(12, 500), theme.muted2).draw(x: x, capCenter: cy + 6, in: ctx)
     }
 
     private func drawSession(x: CGFloat, y: CGFloat, w: CGFloat, ctx: CGContext) {

@@ -524,7 +524,8 @@ final class AppModel {
             if let acct {
                 input.samples = acct.windows.mapValues(\.samples)
                 if let session = acct.session { input.samples[LimitWindow.sessionID()] = session.samples }
-                let since = Date().addingTimeInterval(-(Presenter.sessionTrailHours + 5) * 3600)
+                // The session trail's last day, and every session in the week for the Limits lane.
+                let since = min(Date().addingTimeInterval(-(Presenter.sessionTrailHours + 5) * 3600), reading.headline?.windowStart ?? .distantFuture)
                 input.pastSessions = acct.finishedSessions(since: since, now: Date())
             }
             input.smoothedState = acct?.tracker?.shown

@@ -11,9 +11,37 @@ public enum SessionDetail: String, CaseIterable, Sendable {
     public var title: String { self == .detailed ? "Detailed" : "Compact" }
 }
 
-/// The optional pieces of a Pace card.
+/// The optional pieces of a Limits card. The raw values are persisted settings keys: never rename them.
 public enum CardPart: String, CaseIterable, Sendable {
-    case weekMeter, weekGraph, sessionMeter, sessionGraph
+    /// The week's five cells with the on-track caret.
+    case weekMeter
+    /// The week glide.
+    case weekGraph
+    /// Retired with the 5-hour panel: it still decodes from older settings, but nothing shows it.
+    case sessionMeter
+    /// The lane under the week glide: 5-hour sessions, or each day's use without a 5-hour window.
+    case sessionGraph
+
+    /// The parts Settings offers a toggle for, in order.
+    public static let toggles: [CardPart] = [.weekMeter, .weekGraph, .sessionGraph]
+
+    public var title: String {
+        switch self {
+        case .weekMeter: "Meter"
+        case .weekGraph: "Graph"
+        case .sessionMeter: "5-hour meter"
+        case .sessionGraph: "Sessions under the graph"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .weekMeter: "Five cells for what's left, with the on-track point marked."
+        case .weekGraph: "The week so far, and where your rate takes it."
+        case .sessionMeter: "Five cells for what's left of the session."
+        case .sessionGraph: "Each 5-hour session, or each day's use without one."
+        }
+    }
 }
 
 /// What the five menu bar cells measure.

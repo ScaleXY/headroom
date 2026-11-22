@@ -28,6 +28,16 @@ enum RenderCommand {
                 }
             }
         }
+        // MARK: Limits chart fixtures on their own (`--render limits`); `all` and `pace` already include them.
+        if name == "limits" {
+            for theme in themes {
+                for s in Demo.limitsScenarios(now: now) {
+                    if let rep = PopoverPage.renderPace(s.inputs, theme: theme, now: now) {
+                        write(rep, to: outDir.appendingPathComponent("pace-\(s.name)-\(theme.isDark ? "dark" : "light").png")); written += 1
+                    }
+                }
+            }
+        }
         if name == "all" || name == "activity" {
             for theme in themes {
                 for mode in [ActivityMode.all, .newOnly] {

@@ -282,6 +282,15 @@ public struct PaceCardModel: Equatable {
     public var showsGlide = true
     /// What's spending the 5-hour window, while a live run spends this provider.
     public var spending: SpendSplitModel? = nil
+    /// The lane under the week glide: 5-hour sessions, or each day's use without a 5-hour window.
+    /// Nil when Settings hides it or there's no glide.
+    public var lane: LimitsLaneModel? = nil
+    /// The keys row above the chart (empty without a glide).
+    public var keys: [LimitsKey] = []
+    /// One sentence under the chart when the live session runs out before its reset, or is paused.
+    public var chartCaption: String? = nil
+    /// The four cells under the chart (empty without a headline window).
+    public var stats: [StatCell] = []
 
     public init(provider: Provider, plan: String? = nil, freshness: Freshness, session: SessionBannerModel? = nil, sessionModule: SessionModuleModel? = nil, hero: HeroModel? = nil, meter: MeterModel? = nil, glide: GlideModel? = nil, verdict: VerdictModel? = nil, callout: CalloutModel? = nil, rows: [DetailRowModel], fault: FaultBannerModel? = nil, showsMeter: Bool = true, showsGlide: Bool = true) {
         self.provider = provider
@@ -463,5 +472,161 @@ public struct SessionHistoryModel: Equatable {
         self.bars = bars
         self.warnAt = warnAt
         self.chips = chips
+    }
+}
+
+// MARK: - Limits chart: the lane under the week, its keys, caption and stat strip
+
+/// What runs under the week glide on the Limits card, on the same time axis (hours since the
+/// window start, like `GlideModel.Point.t`).
+public struct LimitsLaneModel: Equatable, Sendable {
+    public enum Kind: String, Equatable, Sendable {
+        /// One bar per 5-hour session (the account reports a 5-hour window).
+        case sessions
+        /// One bar per local day: that day's share of the window (no 5-hour window).
+        case daily
+    }
+    public var kind: Kind
+    /// Window length in hours (the glide's `hours`).
+    public var hours: Double
+    /// Finished sessions that overlap the window, clipped to it, oldest first.
+    public var sessions: [LaneSession] = []
+    /// The 5-hour session running now, clipped to the window.
+    public var current: LaneCurrentSession? = nil
+    /// One per local day of the window, in order (daily lane).
+    public var days: [LaneDay] = []
+    /// Used share where a session warns: the dashed amber line, and amber bars from here.
+    public var warnAt: Double = 0.75
+
+    public init(kind: Kind, hours: Double, sessions: [LaneSession] = [], current: LaneCurrentSession? = nil, days: [LaneDay] = [], warnAt: Double = 0.75) {
+        self.kind = kind
+        self.hours = hours
+        self.sessions = sessions
+        self.current = current
+        self.days = days
+        self.warnAt = warnAt
+    }
+
+    /// Sessions this window that hit the limit, the running one included.
+    public var limitHits: Int { sessions.filter(\.hitLimit).count + (current?.hitLimit == true ? 1 : 0) }
+}
+
+/// One finished 5-hour session in the lane: a bar from its start to its reset, as tall as its peak.
+public struct LaneSession: Equatable, Sendable {
+    /// Hours since the window start, clipped to the window.
+    public var start: Double
+    public var end: Double
+    /// Peak used share, 0…1.
+    public var peak: Double
+    public var hitLimit: Bool
+    /// "Tue 9 AM – 2 PM · peaked at 84%".
+    public var tooltip: String
+
+    public init(start: Double, end: Double, peak: Double, hitLimit: Bool, tooltip: String) {
+        self.start = start
+        self.end = end
+        self.peak = peak
+        self.hitLimit = hitLimit
+        self.tooltip = tooltip
+    }
+}
+
+/// The session running now: an outlined track over its 5 hours, filled to now, with a dotted cap
+/// where the recent rate takes it by the reset.
+public struct LaneCurrentSession: Equatable, Sendable {
+    /// Hours since the window start, clipped to the window.
+    public var start: Double
+    /// The reset.
+    public var end: Double
+    /// Used share now, 0…1.
+    public var used: Double
+    /// Used share at the reset at the recent rate, when known (nil once blocked).
+    public var projectedUsed: Double?
+    /// When it runs out at the recent rate, if that comes before the reset (hours since the window start).
+    public var runsOutAt: Double?
+    public var level: SessionLevel
+    public var tooltip: String
+
+    public var hitLimit: Bool { level == .blocked }
+
+    public init(start: Double, end: Double, used: Double, projectedUsed: Double? = nil, runsOutAt: Double? = nil, level: SessionLevel, tooltip: String) {
+        self.start = start
+        self.end = end
+        self.used = used
+        self.projectedUsed = projectedUsed
+        self.runsOutAt = runsOutAt
+        self.level = level
+        self.tooltip = tooltip
+    }
+}
+
+/// One local day in the daily-use lane.
+public struct LaneDay: Equatable, Sendable {
+    /// Hours since the window start; the first and last days are cut at the window's edges.
+    public var start: Double
+    public var end: Double
+    /// Share of the window used that day (the drop in what's left across it), 0…1; nil for days still ahead.
+    public var used: Double?
+    /// An even day's share: the day's hours ÷ the window's hours.
+    public var even: Double
+    public var isToday: Bool
+    /// Above 1.5× an even day.
+    public var isHeavy: Bool
+    /// "14%" over the bar, when there's a bar.
+    public var label: String?
+    /// "Tuesday · 14% of the week (an even day is 14%)"; nil for days still ahead.
+    public var tooltip: String?
+
+    public init(start: Double, end: Double, used: Double?, even: Double, isToday: Bool, isHeavy: Bool, label: String? = nil, tooltip: String? = nil) {
+        self.start = start
+        self.end = end
+        self.used = used
+        self.even = even
+        self.isToday = isToday
+        self.isHeavy = isHeavy
+        self.label = label
+        self.tooltip = tooltip
+    }
+}
+
+/// One entry in the keys row above the Limits chart. The first is drawn at full strength, the rest dimmed.
+public struct LimitsKey: Equatable, Sendable {
+    public enum Mark: String, Equatable, Sendable { case line, bar, dash, cross }
+    public enum Tone: Equatable, Sendable {
+        /// The week's state color.
+        case state(PacingState)
+        /// Neutral ink (the lane's bars).
+        case neutral
+        /// The chart's label color (the even-day mark).
+        case faint
+        case amber, rose
+    }
+    public var mark: Mark
+    public var text: String
+    public var tone: Tone
+
+    public init(mark: Mark, text: String, tone: Tone) {
+        self.mark = mark
+        self.text = text
+        self.tone = tone
+    }
+}
+
+/// One cell of the stat strip under the Limits chart.
+public struct StatCell: Equatable, Sendable {
+    public enum Tone: Equatable, Sendable { case plain, state(PacingState), amber, rose }
+    /// Tiny uppercase label: "WEEK", "5-HOUR".
+    public var label: String
+    /// "54%", "Paused", "2h 12m".
+    public var value: String
+    /// "left", "12:12 PM", "this week".
+    public var sub: String
+    public var tone: Tone
+
+    public init(label: String, value: String, sub: String, tone: Tone = .plain) {
+        self.label = label
+        self.value = value
+        self.sub = sub
+        self.tone = tone
     }
 }
