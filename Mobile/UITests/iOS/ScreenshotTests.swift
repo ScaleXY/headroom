@@ -13,6 +13,9 @@ final class ScreenshotTests: CaptureCase {
     private func phone() {
         launch()
         let height = app.frame.height
+        // The Duo's outer display is short: lift the first account card past the agent runs. (A
+        // fixed distance: element frames on the outer display don't match what it draws.)
+        if isDuo { glide(230, speed: 200); glide(230, speed: 200) }
         shot("01-now")
 
         launch(open: "headroom://account/\(Self.codex)")
