@@ -149,11 +149,13 @@ public struct CellMeter: View {
     public var caret: Double? = nil
     public var height: CGFloat = 12
     public var dim = false
+    /// "On track" beside the caret (the phone's Limits card), drawn in small capitals.
+    public var caretLabel: String? = nil
     @Environment(\.colorScheme) private var scheme
 
     public var body: some View {
         let p = Palette(scheme), t = p.tone(state)
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: caretLabel == nil ? 2 : 4) {
             HStack(spacing: height * 0.22) {
                 ForEach(0..<5, id: \.self) { i in
                     let cell = RoundedRectangle(cornerRadius: height * 0.24, style: .continuous)
@@ -170,7 +172,17 @@ public struct CellMeter: View {
             .overlay(RoundedRectangle(cornerRadius: height * 0.36, style: .continuous).strokeBorder(p.meterTrackBorder, lineWidth: 0.5))
             .frame(height: height + height * 0.32)
             .opacity(dim ? 0.45 : 1)
-            if let caret {
+            if let caret, let caretLabel {
+                GeometryReader { g in
+                    HStack(spacing: 4) {
+                        Caret().fill(p.chartLabel).frame(width: 7, height: 5)
+                        Text(caretLabel.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.9).foregroundStyle(p.chartLabel).lineLimit(1)
+                    }
+                    .fixedSize()
+                    .position(x: min(max(g.size.width * caret, 44), g.size.width - 44), y: 6)
+                }
+                .frame(height: 12)
+            } else if let caret {
                 GeometryReader { g in
                     Caret().fill(p.chartLabel).frame(width: 6, height: 4)
                         .position(x: min(max(g.size.width * caret, 3), g.size.width - 3), y: 2)
@@ -180,12 +192,13 @@ public struct CellMeter: View {
         }
     }
 
-    public init(state: PacingState, cells: Int, caret: Double? = nil, height: CGFloat = 12, dim: Bool = false) {
+    public init(state: PacingState, cells: Int, caret: Double? = nil, height: CGFloat = 12, dim: Bool = false, caretLabel: String? = nil) {
         self.state = state
         self.cells = cells
         self.caret = caret
         self.height = height
         self.dim = dim
+        self.caretLabel = caretLabel
     }
 }
 
@@ -340,8 +353,60 @@ public struct HeadroomMarkView: View {
 
 // MARK: - Surface
 
-/// The widget's surface: the popover's dark card with a brand orb in the corner and, when it
-/// matters, a faint wash of the state color behind the dial.
+/// The provider's signature on a card (redesign §2 rules 3 and 4): a soft wash and a 1.5 pt light
+/// along the top edge in the provider's tone, and, on cards that show a pacing state, a glow in the
+/// state color from the top-right corner. Draws no fill of its own; clip it to the card's shape.
+public struct SignatureLight: View {
+    public var provider: Provider?
+    public var state: PacingState?
+    @Environment(\.colorScheme) private var scheme
+
+    public init(provider: Provider?, state: PacingState? = nil) {
+        self.provider = provider
+        self.state = state
+    }
+
+    public var body: some View {
+        let p = Palette(scheme)
+        GeometryReader { g in
+            let w = max(g.size.width, 1)
+            ZStack(alignment: .topLeading) {
+                if let provider {
+                    // radial-gradient(75% 64px at 16% 0%, tone 11% / 9%, transparent)
+                    let rx = w * 0.75, ry: CGFloat = 64
+                    RadialGradient(colors: [p.providerTone(provider, ProviderTone.edgeWash(dark: p.dark)), p.providerTone(provider, 0)],
+                                   center: .center, startRadius: 0, endRadius: rx)
+                        .frame(width: rx * 2, height: rx * 2)
+                        .scaleEffect(x: 1, y: ry / rx)
+                        .position(x: w * 0.16, y: 0)
+                }
+                if let state {
+                    // radial-gradient(260px 170px at 100% 0%, glow, transparent 72%)
+                    let glow = p.stateGlow(state)
+                    RadialGradient(stops: [.init(color: glow, location: 0), .init(color: glow.opacity(0), location: 0.72)],
+                                   center: .center, startRadius: 0, endRadius: 260)
+                        .frame(width: 520, height: 520)
+                        .scaleEffect(x: 1, y: 170.0 / 260)
+                        .position(x: w, y: 0)
+                }
+                if let provider {
+                    let tone = p.providerTone(provider)
+                    LinearGradient(stops: [.init(color: tone.opacity(0), location: 0), .init(color: tone.opacity(0), location: 0.03),
+                                           .init(color: tone.opacity(ProviderTone.edgeLight(dark: p.dark)), location: 0.20),
+                                           .init(color: tone.opacity(0), location: 0.72)],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: w, height: 1.5)
+                }
+            }
+            .frame(width: g.size.width, height: g.size.height, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The widget's surface: the popover's card with the provider's top-edge light and, when the
+/// widget shows a pacing state, that state's glow from the top-right corner.
 public struct WidgetSurface: View {
     var provider: Provider?
     var accent: PacingState?
@@ -354,17 +419,9 @@ public struct WidgetSurface: View {
         ZStack {
             LinearGradient(colors: p.dark ? [hex(0x1E1F25), hex(0x121317)] : [hex(0xFFFFFF), hex(0xF1F1F5)],
                            startPoint: .top, endPoint: .bottom)
-            if let provider {
-                let b = BrandColors.of(provider)
-                RadialGradient(colors: [p.dark ? b.orbDark : b.orbLight, .clear], center: UnitPoint(x: -0.05, y: -0.1),
-                               startRadius: 0, endRadius: 210)
-            }
-            if let accent, accent >= .tight {
-                RadialGradient(colors: [p.tone(accent).glow.opacity(p.dark ? 0.32 : 0.22), .clear], center: UnitPoint(x: 0.5, y: 1.15),
-                               startRadius: 0, endRadius: 230)
-            }
             // A soft sheen along the top edge, like the popover's glass.
             LinearGradient(colors: [white(p.dark ? 0.045 : 0.6), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.25))
+            SignatureLight(provider: provider, state: accent)
         }
     }
 }

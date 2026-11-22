@@ -98,6 +98,7 @@ public struct ComplicationView: View {
     }
 
     @Environment(\.accessoryTint) private var tint
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.calendar) private var calendar
     @Environment(\.locale) private var locale
 
@@ -201,7 +202,7 @@ public struct ComplicationView: View {
 
     private func header(_ p: WidgetProvider, trailing: String?) -> some View {
         HStack(spacing: 4) {
-            MarkShape(provider: p.id).fill(tint == .color ? BrandColors.of(p.id).base : .primary).frame(width: 10, height: 10)
+            MarkShape(provider: p.id).fill(tint == .color ? Palette(scheme).providerTone(p.id) : .primary).frame(width: 10, height: 10)
             Text(p.shortLabel ?? p.id.displayName).font(.system(size: 11, weight: .semibold)).lineLimit(1).privacySensitive(p.shortLabel != nil && p.shortLabel != p.id.displayName)
             Spacer(minLength: 2)
             if let trailing { Text(trailing).font(.system(size: 9, weight: .bold)).opacity(0.6) }
@@ -211,7 +212,7 @@ public struct ComplicationView: View {
     private func row(_ p: WidgetProvider) -> some View {
         let w = AccessoryMath.week(p, now: now)
         return HStack(spacing: 5) {
-            MarkShape(provider: p.id).fill(tint == .color ? BrandColors.of(p.id).base : .primary).frame(width: 10, height: 10)
+            MarkShape(provider: p.id).fill(tint == .color ? Palette(scheme).providerTone(p.id) : .primary).frame(width: 10, height: 10)
             Text(p.shortLabel ?? p.id.displayName).font(.system(size: 11, weight: .semibold)).lineLimit(1)
             Spacer(minLength: 2)
             AccessoryCells(fraction: w.left, tone: w.state).frame(width: 40)

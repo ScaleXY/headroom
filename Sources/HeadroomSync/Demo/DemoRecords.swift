@@ -66,6 +66,22 @@ public enum DemoRecords {
         return out
     }
 
+    /// One Mac syncing each of `inputs` as its own account (no activity): the Mac's Limits
+    /// fixtures as the phone reads them, for the preview renderer.
+    public static func records(_ inputs: [PaceInput], now: Date = Date()) -> SyncRecords {
+        var out = SyncRecords()
+        let keys = inputs.enumerated().map { "\($0.element.provider.rawValue)-fixture-\($0.offset)" }
+        var current: [String: String] = [:]
+        for (input, key) in zip(inputs, keys) where current[input.provider.rawValue] == nil { current[input.provider.rawValue] = key }
+        out.devices = [device(laptopID, name: "MacBook Pro", model: "Mac15,7", now: now, current: current)]
+        let aggregates = Demo.activityAggregates(now: now, pricing: PricingEngine.standard())
+        for (input, key) in zip(inputs, keys) {
+            add(&out, input, key: key, email: "you@example.com", device: laptopID, now: now)
+            out.activity += activity(aggregates.filter { $0.provider == input.provider }, key: key, device: laptopID, now: now, scale: 1)
+        }
+        return out
+    }
+
     /// The history a Mac would hold for this input: its windows, session and past sessions.
     public static func history(for input: PaceInput, weeks: [WeekRecord] = []) -> AccountHistory {
         var h = AccountHistory()

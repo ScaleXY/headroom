@@ -148,7 +148,7 @@ public struct ActivityWidget: View {
                 Text(NumberFormat.tokens(s.tokens.reduce(0, +))).font(Fonts.number(24)).foregroundStyle(p.ink)
                 Text("tokens").font(Fonts.text(11, .medium)).foregroundStyle(p.muted)
                 Spacer()
-                Text(NumberFormat.dollars(s.cost)).font(Fonts.number(17)).foregroundStyle(tone.text)
+                Text(NumberFormat.dollars(s.cost)).font(Fonts.number(17)).foregroundStyle(p.ink)
             }
             HourBars(tokens: s.tokens, provider: provider.id, tone: tone).frame(maxHeight: .infinity)
             if family != .systemMedium, let models = provider.topModels, !models.isEmpty {
@@ -167,7 +167,7 @@ public struct ActivityWidget: View {
                 HStack(alignment: .bottom, spacing: 6) {
                     Caps("Past weeks", size: 7.5, color: p.muted)
                     ForEach(weeks, id: \.end) { w in
-                        RoundedRectangle(cornerRadius: 2).fill(w.ranOut ? p.rose : p.azure.opacity(0.75))
+                        RoundedRectangle(cornerRadius: 2).fill(w.ranOut ? p.rose : p.providerTone(provider.id, ProviderTone.pastWeek))
                             .frame(width: 12, height: max(3, 26 * w.finalUsed))
                     }
                 }
@@ -223,7 +223,7 @@ public struct SessionLargeWidget: View {
                     HStack(alignment: .bottom, spacing: 5) {
                         Caps("Recent", size: 7.5, color: p.muted)
                         ForEach(recent, id: \.resetsAt) { r in
-                            RoundedRectangle(cornerRadius: 2).fill(r.hitLimit ? p.rose : p.tone(.plenty).text.opacity(0.75))
+                            RoundedRectangle(cornerRadius: 2).fill(p.laneSession(peak: r.peak, hit: r.hitLimit))
                                 .frame(width: 10, height: max(3, 24 * r.peak))
                         }
                     }

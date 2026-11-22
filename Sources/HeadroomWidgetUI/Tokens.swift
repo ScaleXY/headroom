@@ -70,6 +70,16 @@ public struct Palette {
         return hex(g.hex, g.alpha)
     }
 
+    /// The Limits lane's neutral bars: ink at 34% (26% on light, where ink is darker).
+    public var laneBar: Color { ink.opacity(dark ? 0.34 : 0.26) }
+    /// The running session's outline below the warning level, and the lane's key.
+    public var laneBarStrong: Color { ink.opacity(dark ? 0.62 : 0.55) }
+
+    /// A 5-hour session's bar: neutral, amber from the warning level, rose once it hit the limit.
+    public func laneSession(peak: Double, hit: Bool, warnAt: Double = 0.75) -> Color {
+        hit || peak >= 0.999 ? rose : peak >= warnAt - 1e-9 ? amber : laneBar
+    }
+
     /// The neutral mark tile `BrandTile` draws (the mark sits on it in the provider's tone).
     public var markTileTop: Color { dark ? hex(0x34363C) : hex(0xFFFFFF) }
     public var markTileBottom: Color { dark ? hex(0x232428) : hex(0xF1F1F4) }

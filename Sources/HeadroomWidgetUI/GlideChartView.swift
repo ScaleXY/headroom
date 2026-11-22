@@ -1,17 +1,35 @@
 import HeadroomKit
 import SwiftUI
 
-/// The Pace card's glide graph: headroom over time, the dotted projection from now, the even-pace
+/// The Limits card's glide graph: headroom over time, the dotted projection from now, the on-track
 /// diagonal and the time axis. For the 5-hour session it is the last day's trail of dips and refills.
+/// With `lane`, it leaves a band under the plot for a lane drawn on the same time axis (the phone's
+/// Limits card draws its 5-hour sessions or each day's use there): the day lines run on through it
+/// and the labels move under it.
 public struct GlideChartView: View {
     public var chart: WidgetChart
     public var tone: Tone
     /// Draws the NOW chip next to the dot.
     public var nowChip = true
     public var labels = true
+    /// Reserves the lane band (`laneGap` + `laneHeight`) between the plot and the labels.
+    public var lane = false
     @Environment(\.colorScheme) private var scheme
 
-    private static let labelBand: CGFloat = 14
+    public static let labelBand: CGFloat = 14
+    /// Space between the plot's baseline and the lane's top, and the lane's height.
+    public static let laneGap: CGFloat = 16, laneHeight: CGFloat = 30
+    static var laneBand: CGFloat { laneGap + laneHeight }
+
+    /// The plot's baseline (remaining 0) in a view `height` tall; the lane's top is `laneGap` below it.
+    public static func plotBottom(height: CGFloat, labels: Bool = true, lane: Bool = false) -> CGFloat {
+        height - (labels ? labelBand : 2) - (lane ? laneBand : 0)
+    }
+
+    /// The view's height for a plot `plotHeight` tall (from its top inset to its baseline).
+    public static func height(plot plotHeight: CGFloat, labels: Bool = true, lane: Bool = false) -> CGFloat {
+        plotHeight + 6 + (labels ? labelBand : 2) + (lane ? laneBand : 0)
+    }
 
     public var body: some View {
         GeometryReader { g in
@@ -28,7 +46,7 @@ public struct GlideChartView: View {
     @ViewBuilder
     private func content(size: CGSize) -> some View {
         let p = Palette(scheme)
-        let f = Frame(W: size.width, top: 6, bot: size.height - (labels ? Self.labelBand : 2), hours: max(chart.hours, 1))
+        let f = Frame(W: size.width, top: 6, bot: Self.plotBottom(height: size.height, labels: labels, lane: lane), hours: max(chart.hours, 1))
         let axis = Self.axis(chart)
         let runs = self.runs(f)
         let nowPt = runs.last?.last ?? CGPoint(x: f.X(chart.nowT), y: f.Y(1))
@@ -39,6 +57,12 @@ public struct GlideChartView: View {
             Path { path in
                 path.move(to: CGPoint(x: 0, y: f.Y(0))); path.addLine(to: CGPoint(x: f.W, y: f.Y(0)))
                 for b in axis.lines { path.move(to: CGPoint(x: f.X(b), y: f.top)); path.addLine(to: CGPoint(x: f.X(b), y: f.bot)) }
+                // Day lines run on through the lane.
+                if lane {
+                    for b in axis.lines {
+                        path.move(to: CGPoint(x: f.X(b), y: f.bot + Self.laneGap - 2)); path.addLine(to: CGPoint(x: f.X(b), y: f.bot + Self.laneBand))
+                    }
+                }
             }
             .stroke(p.chartGrid, lineWidth: 1)
 
@@ -201,7 +225,7 @@ public struct GlideChartView: View {
                 .fixedSize()
                 .padding(.horizontal, l.current ? 5 : 0).padding(.vertical, l.current ? 1.5 : 0)
                 .background(Capsule().fill(l.current ? p.chartPill : .clear))
-                .position(x: min(max(x, 14), f.W - 14), y: f.bot + Self.labelBand / 2 + 1)
+                .position(x: min(max(x, 14), f.W - 14), y: f.bot + (lane ? Self.laneBand : 0) + Self.labelBand / 2 + 1)
         }
     }
 
@@ -266,10 +290,11 @@ public struct GlideChartView: View {
         return Axis(lines: lines, labels: labels.map { (t: $0.0, text: $0.1, current: $0.2) })
     }
 
-    public init(chart: WidgetChart, tone: Tone, nowChip: Bool = true, labels: Bool = true) {
+    public init(chart: WidgetChart, tone: Tone, nowChip: Bool = true, labels: Bool = true, lane: Bool = false) {
         self.chart = chart
         self.tone = tone
         self.nowChip = nowChip
         self.labels = labels
+        self.lane = lane
     }
 }

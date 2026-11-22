@@ -102,7 +102,8 @@ public struct HeadroomWidgetView: View {
         .padding(family == .systemSmall ? 13 : 15)
     }
 
-    /// The surface for this widget: the focus provider's orb and, when it's hot, the state's glow.
+    /// The surface for this widget: the focus provider's top-edge light and, when the widget shows a
+    /// pacing state, that state's glow from the top-right corner.
     public static func surface(kind: HeadroomWidgetKind, feed: WidgetFeed?, account: String? = nil) -> WidgetSurface {
         let focus = account.flatMap { feed?.account($0) } ?? feed?.focus(for: kind)
         var accent: PacingState?
@@ -113,7 +114,7 @@ public struct HeadroomWidgetView: View {
         case .pace: accent = focus?.week?.state
         case .accounts, .activity: accent = nil
         case .session:
-            if let s = focus?.session { accent = s.level >= .amber ? (s.level == .amber ? .tight : .veryTight) : nil }
+            if let s = focus?.session { accent = s.level >= .amber ? (s.level == .amber ? .tight : .veryTight) : s.tone }
         }
         return WidgetSurface(provider: focus?.id, accent: accent)
     }
