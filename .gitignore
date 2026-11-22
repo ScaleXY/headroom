@@ -22,3 +22,4 @@ DerivedData/
 # Agent worktrees
 /.claude/
 /dist/
+__pycache__/

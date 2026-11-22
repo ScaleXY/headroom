@@ -144,3 +144,5 @@ The first three screenshots also show in search results.
 - **Regenerating.** `make mobile-appstore` re-captures and rebuilds everything (about 35 minutes;
   it reuses the "Headroom Capture" simulators it made). `python3 -I Scripts/mobile_appstore_media.py` alone rebuilds the sets from
   the last raw captures, for example after editing a headline or `BG`.
+
+Listing text and screenshot synchronization: see [the listing workflow guide](../listing/README.md).

@@ -1,0 +1,79 @@
+# Synchronizes repository listing text and screenshots with App Store Connect, by hand from Actions.
+# diff reports changes without writes; apply performs them; pull exports live text as an artifact.
+# Secrets (set for the ScaleXY organization), using an App Manager or Admin API key:
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY          AuthKey_<id>.p8, PEM or base64
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID       the key ID
+#   APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID    the issuer ID
+name: App Store listing
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Compare, update, or export live listing text
+        type: choice
+        options: [diff, apply, pull]
+        default: diff
+      platform:
+        description: Listing platform
+        type: choice
+        options: [ios, macos]
+        default: ios
+      version:
+        description: Version string (optional)
+        type: string
+        required: false
+      create_version:
+        description: Create the specified version if none is editable
+        type: boolean
+        default: false
+      screenshots:
+        description: Synchronize configured screenshots
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appstore-listing-${{ inputs.platform }}
+  cancel-in-progress: false
+
+jobs:
+  listing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ASC_KEY: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY }}
+      ASC_KEY_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID }}
+      MODE: ${{ inputs.mode }}
+      PLATFORM: ${{ inputs.platform }}
+      VERSION: ${{ inputs.version }}
+      CREATE_VERSION: ${{ inputs.create_version }}
+      SCREENSHOTS: ${{ inputs.screenshots }}
+    steps:
+      - name: Check App Store Connect secrets
+        run: |
+          missing=""
+          [ -n "$ASC_KEY" ] || missing="$missing APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY"
+          [ -n "$ASC_KEY_ID" ] || missing="$missing APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_KEY_ID"
+          [ -n "$ASC_ISSUER_ID" ] || missing="$missing APPLE_DEVELOPER_ACCOUNT_APP_STORE_CONNECT_ISSUER_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets:$missing. Use an App Manager or Admin API key."
+            exit 1
+          fi
+      - uses: actions/checkout@v5
+      - name: Synchronize listing
+        run: |
+          args=(--mode "$MODE" --platform "$PLATFORM" --summary "$GITHUB_STEP_SUMMARY")
+          [ -z "$VERSION" ] || args+=(--version "$VERSION")
+          [ "$CREATE_VERSION" != true ] || args+=(--create-version)
+          [ "$SCREENSHOTS" != false ] || args+=(--no-screenshots)
+          [ "$MODE" != pull ] || args+=(--out "$RUNNER_TEMP/listing")
+          python3 -I Scripts/appstore_listing.py "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'pull'
+        with:
+          name: appstore-listing-${{ inputs.platform }}
+          path: ${{ runner.temp }}/listing

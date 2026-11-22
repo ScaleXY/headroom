@@ -18,6 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: swift --version && swift test
+      - name: Test App Store listing tools (offline)
+        run: python3 -I -m unittest discover -s Scripts/tests -v
 
   mobile:
     name: iPhone, iPad and Watch

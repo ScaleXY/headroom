@@ -1,0 +1,11 @@
+{
+  "bundleId": "com.scalexy.headroom",
+  "platform": "MAC_OS",
+  "copyright": "2026 ScaleXY Private Limited",
+  "screenshots": [
+    {
+      "displayType": "APP_DESKTOP",
+      "folder": "appstore/screenshots/2880x1800"
+    }
+  ]
+}
