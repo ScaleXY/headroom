@@ -87,8 +87,8 @@ struct NumberFormatTests {
     @Test func headroomMultiplier() {
         #expect(NumberFormat.headroom(0.62) == "38% short")
         #expect(NumberFormat.headroom(0) == "100% short")
-        #expect(NumberFormat.headroom(0.996) == "0% short")
-        #expect(NumberFormat.headroom(1) == "0% spare")
+        #expect(NumberFormat.headroom(0.996) == "exactly enough")
+        #expect(NumberFormat.headroom(1) == "exactly enough")
         #expect(NumberFormat.headroom(1.4) == "40% spare")
         #expect(NumberFormat.headroom(1.996) == "100% spare")
         #expect(NumberFormat.headroom(2) == "2.0× what's needed")
