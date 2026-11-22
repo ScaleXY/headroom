@@ -5,14 +5,13 @@ import HeadroomWidgetUI
 import SwiftUI
 
 /// The Limits card, as the Mac's popover draws it, from the same `Presenter`: header, the 5-hour
-/// banner, what's left, the meter, the keys, one chart (the week with its lane underneath), the
+/// banner, the reservoir (what's left and when it renews), the keys, one chart (the week with its lane underneath), the
 /// caption, the stat strip, the verdict, callouts and details.
 struct PaceCardView: View {
     var model: MobileModel
     var account: MergedAccount
     var full = false
     @Environment(\.colorScheme) private var scheme
-    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 46
 
     var body: some View {
         let now = model.reader.now
@@ -24,22 +23,7 @@ struct PaceCardView: View {
             if let fault = card.fault { FaultBanner(model: fault) }
             if let banner = card.session { SessionBannerView(banner: banner) }
             if let hero = card.hero {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("\(hero.percentLeft)%").font(.system(size: heroSize, weight: .semibold).monospacedDigit()).foregroundStyle(p.ink)
-                        .contentTransition(.numericText())
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(hero.label).font(.subheadline.weight(.medium)).foregroundStyle(p.muted).lineLimit(1)
-                        HStack(spacing: 4) {
-                            if hero.hourglass { Hourglass(color: p.tone(.plenty).text, height: 11) }
-                            Text("\(hero.renewCaption) · in \(hero.renewValue)").font(.footnote.weight(.medium)).foregroundStyle(p.muted2)
-                                .lineLimit(1).minimumScaleFactor(0.8)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            if let meter = card.meter, card.showsMeter {
-                CellMeter(state: meter.state, cells: meter.cells, caret: meter.caret, height: 13, dim: meter.opacity < 1, caretLabel: "On track")
+                ReservoirView(hero: hero, state: card.meter?.state ?? .onPace, filled: card.showsMeter, dim: card.meter?.opacity ?? 1)
             }
             if card.showsGlide, let glide = card.glide {
                 VStack(alignment: .leading, spacing: 8) {
@@ -111,7 +95,12 @@ struct PaceCardView: View {
     private func spoken(_ card: PaceCardModel) -> String {
         var parts = ["\(account.provider.displayName), \(account.label)"]
         if let plan = card.plan { parts.append(plan) }
-        if let hero = card.hero { parts.append("\(hero.percentLeft) percent \(hero.label)") }
+        if let hero = card.hero {
+            var words = "\(hero.percentLeft) percent \(hero.label)"
+            if let count = hero.renewIn { words += ", renews in \(count)" }
+            if let date = hero.renewAt { words += ", \(date)" }
+            parts.append(words)
+        }
         if let v = card.verdict { parts.append(v.title + ". " + v.primary) }
         if let m = card.sessionModule { parts.append("5-hour session: \(m.title). \(m.forecast)") }
         if let f = card.fault { parts.append(f.message) }

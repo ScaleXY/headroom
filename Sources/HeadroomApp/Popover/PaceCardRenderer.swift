@@ -53,32 +53,24 @@ enum PaceCardRenderer {
             y += h
         }
 
-        // 3. Hero.
+        // 3. The reservoir: what's left as a level, the number on it, and when it renews.
         if let hero = m.hero {
-            y += 15
-            if let ctx { drawHero(hero, state: m.meter?.state ?? .onPace, x: x0, y: y, w: w, theme: theme, ctx: ctx, dim: m.meter?.opacity ?? 1) }
-            y += 47 + 8 + 15
-        }
-
-        // 4. Meter + caret.
-        if let meter = m.meter, m.showsMeter {
-            y += 15
-            let track = CGRect(x: x0, y: y, width: w, height: MeterRenderer.height)
-            if let ctx { MeterRenderer.draw(meter, rect: track, theme: theme, ctx: ctx) }
-            y += MeterRenderer.height
-            if let caret = meter.caret {
-                y += 4
-                if let ctx { MeterRenderer.drawCaret(at: caret, trackRect: track, top: y, theme: theme, ctx: ctx) }
-                y += 15
+            y += 14
+            let rect = CGRect(x: x0, y: y, width: w, height: CGFloat(Reservoir.height))
+            if let ctx {
+                ReservoirRenderer.draw(hero, state: m.meter?.state ?? .onPace, filled: m.showsMeter, dim: m.meter?.opacity ?? 1,
+                                       rect: rect, theme: theme, ctx: ctx)
             }
+            out?.add(rect, tooltip: hero.tooltip)
+            y += rect.height
         }
 
-        // 5. Keys, then one chart: the week glide with the lane under it on the same time axis.
+        // 4. Keys, then one chart: the week glide with the lane under it on the same time axis.
         if let g = m.glide, m.showsGlide {
             if m.keys.isEmpty {
-                y += m.showsMeter ? 10 : 18
+                y += m.hero != nil ? 12 : 18
             } else {
-                y += m.showsMeter ? 14 : 18
+                y += m.hero != nil ? 14 : 18
                 let h = keysHeight(m.keys, width: w)
                 if let ctx { drawKeys(m.keys, x: x0, y: y, w: w, theme: theme, ctx: ctx) }
                 y += h + 8
@@ -444,34 +436,6 @@ enum PaceCardRenderer {
             y += spendLegendLine
         }
         out?.add(rect, tooltip: "Share of what \(provider.displayName) is spending right now\n" + tooltip.joined(separator: "\n"))
-    }
-
-    // MARK: Hero
-
-    static func drawHero(_ h: HeroModel, state: PacingState, x: CGFloat, y: CGFloat, w: CGFloat, theme: Theme, ctx: CGContext, dim: Double) {
-        let numFont = F.sf(56, 700, tabular: true)
-        let num = Text("\(h.percentLeft)", numFont, theme.ink.fade(dim < 1 ? 0.7 : 1), kern: -2.8)
-        let numBase = baseline(top: y, font: numFont, lineHeight: 47)
-        num.draw(x: x - 1, baseline: numBase, in: ctx)
-        // Raised "%": top-aligned with the digits' cap height.
-        let pctFont = F.sf(23, 650)
-        let capTop = numBase - numFont.capHeight
-        Text("%", pctFont, theme.ink.fade(0.88)).draw(x: x - 1 + num.width + 3 + 2.8, baseline: capTop + 4 + pctFont.capHeight, in: ctx)
-        let labelTop = y + 47 + 8
-        Text(h.label, F.sf(12, 500), theme.muted).draw(x: x, baseline: baseline(top: labelTop, font: F.sf(12, 500), lineHeight: 15), in: ctx)
-
-        let right = x + w
-        let vFont = F.sf(32, 700, tabular: true)
-        let v = Text(h.renewValue, vFont, theme.ink, kern: -1.12)
-        let vBase = labelTop - 8 - 27.5 + baseline(top: 0, font: vFont, lineHeight: 27.5)
-        v.draw(x: right + 1.12, baseline: vBase, align: .right, in: ctx)
-        if h.hourglass {
-            let hgH: CGFloat = 19
-            let hx = right - v.width - 7 - hgH * 0.7
-            Glyph.hourglass(in: CGRect(x: hx, y: vBase - vFont.capHeight / 2 - hgH / 2, width: hgH * 0.7, height: hgH), color: theme.pacing(.plenty).text, ctx: ctx)
-        }
-        Text(h.renewCaption, F.sf(12, 500, tabular: true), theme.muted)
-            .draw(x: right, baseline: baseline(top: labelTop, font: F.sf(12, 500), lineHeight: 15), align: .right, in: ctx)
     }
 
     // MARK: Keys, caption and stat strip

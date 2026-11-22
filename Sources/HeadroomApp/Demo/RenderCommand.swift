@@ -36,6 +36,11 @@ enum RenderCommand {
                         write(rep, to: outDir.appendingPathComponent("pace-\(s.name)-\(theme.isDark ? "dark" : "light").png")); written += 1
                     }
                 }
+                // Settings → Meter off: the reservoir keeps its number and renewal, without the level.
+                if let s = Demo.reservoirScenarios(now: now).first(where: { $0.name == "limits-ontrack" }),
+                   let rep = PopoverPage.renderPace(s.inputs, theme: theme, now: now, configure: { $0.showsMeter = false }) {
+                    write(rep, to: outDir.appendingPathComponent("pace-limits-nolevel-\(theme.isDark ? "dark" : "light").png")); written += 1
+                }
             }
         }
         if name == "all" || name == "activity" {
@@ -203,9 +208,13 @@ enum RenderCommand {
 /// Composes whole popover pages offscreen (same drawing code as the live popover).
 @MainActor
 enum PopoverPage {
-    static func renderPace(_ inputs: [PaceInput], theme: Theme, now: Date) -> NSBitmapImageRep? {
+    static func renderPace(_ inputs: [PaceInput], theme: Theme, now: Date, configure: (inout PaceCardModel) -> Void = { _ in }) -> NSBitmapImageRep? {
         let presenter = Presenter(now: now, locale: Locale(identifier: "en_US"))
-        let cards = inputs.map { presenter.paceCard($0) }
+        let cards = inputs.map { input -> PaceCardModel in
+            var card = presenter.paceCard(input)
+            configure(&card)
+            return card
+        }
         let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
         var h = pad + PopoverChrome.headerHeight
         for (i, c) in cards.enumerated() { h += (i > 0 ? 10 : 0) + PaceCardRenderer.draw(c, origin: .zero, width: cw, theme: theme, ctx: nil) }

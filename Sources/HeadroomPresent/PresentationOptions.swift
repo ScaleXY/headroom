@@ -13,7 +13,8 @@ public enum SessionDetail: String, CaseIterable, Sendable {
 
 /// The optional pieces of a Limits card. The raw values are persisted settings keys: never rename them.
 public enum CardPart: String, CaseIterable, Sendable {
-    /// The week's five cells with the on-track caret.
+    /// The level in the Limits card's reservoir (off: the reservoir keeps its number and renewal, unfilled).
+    /// The raw value predates the reservoir, from the five cells it replaced.
     case weekMeter
     /// The week glide.
     case weekGraph
@@ -36,7 +37,7 @@ public enum CardPart: String, CaseIterable, Sendable {
 
     public var detail: String {
         switch self {
-        case .weekMeter: "Five cells for what's left, with the on-track point marked."
+        case .weekMeter: "A level for what's left, in the color of your pace."
         case .weekGraph: "The week so far, and where your rate takes it."
         case .sessionMeter: "Five cells for what's left of the session."
         case .sessionGraph: "Each 5-hour session, or each day's use without one."

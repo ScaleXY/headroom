@@ -87,13 +87,23 @@ public struct HeroModel: Equatable {
     public var renewValue: String
     public var renewCaption: String
     public var hourglass: Bool
+    /// The reservoir's renewal tag: "3 days", "20 hours", "45 min". Nil when the renewal is unknown (no tag).
+    public var renewIn: String?
+    /// The tag's second line: "Fri 2 PM", "tomorrow 6 AM", "today 4 PM".
+    public var renewAt: String?
+    /// "54% of this week's allowance left · renews Fri 2:00 PM"
+    public var tooltip: String?
 
-    public init(percentLeft: Int, label: String, renewValue: String, renewCaption: String, hourglass: Bool) {
+    public init(percentLeft: Int, label: String, renewValue: String, renewCaption: String, hourglass: Bool,
+                renewIn: String? = nil, renewAt: String? = nil, tooltip: String? = nil) {
         self.percentLeft = percentLeft
         self.label = label
         self.renewValue = renewValue
         self.renewCaption = renewCaption
         self.hourglass = hourglass
+        self.renewIn = renewIn
+        self.renewAt = renewAt
+        self.tooltip = tooltip
     }
 }
 
