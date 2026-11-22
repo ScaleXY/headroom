@@ -136,7 +136,9 @@ final class TaskHome: @unchecked Sendable {
         #expect(alerts.evaluate([mirrored(.done, working: 120)], now: now) { _ in true }.isEmpty)
         var longer = TaskAlerts()
         _ = longer.evaluate([mirrored(.running, working: 20 * 60)], now: now) { _ in true }
-        #expect(longer.evaluate([mirrored(.stopped, working: 20 * 60)], now: now) { _ in true }.map(\.kind) == [.stopped])
+        var ended = mirrored(.stopped, working: 20 * 60)
+        ended.turnSeconds = 20 * 60
+        #expect(longer.evaluate([ended], now: now) { _ in true }.map(\.kind) == [.stopped])
         // A question is always news.
         #expect(alerts.evaluate([mirrored(.waiting, working: 60)].map { var r = $0; r.waitReason = .input; return r }, now: now) { _ in true }.map(\.kind) == [.needsInput])
     }
@@ -193,16 +195,29 @@ final class TaskHome: @unchecked Sendable {
         #expect(eval(asking(600)).first?.sound == true)
     }
 
-    @Test func aRunThatStopsWithWorkLeftAlerts() {
-        var alerts = TaskAlerts()
+    @Test func aLongTurnEndingAlertsAndAShortOneOrASessionEndingDoesNot() {
         let open = TaskNode(id: "api", title: "API", state: .running)
         let done = TaskNode(id: "docs", title: "Docs", state: .done)
+        func ended(_ turn: Double?, left: Bool = false, updated: Double = 0) -> TaskRun {
+            var r = run(.stopped, nodes: [open, done], updated: updated)
+            r.turnSeconds = turn; r.left = left
+            return r
+        }
+        var alerts = TaskAlerts()
         _ = alerts.evaluate([run(.running, nodes: [open, done])], now: now) { _ in true }
-        let stopped = alerts.evaluate([run(.stopped, nodes: [open, done])], now: now) { _ in true }
-        #expect(stopped.map(\.kind) == [.stopped] && stopped[0].title == "Agent run · demo stopped with work left" && stopped[0].body == "1 of 2 tasks done.")
-        // Back to work and stopped again soon after: once is enough.
+        let turn = alerts.evaluate([ended(24 * 60)], now: now) { _ in true }
+        #expect(turn.map(\.kind) == [.stopped] && turn[0].title == "Agent run · demo finished its turn after 24m" && turn[0].body == "1 of 2 tasks done.")
+        // Back to work and its turn ended again soon after: once is enough.
         _ = alerts.evaluate([run(.running, nodes: [open, done], updated: -30)], now: now) { _ in true }
-        #expect(alerts.evaluate([run(.stopped, nodes: [open, done], updated: -20)], now: now) { _ in true }.isEmpty)
+        #expect(alerts.evaluate([ended(15 * 60, updated: -20)], now: now) { _ in true }.isEmpty)
+        // Under ten minutes of work: no news.
+        var quick = TaskAlerts()
+        _ = quick.evaluate([run(.running, nodes: [open, done])], now: now) { _ in true }
+        #expect(quick.evaluate([ended(9 * 60)], now: now) { _ in true }.isEmpty)
+        // The session simply ended (left): no news either.
+        var gone = TaskAlerts()
+        _ = gone.evaluate([run(.running, nodes: [open, done])], now: now) { _ in true }
+        #expect(gone.evaluate([ended(30 * 60, left: true)], now: now) { _ in true }.isEmpty)
     }
 
     @Test func finishedAtMostOnceInHalfAnHourUnlessTheOutcomeChanged() {

@@ -11,6 +11,8 @@ import ActivityKit
 /// A run's or row's state mark (`RunGlyph` on the presenter side).
 public enum RunMark: String, Codable, Sendable, Hashable, CaseIterable {
     case planned, running, stale, needsInput, waiting, parked, stopped, done, partial, failed, skipped, more
+    /// The agent ended its turn: a ring around a dot, the ball with you.
+    case yourTurn
 }
 
 /// What a mark or word means, for its color (`RunTone`): blue for work moving, ink for settled,
@@ -65,6 +67,9 @@ public struct RunMarkView: View {
             case .stale:
                 ctx.stroke(circle(3.9 * k), with: .color(color), lineWidth: 1.3 * k)
                 ctx.fill(circle(1.5 * k), with: .color(color))
+            case .yourTurn:
+                ctx.stroke(circle(4.4 * k), with: .color(color.opacity(0.85)), lineWidth: 1.1 * k)
+                ctx.fill(circle(2.3 * k), with: .color(color))
             case .needsInput:
                 ctx.fill(circle(5 * k), with: .color(color))
                 ctx.stroke(line([(0, -2.6), (0, 0.6)]), with: .color(.white), style: StrokeStyle(lineWidth: 1.5 * k, lineCap: .round))

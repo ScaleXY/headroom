@@ -641,7 +641,7 @@ final class Lines: @unchecked Sendable {
         s.run(["task", "start", "a"])
         _ = s.run(["task", "hook"], env: [:], stdin: #"{"session_id": "r1", "hook_event_name": "Stop"}"#)
         let (code, out) = s.run(["wait", "--run", "r1", "--until", "attention"])
-        #expect(code == 0 && out.contains("stopped"))
+        #expect(code == 0 && out.contains("your turn"))
     }
 }
 

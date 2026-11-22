@@ -20,6 +20,10 @@ public struct RunRecord: Codable, Sendable, Hashable, Identifiable {
     /// "4 of 5" and "tasks · 1 optional failed", as the receipt said.
     public var tasks: String
     public var tasksNote: String
+    /// Settled with work open ("Left at 95%"); nil in records written before runs could be left.
+    public var left: Bool?
+    /// The headline percent, for a run with a plan.
+    public var percent: Int?
 
     public init(id: String, title: String, project: String? = nil, harness: String? = nil, startedAt: Date, endedAt: Date, state: TaskRunState,
                 abandoned: Bool = false, hidden: Bool = false, tokens: Int64 = 0, tokensByModel: [String: Int64] = [:], time: TaskTimeSplit = .zero,
@@ -32,13 +36,19 @@ public struct RunRecord: Codable, Sendable, Hashable, Identifiable {
     /// The summary of a finished run, titled as its card was.
     public init(_ r: TaskRun) {
         let (tasks, note) = RunsPresenter.receiptTasks(r)
-        self.init(id: r.id, title: RunsPresenter(now: r.updatedAt).label(r), project: r.project, harness: r.harness,
+        let p = RunsPresenter(now: r.updatedAt)
+        self.init(id: r.id, title: p.label(r), project: r.project, harness: r.harness,
                   startedAt: r.startedAt, endedAt: r.updatedAt, state: r.state, abandoned: r.abandoned, hidden: r.hidden, tokens: r.tokens,
                   tokensByModel: r.tokensByModel, time: r.time, tasks: tasks, tasksNote: note)
+        if r.left { left = true }
+        if r.hasDeclaredTasks { percent = p.shownPercent(r) }
     }
 
+    /// Seconds worked; a record with no split falls back to the time the run was open.
+    public var worked: Double { time.total > 0 ? time.working : max(0, endedAt.timeIntervalSince(startedAt)) }
+
     enum CodingKeys: String, CodingKey {
-        case id, title, project, harness, state, abandoned, hidden, tokens, time, tasks
+        case id, title, project, harness, state, abandoned, hidden, tokens, time, tasks, left, percent
         case startedAt = "started_at"
         case endedAt = "ended_at"
         case tokensByModel = "tokens_by_model"
@@ -52,7 +62,7 @@ public struct RecentRunRow: Sendable, Hashable, Identifiable {
     public var title: String
     /// "today 2:10 PM", "yesterday 9 PM", "Tue 4 PM".
     public var when: String
-    /// "1h 42m"
+    /// "1h 23m": time worked.
     public var duration: String
     /// "$4.10", when the models are priced.
     public var cost: String?
@@ -66,7 +76,7 @@ public struct RecentRunsModel: Sendable, Hashable {
     public var rows: [RecentRunRow]
     /// Runs of the last two weeks past the ones listed.
     public var more: Int
-    /// "3 runs · 6h 10m · $18.40" over everything kept.
+    /// "3 runs · 6h 10m · $18.40" over everything kept: time worked, not time open.
     public var summary: String
 
     public static let title = "Recent runs"
@@ -91,7 +101,7 @@ public struct RecentRunsPresenter: Sendable {
         guard !shown.isEmpty else { return nil }
         var micros: Int64 = 0, priced = false, seconds = 0.0
         for r in shown {
-            seconds += r.endedAt.timeIntervalSince(r.startedAt)
+            seconds += r.worked
             if let p = pricing, let c = RunsPresenter.cost(r.tokensByModel, pricing: p) { micros += c.micros; priced = true }
         }
         var summary = "\(shown.count) run\(shown.count == 1 ? "" : "s") · \(RunsPresenter.duration(seconds))"
@@ -104,14 +114,15 @@ public struct RecentRunsPresenter: Sendable {
         let (glyph, tone): (RunGlyph, RunTone) = switch r.state {
         case _ where r.abandoned: (.skipped, .quiet)
         case .done: (.done, .neutral)
-        case .partial: (.partial, .warn)
+        case .partial: (.partial, .alert)
         case .failed: (.failed, .alert)
-        default: (.stopped, .quiet)
+        default: (.left, .neutral)
         }
         let cost = pricing.flatMap { RunsPresenter.cost(r.tokensByModel, pricing: $0) }.map { NumberFormat.dollars(micros: $0.micros, style: .precise) }
-        return RecentRunRow(id: r.id, title: r.title, when: when(r.endedAt), duration: RunsPresenter.duration(r.endedAt.timeIntervalSince(r.startedAt)),
+        return RecentRunRow(id: r.id, title: r.title, when: when(r.endedAt), duration: RunsPresenter.duration(r.worked),
                             cost: cost, glyph: glyph, tone: tone,
-                            outcome: RunWords.state(r.state, waitReason: nil, abandoned: r.abandoned))
+                            outcome: RunWords.state(r.state, waitReason: nil, abandoned: r.abandoned, left: r.left ?? (r.state == .stopped),
+                                                    percent: r.percent))
     }
 
     /// "today 2:10 PM", "yesterday 9 PM", "Tue 4 PM", then "Nov 2".

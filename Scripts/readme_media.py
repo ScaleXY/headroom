@@ -284,25 +284,25 @@ def main():
 pre {{ height: {snap_h}px; overflow: hidden; border-radius: 18px; padding: 22px 22px; background: #0A0B0E;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); font: 13px/1.75 ui-monospace, "SF Mono", Menlo, monospace; color: #D7D9E0; white-space: pre-wrap; }}""")
 
-        # Agent runs: the Runs tab in its three list styles, and in light.
+        # Agent runs: the Runs tab as it leads (a question, your turn, the day's receipt), and in light.
         def run_grid(name, cells):
             files = [raw / f"{f}.png" for _, f, _ in cells]
             grid = "".join(f"<div>{eyebrow(t, c)}<div class='shot'><img src='{raw}/{f}.png'></div></div>" for t, f, c in cells)
             panel(name, f'<div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">{grid}</div>', 960,
                   uneven_height(files, 2, cell_w), raw, work)
 
-        run_grid("runs", [("Runs · Ledger", "runs-mixed-dark", None), ("Two-line", "runs-mixed-twoline-dark", None),
-                          ("Fill rows", "runs-mixed-fill-dark", None), ("Light appearance", "runs-mixed-all-light", None)])
+        run_grid("runs", [("Runs · a question leads", "runs-mixed-dark", None), ("Your turn", "runs-your-turn-dark", None),
+                          ("Nothing running · the day's receipt", "runs-settled-dark", None), ("Light appearance", "runs-working-light", None)])
 
         # A run's own page, as a Briefing and as Lanes.
         run_grid("run-page", [("Run page · Briefing", "runpage-mixed-4-briefing-dark", STATE["plenty"]),
                               ("Lanes · now, the limit's pause and the finish", "runpage-timeline-1-lanes-dark", STATE["plenty"])])
 
-        # What a run page says when it needs you, pauses, has no plan, or is done.
+        # What a run page says when it needs you, it's your turn, it pauses, or the session ended.
         run_grid("run-states", [("An agent is asking", "runpage-input-1-briefing-dark", STATE["verytight"]),
+                                ("Your turn · what's left", "runpage-your-turn-1-briefing-dark", None),
                                 ("Paused at the 5-hour limit", "runpage-limit-1-briefing-dark", STATE["tight"]),
-                                ("No plan · agents finished", "runpage-mixed-5-briefing-dark", STATE["plenty"]),
-                                ("What a finished run took", "runpage-finished-1-briefing-dark", STATE["onpace"])])
+                                ("Left at 95% · a receipt", "runpage-left-1-briefing-dark", None)])
 
         # Runs beside the meters in the menu bar.
         indicators = [("One run with a plan", "runs-one"), ("No plan: agents finished", "runs-observed"),

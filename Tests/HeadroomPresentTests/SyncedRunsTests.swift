@@ -19,6 +19,11 @@ private let presenter: RunsPresenter = {
                      hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
                      title: names ? r.bestTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
                      finishedRows: names ? picked.finished : 0, finishedEarlier: r.finishedEarlier ?? 0, lastSeen: lastSeen)
+    .with { $0.left = r.left; $0.turnSeconds = r.yourTurn ? r.turnSeconds : nil }
+}
+
+extension RunDigest {
+    func with(_ change: (inout RunDigest) -> Void) -> RunDigest { var d = self; change(&d); return d }
 }
 
 @MainActor @Suite struct SyncedRunsTests {
@@ -127,7 +132,7 @@ private let presenter: RunsPresenter = {
         let unnamed = digest(Demo.failedRun(now: now), names: false)
         #expect(presenter.finishedAlert(unnamed).title == "Claude Code run failed")
         #expect(presenter.finishedAlert(unnamed).body == "On MacBook Pro. 50% done · must-haves 0 of 1 · 101K tokens")
-        #expect(presenter.stoppedAlert(digest(Demo.stoppedRun(now: now), names: true)).title == "Tidy the settings module stopped with work left")
+        #expect(presenter.turnEndedAlert(digest(Demo.yourTurnRun(now: now), names: true)).title == "Tidy the settings module finished its turn after 24m")
     }
 
     // MARK: Second pass
@@ -159,9 +164,9 @@ private let presenter: RunsPresenter = {
         // A plan read off the harness counts steps.
         d.mirrored = true
         #expect(presenter.card(d).counts == "5 of 10 steps · 3 running")
-        // Finished: how long it took.
+        // Finished: how long it worked (the time open, without a split).
         let done = presenter.card(digest(Demo.finishedRun(now: now), names: false))
-        #expect(done.elapsed == "1h 42m")
+        #expect(done.elapsed == "1h 42m working")
         #expect(done.counts == "4 of 4 tasks")
     }
 
@@ -205,7 +210,7 @@ private let presenter: RunsPresenter = {
         // A failed optional task doesn't count toward the run, so the Mac leaves it out of the counts.
         d.counts = RunCounts(done: 4)
         let r = try #require(presenter.card(d).receipt)
-        #expect(r.duration == "1h 42m")
+        #expect(r.duration == "1h 10m" && r.open == "1h 42m")
         #expect(r.tokens == "296K")
         #expect(r.cost == "about $4.10")
         #expect(r.tasks == "4 of 5" && r.tasksNote == "tasks · 1 optional failed")
@@ -269,11 +274,11 @@ private let presenter: RunsPresenter = {
         #expect(receipt.tasksNote == "tasks · 1 failed · 1 optional failed")
     }
 
-    @Test func anAbandonedRunSaysSo() {
-        var d = digest(Demo.stoppedRun(now: now), names: true)
+    @Test func aClosedRunSaysSo() {
+        var d = digest(Demo.yourTurnRun(now: now), names: true)
         d.abandoned = true
-        #expect(presenter.card(d).stateText == RunWords.abandoned)
-        #expect(!d.stoppedWithWorkLeft)
+        #expect(presenter.card(d).stateText == RunWords.closed)
+        #expect(!d.yourTurn && d.isSettled)
     }
 
     // MARK: The run's own page

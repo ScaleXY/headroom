@@ -1,5 +1,6 @@
 import Foundation
 import HeadroomKit
+import HeadroomPresent
 
 /// `headroom tasks`: each run as a header (glyph, title, a done/in-flight/not-started bar,
 /// percent, must-haves, ETA, tokens), then its tasks as an indented tree.
@@ -22,7 +23,7 @@ enum TaskRender {
     }
 
     static func header(_ r: TaskRun, style: Style, now: Date) -> String {
-        let (g, hex) = glyph(r.state, reason: r.waitReason)
+        let (g, hex) = r.abandoned ? ("⊘", Style.muted) : r.left ? ("◐", Style.muted) : glyph(r.state, reason: r.waitReason)
         // Nothing declared: nobody knows how many agents are still to come, so counts, not a percent or an ETA.
         let observed = !r.hasDeclaredTasks && !r.nodes.isEmpty
         var parts: [String] = []
@@ -64,6 +65,9 @@ enum TaskRender {
         if let s = n.steps, n.leaf { detail.append("\(s.done)/\(s.total)") }
         if n.importance != .normal { detail.append(n.importance.rawValue) }
         switch n.state {
+        case .waiting where n.waitReason == .you:
+            detail.append(RunWords.yours.lowercased())
+            if let w = n.waitNote { detail.append(TaskText.display(w)) }
         case .waiting:
             detail.append(style.paint(n.waitReason == .input ? "needs input" : "waiting on \(n.waitReason?.rawValue ?? "dependency")", Style.amber))
             if let w = n.waitNote { detail.append(TaskText.display(w)) }
@@ -108,6 +112,7 @@ enum TaskRender {
         switch s {
         case .planned: ("○", Style.muted)
         case .running: ("●", Style.blue)
+        case .waiting where reason == .you: ("○", Style.muted)
         case .waiting: ("⏸", reason == .input ? Style.rose : Style.amber)
         case .parked: ("◐", Style.muted)
         case .done: ("✓", Style.green)
@@ -121,18 +126,25 @@ enum TaskRender {
         switch s {
         case .running: ("●", Style.blue)
         case .waiting: ("⏸", reason == .input ? Style.rose : Style.amber)
-        case .stopped: ("■", Style.muted)
+        // Your turn: calm, the ball is with the user.
+        case .stopped: ("◉", nil)
         case .done: ("✓", Style.green)
         case .partial: ("◑", Style.amber)
         case .failed: ("✗", Style.rose)
         }
     }
 
+    /// The run's state in the CLI's lowercase, with the app's words (`RunWords`) for your turn,
+    /// left and closed.
     static func stateWord(_ r: TaskRun) -> String {
+        if r.abandoned { return RunWords.closed.lowercased() }
         switch r.state {
-        case .waiting: r.waitReason == .input ? "needs input" : "waiting on \(r.waitReason?.rawValue ?? "dependency")"
-        case .stopped: "stopped with work left"
-        default: r.state.rawValue
+        case .waiting: return r.waitReason == .input ? "needs input" : "waiting on \(r.waitReason?.rawValue ?? "dependency")"
+        case .stopped where r.left:
+            let s = RunWords.left(at: r.hasDeclaredTasks ? Int((max(r.progress.done, r.progress.estimate) * 100 + 1e-9).rounded(.down)) : nil).lowercased()
+            return r.mustHavesDone ? s + " · " + RunWords.mustHavesDone : s
+        case .stopped: return RunWords.yourTurn.lowercased()
+        default: return r.state.rawValue
         }
     }
 

@@ -67,6 +67,10 @@ enum RunPageRenderer {
                     y += drawLimit(limit, x: x0, y: y, w: w, theme: t, ctx: ctx, out: out)
                 }
             }
+            if m.phase == .yourTurn {
+                y += 12
+                y += RunListRenderer.drawButtons(m, verb: "Reply", x: x0, y: y, w: w, theme: t, ctx: ctx, out: out)
+            }
             if let warning = m.warning, page?.limit == nil {
                 y += 10
                 y += RunCardRenderer.drawCallout(warning, x: x0, y: y, w: w, theme: t, ctx: ctx)
@@ -80,10 +84,19 @@ enum RunPageRenderer {
                 y += 5
                 y += drawFactsLine(facts, x: x0, y: y, w: w, theme: t, ctx: ctx)
             }
+            // Left with work open: how far it got, and both ways forward.
+            if m.actions.resume, m.actions.openSession || m.actions.close {
+                y += 12
+                y += drawMeter(m, x: x0, y: y, w: w, theme: t, ctx: ctx)
+                y += 12
+                y += RunListRenderer.drawButtons(m, verb: "Resume", x: x0, y: y, w: w, theme: t, ctx: ctx, out: out)
+            }
             if let rc = m.receipt {
                 let parts = RunCardRenderer.splitParts(rc.time, theme: t)
                 if !parts.isEmpty {
-                    y += 9
+                    y += 12
+                    y += drawSplitCaption(parts, open: rc.open, x: x0, y: y, w: w, theme: t, ctx: ctx)
+                    y += 6
                     y += drawSplit(parts, x: x0, y: y, w: w, theme: t, ctx: ctx, out: out)
                 }
             }
@@ -122,7 +135,7 @@ enum RunPageRenderer {
         let title = clamp(m.title, F.sf(14.5, 650), t.ink, width: right - tx, lineHeight: 18, lines: 2, kern: -0.08)
         // Under the buttons only when the title took two lines.
         let subWidth = (title.height > 18 ? x + w : right) - tx
-        let sub = RunCardRenderer.fit(m.subtitle, F.sf(11.5, 500), t.muted, width: subWidth)
+        let sub = RunCardRenderer.fitParts(m.subtitle, F.sf(11.5, 500), t.muted, width: subWidth)
         let h = max(tileSize, title.height + 2 + 14)
         guard let ctx else { return h }
         let tone = RunCardRenderer.color(m.tone, t, glyph: m.glyph)
@@ -416,6 +429,31 @@ enum RunPageRenderer {
             if f.label == "Tokens" { parts.append(Text(" tokens", F.sf(12, 500), t.muted)) }
         }
         Text(parts).draw(x: x, capCenter: y + h / 2, in: ctx)
+        return h
+    }
+
+    /// Where the time went, in words over the bar: each part with a dot in its colour, and on the
+    /// right how long the run was open (the one place time open is shown).
+    static func drawSplitCaption(_ parts: [(label: String, seconds: Double, color: NSColor)], open: String?, x: CGFloat, y: CGFloat, w: CGFloat,
+                                 theme t: Theme, ctx: CGContext?) -> CGFloat {
+        let h: CGFloat = 15
+        guard let ctx else { return h }
+        let mid = y + h / 2
+        var right = x + w
+        if let open {
+            let o = Text("\(open) open", F.sf(11, 550, tabular: true), t.muted)
+            o.draw(x: right, capCenter: mid, align: .right, in: ctx)
+            right -= o.width + 12
+        }
+        var px = x
+        for p in parts {
+            let word = p.label == "waiting on you" ? "On you" : p.label == "on a limit" ? "Limit" : p.label.prefix(1).uppercased() + p.label.dropFirst()
+            let label = Text([Text(word + " ", F.sf(11, 600), t.ink.fade(0.8)), Text(RunsPresenter.duration(p.seconds), F.sf(11, 500, tabular: true), t.muted)])
+            guard px + 10 + label.width <= right else { break }
+            ctx.fill(CGPath(ellipseIn: CGRect(x: px, y: mid - 3, width: 6, height: 6), transform: nil), p.color)
+            label.draw(x: px + 10, capCenter: mid, in: ctx)
+            px += 10 + label.width + 12
+        }
         return h
     }
 

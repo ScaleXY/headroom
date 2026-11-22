@@ -37,7 +37,7 @@ struct HitRegion {
         case toggleFinished
     }
 
-    enum RunButton: Equatable { case openSession, copyResume }
+    enum RunButton: Equatable { case openSession, copyResume, close }
     var rect: CGRect
     var tooltip: String?
     var action: Action = .none

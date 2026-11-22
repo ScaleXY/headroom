@@ -20,14 +20,20 @@ final class RunHistory {
         url = directory.appendingPathComponent("run-history.json")
     }
 
-    /// Every fold's runs; keeps a small summary of each that finished.
+    /// Every fold's runs; keeps a small summary of each that finished, was closed or was left. A
+    /// run that's open again (a left session resumed, a finished one given new work) loses its
+    /// record until it settles again, so it is never counted twice.
     func record(_ runs: [TaskRun], now: Date = Date()) {
         var records = load()
         var changed = false
+        for r in runs where !RunsPresenter.isFinished(r) && records[r.id] != nil {
+            records[r.id] = nil
+            changed = true
+        }
         for r in runs where RunsPresenter.isFinished(r) {
             // The fold sets `updatedAt` on every change, so an unchanged finished run is skipped here.
             // (Whole seconds on disk, hence the tolerance.)
-            if let old = records[r.id], abs(old.endedAt.timeIntervalSince(r.updatedAt)) < 1, old.hidden == r.hidden, old.abandoned == r.abandoned, old.state == r.state,
+            if let old = records[r.id], abs(old.endedAt.timeIntervalSince(r.updatedAt)) < 1, old.hidden == r.hidden, old.abandoned == r.abandoned, old.state == r.state, (old.left ?? false) == r.left,
                old.title == RunRecord(r).title { continue }
             guard now.timeIntervalSince(r.updatedAt) < Self.keep else { continue }
             records[r.id] = RunRecord(r)

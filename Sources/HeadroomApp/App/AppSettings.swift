@@ -186,11 +186,8 @@ final class AppSettings {
 
     static let runQuietChoices: [TimeInterval] = [10 * 60, 15 * 60, 30 * 60, 60 * 60]
 
-    /// How the Runs tab lists runs. Ledger by default.
-    var runsListStyle: RunsListStyle {
-        get { RunsListStyle(rawValue: defaults.integer(forKey: "runsListStyle")) ?? .ledger }
-        set { defaults.set(newValue.rawValue, forKey: "runsListStyle"); changed() }
-    }
+    // The Runs tab has one list now. The old list style ("runsListStyle") may still be stored by an
+    // earlier version: it is never read, so it harmlessly does nothing.
 
     /// How a run's own page draws it. Briefing by default.
     var runPageStyle: RunPageStyle {
@@ -361,7 +358,8 @@ enum TaskNotificationKind: String, CaseIterable, Sendable {
     var title: String {
         switch self {
         case .needsInput: "A run needs your input"
-        case .stopped: "A run stopped with work left"
+        // Stored as "stopped" since before turns and sessions were told apart.
+        case .stopped: "An agent finished a long turn"
         case .criticalFailed: "A critical task failed"
         case .stale: "A run went quiet"
         case .finished: "A run finished"

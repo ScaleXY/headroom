@@ -49,8 +49,16 @@ public enum TaskFold {
     }
 
     public static let defaultStaleAfter: TimeInterval = 15 * 60
-    /// With no activity for this long an agent counts as cut short, and the run as stopped.
+    /// With no activity for this long an agent counts as cut short, and the run as stopped (left,
+    /// unless its turn ended cleanly: then it waits `leftAfterTurn`).
     public static let defaultAbandonAfter: TimeInterval = 2 * 3600
+    /// A turn that ended with work open is the person's move for this long; then the run is left.
+    public static let leftAfterTurn: TimeInterval = 12 * 3600
+    /// The group holding the jobs a session finished before the one it is on.
+    public static let sessionID = "~session"
+    public static let sessionTitle = "This session"
+    /// A title declared this soon before a new job's first task names that job.
+    static let jobTitleGrace: TimeInterval = 120
     /// How much working time the forecast's recent rate looks back over.
     public static let forecastWindow: TimeInterval = 45 * 60
     /// Activity closer together than this is one stretch of work.
@@ -284,7 +292,14 @@ struct RunBuilder {
     var mirrorCount = 0
     /// Tasks whose mark is `started`, and how many wait for each reason (by urgency).
     var startedSet: Set<String> = []
-    var waitCounts = [0, 0, 0]
+    var waitCounts = [0, 0, 0, 0]
+    /// When the current (or last) turn began: the first sign of the orchestrator after a stop.
+    var turnStart: Date
+    /// When the current job began, once the session has started a second; jobs before it.
+    var jobStart: Date?
+    var jobs = 1
+    /// When an agent or a person last declared the run's title.
+    var titleAt: Date?
     /// Where the run's time went: activity stretches, and spans waiting for input or a limit.
     var runStretches: [Span] = []
     var inputSpans: [Span] = []
@@ -300,7 +315,7 @@ struct RunBuilder {
 
     init(id: String, at: Date, abandonAfter: TimeInterval = TaskFold.defaultAbandonAfter) {
         self.id = id; self.abandonAfter = abandonAfter
-        startedAt = at; updatedAt = at; lastActivity = at
+        startedAt = at; updatedAt = at; lastActivity = at; turnStart = at
     }
 
     /// The harness's plan list is the plan.
@@ -326,7 +341,7 @@ struct RunBuilder {
         }
         switch e.op {
         case .meta(let t, let p, let h, let host, let cwd, let sessionTitle, let repo, let branch):
-            if let t = TaskText.title(t) { title = t }
+            if let t = TaskText.title(t) { title = t; titleAt = e.at }
             if let p = TaskText.title(p) { project = p }
             if let h = TaskText.title(h) { harness = h }
             if let host = TaskText.clean(host, limit: 400) { self.host = host }
@@ -336,6 +351,12 @@ struct RunBuilder {
             if let branch = TaskText.clean(branch, limit: 400) { self.branch = branch }
         case .add(let spec):
             let existed = tasks[spec.id] != nil
+            if byAgent || byPerson, TaskPath.isValid(spec.id), tasks[TaskPath.components(spec.id)[0]] == nil, planFinished() {
+                // Everything declared has an outcome and a task arrives under a new top-level id
+                // ("logo", or "ship/tag" where nothing is under "ship" yet): a new job.
+                jobStart = e.at; jobs += 1
+                firstStart = nil; scopeChanges = 0
+            }
             guard ensure(spec.id, at: e.at, declared: true) else { return }
             let effort = spec.effort.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             if firstStart != nil, !existed || (effort != nil && effort != tasks[spec.id]?.effort) { scopeChanges += 1 }
@@ -451,6 +472,7 @@ struct RunBuilder {
             // A Stop hook that sent the agent back to work didn't stop anything.
             if !blocked { stoppedAt = e.at }
         case .resume:
+            if stoppedAt != nil || endedAt != nil { turnStart = e.at }
             stoppedAt = nil
             endedAt = nil
             runWait = nil
@@ -474,13 +496,29 @@ struct RunBuilder {
     /// before it (past its grace) is answered.
     mutating func orchestratorActive(at: Date) {
         lastSessionActivity = max(lastSessionActivity ?? at, at)
-        if let s = stoppedAt, at > s { stoppedAt = nil }
+        if let s = stoppedAt, at > s { stoppedAt = nil; turnStart = at }
         if let e = endedAt, at > e { endedAt = nil }
         clearRunWait(at: at)
     }
 
     mutating func clearRunWait(at: Date) {
         if let w = runWait, at > w.clearAfter { runWait = nil }
+    }
+
+    /// Something was declared, every declared task without children has an outcome, no agent is
+    /// at work, and a new turn has begun since the last outcome: the plan is finished and this is
+    /// new work. Kept strict, so that anything unclear (a pivot within a turn, a journal with no
+    /// turns at all) stays one job.
+    func planFinished() -> Bool {
+        guard declaredAny else { return false }
+        var lastClose: Date?
+        for id in order {
+            guard let r = tasks[id], r.declared, !r.mirrored, childCount[id, default: 0] == 0 else { continue }
+            guard case .terminal = r.mark else { return false }
+            lastClose = max(lastClose ?? r.markAt, r.markAt)
+        }
+        guard let lastClose, turnStart > lastClose else { return false }
+        return !attempts.values.contains { !$0.task.isEmpty && $0.attempt.isActive }
     }
 
     /// Creates `path` and any missing ancestors (as implicit groups). False for an invalid path.
@@ -891,6 +929,16 @@ struct RunBuilder {
         let earlierSet = Set(earlier)
         let earlierRec = Rec(id: TaskFold.earlierID, title: TaskFold.earlierTitle, declared: false, at: firstDeclaredAt ?? startedAt)
 
+        var rootIDs = roots.filter { !earlierSet.contains($0) }
+        if !earlier.isEmpty { rootIDs.insert(TaskFold.earlierID, at: 0) }
+        // Jobs the session finished before the one it's on: grouped, and out of the run's figures.
+        var pastJobs: [String] = []
+        if let js = jobStart {
+            pastJobs = rootIDs.filter { $0 == TaskFold.earlierID || (tasks[$0]?.createdAt ?? js) < js }
+            if !pastJobs.isEmpty { rootIDs = [TaskFold.sessionID] + rootIDs.filter { !pastJobs.contains($0) } }
+        }
+        let sessionRec = Rec(id: TaskFold.sessionID, title: TaskFold.sessionTitle, declared: false, at: startedAt)
+
         var calcs: [String: Calc] = [:]
         var spePerUnit: [Double] = []
 
@@ -899,8 +947,8 @@ struct RunBuilder {
 
         func compute(_ id: String, parent: String?, depth: Int, inEarlier: Bool) -> Calc {
             let synthetic = id == TaskFold.earlierID
-            let r = synthetic ? earlierRec : tasks[id]!
-            let kids = synthetic ? earlier : (children[id] ?? [])
+            let r = id == TaskFold.sessionID ? sessionRec : synthetic ? earlierRec : tasks[id]!
+            let kids = id == TaskFold.sessionID ? pastJobs : synthetic ? earlier : (children[id] ?? [])
             let kidsEarlier = inEarlier || synthetic
             let kidCalcs = kids.map { compute($0, parent: id, depth: depth + 1, inEarlier: kidsEarlier) }
             let parts = kidCalcs.filter { !isHelper($0.node.id, inEarlier: kidsEarlier) }
@@ -974,8 +1022,6 @@ struct RunBuilder {
             return calc
         }
 
-        var rootIDs = roots.filter { !earlierSet.contains($0) }
-        if !earlier.isEmpty { rootIDs.insert(TaskFold.earlierID, at: 0) }
         let rootCalcs = rootIDs.map { compute($0, parent: nil, depth: 0, inEarlier: false) }
         let spe = TaskFold.median(spePerUnit)
 
@@ -1017,7 +1063,7 @@ struct RunBuilder {
         }
 
         for c in rootCalcs { _ = progress(c.node.id) }
-        let declaredRoots = rootCalcs.filter { !isHelper($0.node.id, inEarlier: false) }
+        let declaredRoots = rootCalcs.filter { !isHelper($0.node.id, inEarlier: false) && $0.node.id != TaskFold.sessionID }
         let top = (declaredRoots.isEmpty ? rootCalcs : declaredRoots).map { calcs[$0.node.id]! }
         let topWeight = top.filter(\.node.counted).reduce(0) { $0 + $1.node.effort }
         let topIDs = Set(top.map(\.node.id))
@@ -1025,6 +1071,13 @@ struct RunBuilder {
             let n = calcs[c.node.id]!.node
             assign(n.id, topWeight > 0 && n.counted && topIDs.contains(n.id) ? n.effort / topWeight : 0)
         }
+        // Earlier jobs keep their own states and progress, but count toward nothing now.
+        func uncount(_ id: String) {
+            guard calcs[id] != nil else { return }
+            calcs[id]!.node.counted = false
+            for k in calcs[id]!.kids { uncount(k) }
+        }
+        if !pastJobs.isEmpty { uncount(TaskFold.sessionID) }
 
         var root = TaskNode(id: "", title: title ?? id, parent: nil, depth: -1, state: .planned, waitReason: nil, stale: false, progress: .zero,
                             effort: 1, importance: .normal, declared: true, confirmed: true, leaf: top.isEmpty, counted: true, attempts: TaskAttemptsSummary(),
@@ -1091,6 +1144,8 @@ struct RunBuilder {
 
     func leafProgress(_ state: TaskState, _ r: Rec, confirmed: Bool, tokens: Int64, working: Double, effort: Double,
                       tpu: Double?, spe: Double?) -> TaskProgress {
+        // Yours: nothing the agents do moves it, so it reads as not begun until it closes.
+        if state == .waiting, case .waiting(.you) = r.mark { return .zero }
         switch state {
         case .done:
             // Inferred from an agent ending: the best guess, not closed work.
@@ -1178,16 +1233,29 @@ struct RunBuilder {
             state = finished ? mapped : .running
         } else if root.state == .waiting {
             let r = root.waitReason ?? .dependency
-            if gone || (silent && r == .dependency) { state = .stopped } else { state = .waiting; reason = r }
+            if r == .you {
+                // Only work that's yours waits: the agent's turn goes on, and once it ends, it's your move.
+                state = quiet ? .stopped : .running
+            } else if gone || (silent && r == .dependency) { state = .stopped } else { state = .waiting; reason = r }
         } else {
             state = quiet ? .stopped : .running
         }
         // The orchestrator itself waiting on a person, while work remains.
-        if let w = runWait, !state.isTerminal, !gone, !(silent && w.reason == .dependency), state != .waiting || w.reason < (reason ?? .dependency) {
+        if let w = runWait, w.reason != .you, !state.isTerminal, !gone, !(silent && w.reason == .dependency),
+           state != .waiting || w.reason < (reason ?? .dependency) {
             state = .waiting; reason = w.reason
         }
         // Given up on: never "done", whatever its tasks say.
         if abandoned { state = mapped == nil || mapped == .done ? .partial : mapped!; reason = nil }
+        // Stopped with work open: the person's move while the session is there, else left. A run
+        // held at a usage limit waits on the limit, not on anyone, so time alone never settles it;
+        // its session ending does, like any other.
+        var left = false
+        if state == .stopped {
+            let atLimit = (root.state == .waiting && root.waitReason == .limit) || runWait?.reason == .limit
+            let idle = now.timeIntervalSince(lastActivity)
+            left = gone || (!atLimit && (stoppedAt != nil ? idle > TaskFold.leftAfterTurn : silent))
+        }
 
         var progress = root.progress
         if state == .done {
@@ -1238,13 +1306,25 @@ struct RunBuilder {
             }
         }
 
-        return TaskRun(id: id, title: title ?? id, project: project, harness: harness, startedAt: startedAt, updatedAt: updatedAt, state: state,
+        // A new job with no title of its own is named by the first task declared in it.
+        var name = title
+        if let js = jobStart, titleAt.map({ $0 < js.addingTimeInterval(-TaskFold.jobTitleGrace) }) ?? true,
+           let first = order.first(where: { tasks[$0]!.declared && !tasks[$0]!.mirrored && tasks[$0]!.createdAt >= js }) {
+            name = tasks[first]!.title
+        }
+        var turnSeconds: Double?
+        if state == .stopped, !left, let s = stoppedAt, s >= turnStart {
+            turnSeconds = Spans.measure(Spans.clip(working, from: turnStart, to: s))
+        }
+
+        return TaskRun(id: id, title: name ?? id, project: project, harness: harness, startedAt: startedAt, updatedAt: updatedAt, state: state,
                        waitReason: reason, stale: stale, progress: progress, mustHaves: d.root.critical, etaSeconds: eta?.mid,
                        tokens: root.tokens, scopeChanges: scopeChanges, warning: nil, hasDeclaredTasks: hasPlan, nodes: d.nodes,
                        hidden: hidden, abandoned: abandoned, question: question, time: time, etaLowSeconds: eta?.low, etaHighSeconds: eta?.high,
                        tokensByModel: byModel, recentTokensPerHour: live ? recentRate(working: working, end: end) : nil,
                        tokensToFinish: tokensToFinish, mirrored: mirrorActive, host: host, cwd: cwd,
-                       sessionTitle: sessionTitle, repo: repo, branch: branch)
+                       sessionTitle: sessionTitle, repo: repo, branch: branch, left: left,
+                       turnEndedAt: state == .stopped ? stoppedAt : nil, turnSeconds: turnSeconds, jobs: jobs > 1 ? jobs : nil)
     }
 
     /// Seconds to finish: what's left of the estimate over the share of the run closed per working

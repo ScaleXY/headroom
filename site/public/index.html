@@ -757,19 +757,19 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
     <div class="tile runs-tile reveal">
       <div>
         <h3 class="hl-3">A Runs tab, in the order that matters.</h3>
-        <p>Connect your agents in Settings and every run shows up in the popover: the ones waiting on you first, then the live ones, then what finished today.</p>
-        <div class="seg" role="tablist" aria-label="Runs list style" id="runs-seg">
-          <button role="tab" aria-selected="true" data-img="runs-ledger" data-note="One line per run: progress, state and time left.">Ledger</button>
-          <button role="tab" aria-selected="false" data-img="runs-twoline" data-note="A second line for what each run is doing, or asking.">Two-line</button>
-          <button role="tab" aria-selected="false" data-img="runs-fill" data-note="Each row fills with its progress, and today's finished runs add up.">Fill rows</button>
+        <p>Connect your agents in Settings and every run shows up in the popover: the one that needs you most opened at the top, then the ones at work, then what settled today, with one total for the day.</p>
+        <div class="seg" role="tablist" aria-label="The Runs tab" id="runs-seg">
+          <button role="tab" aria-selected="true" data-img="runs-needs-you" data-note="A question leads, with who asks and the answers offered.">Needs you</button>
+          <button role="tab" aria-selected="false" data-img="runs-your-turn" data-note="The agent ended its turn: what's left, and what only you can do.">Your turn</button>
+          <button role="tab" aria-selected="false" data-img="runs-day" data-note="Nothing running: what the day's runs cost, how long they worked, and how they ended.">The day</button>
         </div>
-        <p class="seg-note" id="runs-note" aria-live="polite">One line per run: progress, state and time left.</p>
+        <p class="seg-note" id="runs-note" aria-live="polite">A question leads, with who asks and the answers offered.</p>
         <dl class="runs-key">
           <div><dt>62<small>%</small></dt><dd>The agent declared a plan, so you get a percentage and an estimate of the time left.</dd></div>
           <div><dt>7<small>/9</small></dt><dd>No plan? You see how many of the agents it spawned have finished.</dd></div>
         </dl>
       </div>
-      <div class="runs-shot"><img id="runs-img" src="/img/runs-ledger.webp" width="768" height="994" loading="lazy" decoding="async" alt="The Runs tab as a Ledger: Database upgrade needs you, three runs are live and four finished today"></div>
+      <div class="runs-shot"><img id="runs-img" src="/img/runs-needs-you.webp" width="768" height="2130" loading="lazy" decoding="async" alt="The Runs tab: Database upgrade asks a question at the top, one run is your turn, three are working and the day's settled runs follow"></div>
     </div>
 
     <div class="session-grid run-grid reveal">
@@ -811,7 +811,7 @@ footer { background: #161617; color: var(--grey); font-size: 12px; line-height: 
     <div class="trio">
       <div class="tile reveal"><h3 class="hl-3">Told when it matters.</h3><p>Pick which runs notify you: one that needs your answer, one that stops with work left, or one that finishes.</p></div>
       <div class="tile reveal"><h3 class="hl-3">Kept on your Mac.</h3><p>Run tracking reads the transcripts already on your Mac and keeps only the labels agents and their tools wrote, plus the repo and branch. Turn it off any time in Settings.</p></div>
-      <div class="tile reveal"><h3 class="hl-3">On every Mac, iPhone and Watch.</h3><p>With iCloud sync on, your runs follow you: your other Macs list them beside their own, and your iPhone and Watch get the same list styles and run pages.</p><a class="more" href="#devices">See the companion apps</a></div>
+      <div class="tile reveal"><h3 class="hl-3">On every Mac, iPhone and Watch.</h3><p>With iCloud sync on, your runs follow you: your other Macs list them beside their own, and your iPhone and Watch list them too, with the same states and run pages.</p><a class="more" href="#devices">See the companion apps</a></div>
     </div>
   </div>
 </section>
@@ -1319,7 +1319,7 @@ Claude <span class="c-azure">▮▮▮▮</span><span class="d">▯</span> 82% <
   const runRail = setupRail("run-rail", "run-img", fitRun);
   addEventListener("resize", () => fitRun($("run-img")));
 
-  // Runs list styles.
+  // The Runs tab in its states.
   const runsImg = $("runs-img"), runsTabs = [...document.querySelectorAll("#runs-seg [role=tab]")];
   runsTabs.forEach((t) => {
     const p = new Image(); p.src = `/img/${t.dataset.img}.webp`;
@@ -1327,7 +1327,7 @@ Claude <span class="c-azure">▮▮▮▮</span><span class="d">▯</span> 82% <
       runsTabs.forEach((x) => x.setAttribute("aria-selected", x === t));
       $("runs-note").textContent = t.dataset.note;
       runsImg.style.opacity = 0;
-      setTimeout(() => { runsImg.src = p.src; runsImg.alt = `The Runs tab in the ${t.textContent} style`; runsImg.style.opacity = 1; }, 150);
+      setTimeout(() => { runsImg.src = p.src; runsImg.alt = `The Runs tab: ${t.textContent}`; runsImg.style.opacity = 1; }, 150);
     });
   });
 

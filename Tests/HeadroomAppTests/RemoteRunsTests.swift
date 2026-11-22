@@ -45,15 +45,13 @@ import HeadroomPresent
         let page = RunsPresenter(now: now).page(local, remote: digests(), allRecent: true)
         let remote = Set((page.live + page.recent).map(\.id).filter { $0.hasPrefix("studio:") })
         #expect(remote.count == 5)
-        for style in RunsListStyle.allCases {
-            let l = regions { RunListRenderer.drawPage(page, style: style, showFinished: true, origin: .zero, width: 360, theme: .dark, ctx: $0, out: $1) }
-            #expect(l.measured == l.drawn, "\(style)")
-            let opens = Set(l.regions.compactMap { if case .openRun(let id) = $0.action { id } else { nil } })
-            #expect(opens.isSuperset(of: remote), "\(style)")
-            #expect(!l.regions.contains { isRemote($0.action) }, "\(style)")
-            // This Mac's own run that needs you keeps its answer button where the style has one.
-            if style == .fill { #expect(l.regions.contains { $0.action == .runButton(local[0].id, .openSession) }) }
-        }
+        let l = regions { RunListRenderer.drawPage(page, showFinished: true, origin: .zero, width: 360, theme: .dark, ctx: $0, out: $1) }
+        #expect(l.measured == l.drawn)
+        let opens = Set(l.regions.compactMap { if case .openRun(let id) = $0.action { id } else { nil } })
+        #expect(opens.isSuperset(of: remote))
+        #expect(!l.regions.contains { isRemote($0.action) })
+        // This Mac's own run that needs you leads, with its answer button.
+        #expect(page.leadID == local[0].id && l.regions.contains { $0.action == .runButton(local[0].id, .openSession) })
     }
 
     @Test func anotherMacsRunPageDrawsWithNothingToClick() {

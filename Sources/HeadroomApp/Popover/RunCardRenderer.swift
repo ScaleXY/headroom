@@ -13,13 +13,14 @@ enum RunCardRenderer {
     /// Vermilion: serious, and plainly not the rose that means "needs you".
     static func failure(_ t: Theme) -> NSColor { t.isDark ? rgb(0xFF6B4A) : rgb(0xC22E14) }
 
-    /// The tone's colour; `.alert` on a failure (`.failed` glyph) is the failure colour, not rose.
+    /// The tone's colour; `.alert` on a failure (`.failed`, `.partial`) is the failure colour, not
+    /// rose: rose is only ever a question.
     static func color(_ tone: RunTone, _ t: Theme, glyph: RunGlyph? = nil) -> NSColor {
         switch tone {
         case .progress: t.azure
         case .neutral: t.ink
         case .warn: t.amber
-        case .alert: glyph == .failed ? failure(t) : t.rose
+        case .alert: glyph == .failed || glyph == .partial ? failure(t) : t.rose
         case .quiet: t.muted
         }
     }
@@ -75,7 +76,8 @@ enum RunCardRenderer {
 
     // MARK: Buttons
 
-    enum PillStyle { case azure, rose, plain }
+    /// `pearl`: ink filled, the primary way forward on a calm run (your turn, left).
+    enum PillStyle { case azure, rose, plain, pearl }
 
     static func pillRect(_ label: String, x: CGFloat, top: CGFloat) -> CGRect {
         CGRect(x: x, y: top, width: Text(label, F.sf(12, 650), .black).width + 26, height: 26)
@@ -100,6 +102,12 @@ enum RunCardRenderer {
                 ctx.fill(CGPath(rect: CGRect(x: r.minX, y: r.minY, width: r.width, height: 0.75), transform: nil), white(0.35))
             }
             Text(label, F.sf(12, 650), .white).draw(x: r.midX, capCenter: r.midY, align: .center, in: ctx)
+        case .pearl:
+            ctx.withState {
+                ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 4, color: black(t.isDark ? 0.4 : 0.12).cgColor)
+                ctx.fill(shape, t.isDark ? rgb(0xF4F4F6) : rgb(0x1C1C1E))
+            }
+            Text(label, F.sf(12, 650), t.isDark ? rgb(0x1C1C1E) : .white).draw(x: r.midX, capCenter: r.midY, align: .center, in: ctx)
         case .plain:
             ctx.fill(shape, t.isDark ? white(0.08) : white(0.85))
             ctx.innerStroke(shape, t.isDark ? white(0.10) : black(0.08), width: 0.75)
@@ -355,13 +363,17 @@ enum RunCardRenderer {
         case .stale:
             ctx.stroke(circle(3.9 * k), c, width: 1.3 * k)
             ctx.fill(circle(1.5 * k), c)
+        case .yourTurn:
+            // A ring around a dot: the ball is with you.
+            ctx.stroke(circle(4.4 * k), c.fade(0.85), width: 1.1 * k)
+            ctx.fill(circle(2.3 * k), c)
         case .needsInput:
             ctx.fill(circle(5 * k), c)
             ctx.stroke(line([(0, -2.6), (0, 0.6)]), .white, width: 1.5 * k, cap: .round)
             ctx.fill(circle(0.85 * k, dy: 2.6 * k), .white)
         case .waiting:
             Glyph.pause(in: CGRect(x: center.x - 4 * k, y: center.y - 4.5 * k, width: 8 * k, height: 9 * k), color: c, ctx: ctx)
-        case .parked, .partial:
+        case .parked, .partial, .left:
             ctx.stroke(circle(3.9 * k), c, width: 1.3 * k)
             let half = CGMutablePath()
             half.addArc(center: center, radius: 3.9 * k, startAngle: .pi / 2, endAngle: 3 * .pi / 2, clockwise: false)
@@ -382,6 +394,14 @@ enum RunCardRenderer {
                 ctx.fill(circle(0.95 * k, dx: dx * k), c)
             }
         }
+    }
+
+    /// A " · " line in one row: parts drop off the end until it fits (so "updated 8m ago" goes
+    /// whole rather than as "upda…"), and a single part too long is cut.
+    static func fitParts(_ s: String, _ font: NSFont, _ color: NSColor, width: CGFloat) -> Text {
+        var parts = s.components(separatedBy: " · ")
+        while parts.count > 1, Text(parts.joined(separator: " · "), font, color).width > width { parts.removeLast() }
+        return fit(parts.joined(separator: " · "), font, color, width: width)
     }
 
     /// `s` in one line, cut with an ellipsis to fit `width`.

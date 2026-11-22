@@ -31,6 +31,9 @@ final class TaskTracker {
     private var alerts = TaskAlerts()
     private var journalObserver: RefreshObserver?
     private var timer: Timer?
+    /// Fires when a run next settles by the clock alone (a turn left for 12 hours, a session gone
+    /// silent), so it moves to the settled runs and into history without waiting for other news.
+    private var settleTimer: Timer?
     private var busy = false
     private var again = false
     private var stopped = false
@@ -68,6 +71,8 @@ final class TaskTracker {
         journalObserver = nil
         timer?.invalidate()
         timer = nil
+        settleTimer?.invalidate()
+        settleTimer = nil
         if !runs.isEmpty { runs = []; onChange?() }
     }
 
@@ -124,7 +129,26 @@ final class TaskTracker {
         // Past an hour of quiet a run is stale and nothing about it moves with the clock.
         let live = new.contains { !$0.state.isTerminal && Date().timeIntervalSince($0.updatedAt) < 3600 }
         arm(live || polling)
+        armSettle(new)
         if again { again = false; refresh() }
+    }
+
+    /// The next moment a run settles with nothing else happening: one fold just after it.
+    private func armSettle(_ runs: [TaskRun]) {
+        let now = Date()
+        let next = runs.filter { !$0.isSettled && !$0.hidden }.compactMap { r -> Date? in
+            if r.yourTurn { return r.updatedAt.addingTimeInterval(TaskFold.leftAfterTurn) }
+            return r.state == .running ? r.updatedAt.addingTimeInterval(TaskFold.defaultAbandonAfter) : nil
+        }.filter { $0 > now }.min()
+        settleTimer?.invalidate()
+        settleTimer = nil
+        guard let next else { return }
+        let t = Timer(fire: next.addingTimeInterval(30), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        t.tolerance = 60
+        RunLoop.main.add(t, forMode: .common)
+        settleTimer = t
     }
 
     private func arm(_ needed: Bool) {

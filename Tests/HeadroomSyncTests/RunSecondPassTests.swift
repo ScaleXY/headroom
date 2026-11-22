@@ -89,7 +89,7 @@ private struct FirstPassDevice: Decodable {
         var r = Demo.observedRun(now: now)
         r.time = .zero
         let text = try jsonText(device(RunSummaryBuilder.summaries([r], includeNames: false, now: now)))
-        for key in ["segments", "finishLow", "finishHigh", "working", "mirrored", "abandoned", "limit", "receipt", "question", "activeAt"] {
+        for key in ["segments", "finishLow", "finishHigh", "working", "mirrored", "abandoned", "limit", "receipt", "question", "activeAt", "left", "turn"] {
             #expect(!text.contains("\"\(key)\""), "\(key) written")
         }
     }
@@ -162,8 +162,29 @@ private struct FirstPassDevice: Decodable {
         #expect(RunSummaryBuilder.summaries([runs[1]], includeNames: true, now: now) == nil)
     }
 
+    @Test func yourTurnAndLeftTravelAsStopped() throws {
+        let turn = try #require(RunSummaryBuilder.summaries([Demo.yourTurnRun(now: now)], includeNames: true, now: now)?.first)
+        let left = try #require(RunSummaryBuilder.summaries([Demo.leftRun(now: now)], includeNames: true, now: now)?.first)
+        // On the wire both stay "stopped", so an older phone reads stopped, never running.
+        let json = try jsonText(device([turn, left]))
+        #expect(!json.contains("\"state\":\"running\"") && json.contains("\"left\":true"))
+        #expect(turn.state == .stopped && turn.left == nil && turn.turn == 24 * 60)
+        #expect(left.state == .stopped && left.left == true && left.turn == nil && left.receipt != nil)
+        // Round trip: the reader tells them apart again.
+        let back = try JSONDecoder().decode(DevicePayload.self, from: JSONEncoder().encode(device([turn, left])))
+        let digests = try #require(back.runs).map { $0.digest(deviceID: "mac", mac: "MacBook Pro", lastSeen: nil) }
+        #expect(digests[0].yourTurn && !digests[0].isSettled && digests[0].turnSeconds == 24 * 60)
+        #expect(digests[1].left && digests[1].isSettled && !digests[1].isLive && digests[1].receipt != nil)
+        let p = RunsPresenter(now: now)
+        #expect(p.card(digests[0]).stateText == "Your turn" && p.card(digests[1]).stateText == "Left at 95% · must-haves done")
+        // A stopped run from a Mac before the split reads as your turn.
+        var old = turn
+        old.turn = nil
+        #expect(p.card(old.digest(deviceID: "old", mac: "Old Mac", lastSeen: nil)).stateText == "Your turn")
+    }
+
     @Test func mirroredAndAbandonedTravel() throws {
-        var r = Demo.stoppedRun(now: now)
+        var r = Demo.yourTurnRun(now: now)
         r.mirrored = true; r.abandoned = true
         let s = try #require(RunSummaryBuilder.summaries([r], includeNames: false, now: now)?.first)
         let d = s.digest(deviceID: "mac", mac: "MacBook Pro", lastSeen: nil)
@@ -339,15 +360,22 @@ private struct FirstPassDevice: Decodable {
         #expect(ledger.observe([digest("a", .done, updated: t2)], now: t2.addingTimeInterval(60), needsInput: true, finished: true).due.isEmpty)
     }
 
-    @Test func stoppingWithWorkLeftAlertsOncePerEpisode() {
+    @Test func aLongTurnEndingAlertsOncePerEpisode() {
+        func turn(_ id: String, _ seconds: Double?) -> RunDigest { var d = digest(id, .stopped); d.turnSeconds = seconds; return d }
         var ledger = RunAlertLedger()
         _ = ledger.observe([digest("a", .running)], now: now, needsInput: true, finished: false, stopped: true)
-        let due = ledger.observe([digest("a", .stopped)], now: now, needsInput: true, finished: false, stopped: true).due
+        let due = ledger.observe([turn("a", 24 * 60)], now: now, needsInput: true, finished: false, stopped: true).due
         #expect(due.map(\.kind) == [.stopped])
-        #expect(ledger.observe([digest("a", .stopped)], now: now.addingTimeInterval(60), needsInput: true, finished: false, stopped: true).due.isEmpty)
-        // Picked up again, then stopped again: a new episode.
+        #expect(ledger.observe([turn("a", 24 * 60)], now: now.addingTimeInterval(60), needsInput: true, finished: false, stopped: true).due.isEmpty)
+        // Picked up again, then its turn ended again: a new episode.
         _ = ledger.observe([digest("a", .running)], now: now.addingTimeInterval(120), needsInput: true, finished: false, stopped: true)
-        #expect(ledger.observe([digest("a", .stopped)], now: now.addingTimeInterval(180), needsInput: true, finished: false, stopped: true).due.count == 1)
+        #expect(ledger.observe([turn("a", 12 * 60)], now: now.addingTimeInterval(180), needsInput: true, finished: false, stopped: true).due.count == 1)
+        // A short turn, a Mac too old to say how long, or a session that ended: no alert.
+        _ = ledger.observe([digest("c", .running), digest("d", .running), digest("e", .running)], now: now, needsInput: true, finished: false, stopped: true)
+        var ended = turn("e", 30 * 60)
+        ended.left = true
+        #expect(ledger.observe([turn("c", 5 * 60), turn("d", nil), ended], now: now.addingTimeInterval(190), needsInput: true, finished: false,
+                               stopped: true).due.isEmpty)
         // Given up on: no alert.
         var gaveUp = digest("b", .stopped)
         gaveUp.abandoned = true

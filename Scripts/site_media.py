@@ -30,8 +30,9 @@ RENDERS = {
     "pace-tight": "pace-tight-dark", "pace-verytight": "pace-verytight-dark",
     "activity-all-7d": "activity-all-7d-dark", "share-card-claude": "share-card-claude",
     "settings-2": "settings-2-dark", "onboarding-3": "onboarding-3-dark",
-    # Agent runs: the list in its three styles, and a run's page in the states the page walks through.
-    "runs-ledger": "runs-mixed-dark", "runs-twoline": "runs-mixed-twoline-dark", "runs-fill": "runs-mixed-fill-dark",
+    # Agent runs: the list as it leads (a question, your turn, the day's receipt), and a run's page
+    # in the states the page walks through.
+    "runs-needs-you": "runs-mixed-dark", "runs-your-turn": "runs-your-turn-dark", "runs-day": "runs-settled-dark",
     "runpage-question": "runpage-input-1-briefing-dark", "runpage-briefing": "runpage-mixed-4-briefing-dark",
     "runpage-lanes": "runpage-timeline-1-lanes-dark", "runpage-limit": "runpage-limit-1-briefing-dark",
     "runpage-finished": "runpage-finished-1-briefing-dark",

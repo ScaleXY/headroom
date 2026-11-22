@@ -197,6 +197,13 @@ public struct RunSummaryPayload: Codable, Sendable, Hashable {
     /// Task names and question wording only, while the run needs input.
     public var question: RunQuestionPayload?
 
+    // Run lifecycle. `state` stays `stopped` for both, so an older reader still reads stopped.
+
+    /// Only when true: stopped and settled (the session ended with work open).
+    public var left: Bool?
+    /// While it's the person's turn: seconds of work in the turn that ended, for the phone's alert.
+    public var turn: Double?
+
     public init(id: String, harness: String?, state: TaskRunState, waitReason: TaskWaitReason?, stale: Bool, progress: TaskProgress,
                 mustHaves: TaskMustHaves, etaSeconds: Double?, tokens: Int64, limitWarning: String?, hasDeclaredTasks: Bool, startedAt: Date,
                 updatedAt: Date, counts: RunCounts, finishedEarlier: Int?, title: String? = nil, rows: [RunRowPayload]? = nil, moreRows: Int? = nil,
@@ -238,6 +245,8 @@ public struct RunSummaryPayload: Codable, Sendable, Hashable {
         limit = c.lenient(.limit, nil)
         receipt = c.lenient(.receipt, nil)
         question = c.lenient(.question, nil)
+        left = c.lenient(.left, nil)
+        turn = c.lenient(.turn, nil)
     }
 
     /// Whether a change from `old` (the same run) is one readers should hear about within a
@@ -245,7 +254,7 @@ public struct RunSummaryPayload: Codable, Sendable, Hashable {
     /// names were switched. Anything else is progress.
     func sameState(as old: RunSummaryPayload) -> Bool {
         id == old.id && state == old.state && waitReason == old.waitReason && stale == old.stale && limitWarning == old.limitWarning
-            && (rows == nil) == (old.rows == nil) && abandoned == old.abandoned && question == old.question
+            && (rows == nil) == (old.rows == nil) && abandoned == old.abandoned && question == old.question && left == old.left
     }
 
     /// Needs an answer now.
@@ -257,14 +266,17 @@ public struct RunSummaryPayload: Codable, Sendable, Hashable {
         var d = RunDigest(id: deviceID + ":" + id, mac: mac, harness: harness, state: state, waitReason: waitReason, stale: stale, progress: progress,
                           mustHaves: mustHaves, etaSeconds: etaSeconds, tokens: tokens, warning: limitWarning, hasDeclaredTasks: hasDeclaredTasks,
                           startedAt: startedAt, updatedAt: updatedAt, counts: counts, title: title, rows: rows?.map(\.row), moreRows: moreRows ?? 0,
-                          finishedRows: finishedRows ?? 0, finishedEarlier: finishedEarlier ?? 0, lastSeen: state.isTerminal ? nil : lastSeen)
+                          finishedRows: finishedRows ?? 0, finishedEarlier: finishedEarlier ?? 0, lastSeen: state.isTerminal || left == true || abandoned == true ? nil : lastSeen)
         d.segments = segments?.map(\.segment) ?? []
         d.finishAt = finishAt; d.finishLow = finishLow; d.finishHigh = finishHigh
         d.workingSeconds = working
         d.mirrored = mirrored ?? false
         d.abandoned = abandoned ?? false
-        d.limit = state.isTerminal ? nil : limit
-        d.receipt = state.isTerminal ? receipt?.receipt : nil
+        d.left = left ?? false
+        d.turnSeconds = state == .stopped && left != true ? turn : nil
+        let settled = state.isTerminal || d.abandoned || d.left
+        d.limit = settled ? nil : limit
+        d.receipt = settled ? receipt?.receipt : nil
         d.question = needsInput ? question?.question : nil
         d.macActiveAt = activeAt
         return d
@@ -287,8 +299,8 @@ public enum RunSummaryBuilder {
     /// counts with `includeNames`.
     public static func summaries(_ runs: [TaskRun], includeNames: Bool, includeQuestion: Bool = false, now: Date) -> [RunSummaryPayload]? {
         let runs = runs.filter { !$0.hidden }
-        let live = runs.sortedForDisplay().filter { !$0.state.isTerminal && $0.isActive(now: now) }
-        let finished = runs.filter { $0.state.isTerminal && now.timeIntervalSince($0.updatedAt) < finishedWindow }
+        let live = runs.sortedForDisplay().filter { !$0.isSettled && $0.isActive(now: now) }
+        let finished = runs.filter { $0.isSettled && now.timeIntervalSince($0.updatedAt) < finishedWindow }
             .sorted { ($0.updatedAt, $1.id) > ($1.updatedAt, $0.id) }
         let chosen = (live + finished).prefix(maxRuns)
         guard !chosen.isEmpty else { return nil }
@@ -304,7 +316,7 @@ public enum RunSummaryBuilder {
             hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
             finishedEarlier: r.finishedEarlier)
         s.segments = segments(r)
-        if !r.state.isTerminal {
+        if !r.isSettled {
             // Clock times from now, not seconds from the last event, so the finish never reads early.
             s.finishAt = r.etaSeconds.map { minute(now.addingTimeInterval($0)) }
             if let lo = r.etaLowSeconds, let hi = r.etaHighSeconds, hi >= lo {
@@ -316,7 +328,9 @@ public enum RunSummaryBuilder {
         if r.time.working > 0 { s.working = r.time.working.rounded() }
         if r.mirrored { s.mirrored = true }
         if r.abandoned { s.abandoned = true }
-        if r.state.isTerminal { s.receipt = receipt(r) }
+        if r.left { s.left = true }
+        if r.yourTurn, let t = r.turnSeconds, t > 0 { s.turn = t.rounded() }
+        if r.isSettled { s.receipt = receipt(r) }
         guard includeNames else { return s }
         let picked = presenter.digestRows(r, cap: maxRows)
         s.title = r.bestTitle.map { String($0.prefix(maxTitle)) }

@@ -6,7 +6,7 @@ import HeadroomKit
 /// finished tasks are counted, not listed; lanes need the rows' times, which older Macs leave out.
 extension RunsPresenter {
     public func syncedPage(_ d: RunDigest, card c: RunCardModel) -> RunPageModel {
-        let finished = d.state.isTerminal
+        let finished = d.isSettled
         let run = pageRun(d)
         let status = syncedStatus(d, run: run, card: c)
         let limit = finished ? nil : self.limit(from: c.timeline)
@@ -14,7 +14,7 @@ extension RunsPresenter {
         let named = d.rows != nil
         let timed = d.rows?.contains { $0.startedAt != nil } ?? false
         return RunPageModel(status: status, line: syncedLine(d, card: c, status: status, limit: limit), facts: syncedFacts(d, card: c), limit: limit,
-                            groups: g.groups, groupsTitle: finished ? "Didn't finish" : run.hasDeclaredTasks ? (run.mirrored ? "Open steps" : "Open tasks") : "Agents",
+                            groups: g.groups, groupsTitle: d.left || d.yourTurn ? "What's left" : finished ? "Didn't finish" : run.hasDeclaredTasks ? (run.mirrored ? "Open steps" : "Open tasks") : "Agents",
                             openCount: named ? g.open + d.moreRows : 0, doneCount: g.done, moreOpen: g.more + d.moreRows,
                             lanes: !finished && d.lastSeen == nil && timed ? lanes(run) : nil, listsDone: false)
     }
@@ -41,11 +41,11 @@ extension RunsPresenter {
                        warning: d.warning, hasDeclaredTasks: d.hasDeclaredTasks || d.mirrored, nodes: nodes,
                        finishedEarlier: d.finishedEarlier + d.finishedRows, abandoned: d.abandoned,
                        time: TaskTimeSplit(working: d.workingSeconds ?? 0), etaHighSeconds: d.finishHigh.map { $0.timeIntervalSince(now) },
-                       limitOutlook: d.limit, mirrored: d.mirrored)
+                       limitOutlook: d.limit, mirrored: d.mirrored, left: d.left)
     }
 
     func syncedStatus(_ d: RunDigest, run: TaskRun, card c: RunCardModel) -> RunStatusModel {
-        if d.lastSeen != nil, !d.state.isTerminal { return RunStatusModel(key: c.stateText) }
+        if d.lastSeen != nil, !d.isSettled { return RunStatusModel(key: c.stateText) }
         if d.state.isTerminal, !d.abandoned, let rc = c.receipt {
             let key = d.state == .done ? RunWords.done : d.state == .failed ? RunWords.failed : RunWords.partial
             return RunStatusModel(key: key, detail: rc.tasks + " " + rc.tasksNote)
@@ -63,7 +63,7 @@ extension RunsPresenter {
     }
 
     func syncedLine(_ d: RunDigest, card c: RunCardModel, status: RunStatusModel, limit: RunLimitModel?) -> String? {
-        if d.state.isTerminal {
+        if d.isSettled {
             guard let rc = c.receipt else { return status.detail }
             return [rc.tasks + " " + rc.tasksNote, rc.duration].joined(separator: " · ")
         }
@@ -77,9 +77,9 @@ extension RunsPresenter {
 
     func syncedFacts(_ d: RunDigest, card c: RunCardModel) -> [RunFactModel] {
         var out: [RunFactModel] = []
-        if d.state.isTerminal {
+        if d.isSettled {
             guard let rc = c.receipt else { return out }
-            out.append(RunFactModel(label: "Took", value: rc.duration))
+            out.append(RunFactModel(label: "Worked", value: rc.duration))
             out.append(RunFactModel(label: "Tokens", value: rc.tokens))
             if let cost = rc.cost { out.append(RunFactModel(label: "Cost", value: cost.replacingOccurrences(of: "about ", with: "~"))) }
             return out

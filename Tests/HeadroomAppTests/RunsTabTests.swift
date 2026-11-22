@@ -5,7 +5,7 @@ import Testing
 import HeadroomKit
 import HeadroomPresent
 
-/// The Runs tab: a list (in any style) whose every line opens the run's own page.
+/// The Runs tab: one list (a lead card, then two-line rows) whose every line opens the run's own page.
 @MainActor @Suite struct RunsTabTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -15,13 +15,15 @@ import HeadroomPresent
         return TaskRun(id: id, title: "Run \(id)", startedAt: now, updatedAt: now, state: .running, hasDeclaredTasks: true, nodes: nodes)
     }
 
+    func scenario(_ name: String) -> Demo.RunScenario { Demo.runScenarios(now: Demo.now).first { $0.name == name }! }
+
     /// Draws the list offscreen: its measured and drawn heights and the regions it recorded.
-    func list(_ page: RunsPageModel, _ style: RunsListStyle, showFinished: Bool = false) -> (measured: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
+    func list(_ page: RunsPageModel, showFinished: Bool = false) -> (measured: CGFloat, drawn: CGFloat, regions: [HitRegion]) {
         let out = RenderOutput()
-        let measured = RunListRenderer.drawPage(page, style: style, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: nil)
+        let measured = RunListRenderer.drawPage(page, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: nil)
         var drawn: CGFloat = 0
-        _ = renderImage(size: CGSize(width: 400, height: 1600), scale: 1) { ctx in
-            drawn = RunListRenderer.drawPage(page, style: style, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: ctx, out: out)
+        _ = renderImage(size: CGSize(width: 400, height: 2400), scale: 1) { ctx in
+            drawn = RunListRenderer.drawPage(page, showFinished: showFinished, origin: .zero, width: 360, theme: .dark, ctx: ctx, out: out)
         }
         return (measured, drawn, out.regions)
     }
@@ -41,51 +43,46 @@ import HeadroomPresent
         Set(regions.compactMap { if case .openRun(let id) = $0.action { id } else { nil } })
     }
 
-    @Test func everyLineOpensItsRunInEveryStyle() {
-        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
-        let all = Set((page.live + page.recent).map(\.id))
-        for style in RunsListStyle.allCases {
-            let l = list(page, style, showFinished: true)
-            #expect(opens(l.regions) == all, "\(style)")
-            // Lines say they're clickable on hover.
-            #expect(l.regions.filter { if case .openRun = $0.action { true } else { false } }.allSatisfy { $0.hover != nil }, "\(style)")
-        }
+    @Test func everyLineAndTheLeadCardOpenTheirRun() {
+        let page = RunsPresenter(now: Demo.now).page(scenario("mixed").runs)
+        let all = Set((page.live + page.recent + page.days.flatMap(\.short)).map(\.id))
+        let l = list(page, showFinished: true)
+        #expect(opens(l.regions) == all)
+        // Lines say they're clickable on hover.
+        #expect(l.regions.filter { if case .openRun = $0.action { true } else { false } }.allSatisfy { $0.hover != nil })
     }
 
-    @Test func twoLineFoldsTheFinishedRuns() {
-        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
-        let folded = list(page, .twoLine)
+    @Test func shortSessionsFoldIntoOneLineThatOpens() {
+        let page = RunsPresenter(now: Demo.now).page(scenario("settled").runs)
+        let folded = list(page)
         #expect(folded.regions.contains { $0.action == .toggleFinished })
-        #expect(opens(folded.regions) == Set(page.live.map(\.id)))
-        #expect(list(page, .twoLine, showFinished: true).measured > folded.measured)
+        let shortIDs = Set(page.days.flatMap(\.short).map(\.id))
+        #expect(shortIDs.count == 3 && opens(folded.regions).isDisjoint(with: shortIDs))
+        let open = list(page, showFinished: true)
+        #expect(open.measured > folded.measured && opens(open.regions).isSuperset(of: shortIDs))
     }
 
-    @Test func fillRowsAnswerFromTheRow() {
-        let r = Demo.inputRun(now: Demo.now)
-        let l = list(RunsPresenter(now: Demo.now).page([r]), .fill)
-        // The button wins over its row.
-        let button = l.regions.first { $0.action == .runButton(r.id, .openSession) }
-        #expect(button != nil)
-        if let b = button {
-            #expect(l.regions.last { $0.rect.contains(CGPoint(x: b.rect.midX, y: b.rect.midY)) && $0.action != .none }?.action == .runButton(r.id, .openSession))
+    @Test func theLeadCardsButtonsWinOverTheCard() {
+        for r in [Demo.inputRun(now: Demo.now), Demo.yourTurnRun(now: Demo.now)] {
+            let l = list(RunsPresenter(now: Demo.now).page([r]))
+            let button = l.regions.first { $0.action == .runButton(r.id, .openSession) }
+            #expect(button != nil)
+            if let b = button {
+                #expect(l.regions.last { $0.rect.contains(CGPoint(x: b.rect.midX, y: b.rect.midY)) && $0.action != .none }?.action == .runButton(r.id, .openSession))
+            }
         }
+        // Your turn offers Close from the card.
+        let turn = Demo.yourTurnRun(now: Demo.now)
+        #expect(list(RunsPresenter(now: Demo.now).page([turn])).regions.contains { $0.action == .runButton(turn.id, .close) })
     }
 
-    @Test func emptyTabConnectsAgentsAndFinishedListOpens() {
-        for style in RunsListStyle.allCases {
-            #expect(list(RunsPageModel(), style).regions.contains { $0.action == .connectAgents })
-        }
+    @Test func emptyTabConnectsAgentsAndMoreOpens() {
+        #expect(list(RunsPageModel()).regions.contains { $0.action == .connectAgents })
         let many = (0..<6).map { i in
-            TaskRun(id: "d\(i)", title: "Done \(i)", startedAt: now, updatedAt: now.addingTimeInterval(-Double(i + 1) * 60), state: .done, hasDeclaredTasks: true)
+            TaskRun(id: "d\(i)", title: "Done \(i)", startedAt: now.addingTimeInterval(-3600), updatedAt: now.addingTimeInterval(-Double(i + 1) * 60), state: .done,
+                    hasDeclaredTasks: true, time: TaskTimeSplit(working: 1800))
         }
-        for style in RunsListStyle.allCases {
-            #expect(list(RunsPresenter(now: now).page(many), style, showFinished: true).regions.contains { $0.action == .moreRecent }, "\(style)")
-        }
-    }
-
-    @Test func theListIsFarShorterThanTheOldCards() {
-        let page = RunsPresenter(now: Demo.now).page(Demo.runScenarios(now: Demo.now).first { $0.name == "mixed" }!.runs)
-        #expect(list(page, .ledger).measured < 620)
+        #expect(list(RunsPresenter(now: now).page(many)).regions.contains { $0.action == .moreRecent })
     }
 
     @Test func aRunPageOffersItsMenuSessionAndQuestionButtons() {
@@ -128,11 +125,9 @@ import HeadroomPresent
     @Test func everyDemoScenarioMeasuresAsItDraws() {
         for s in Demo.runScenarios(now: Demo.now) {
             let page = RunsPresenter(now: Demo.now).page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
-            for style in RunsListStyle.allCases {
-                for show in [false, true] {
-                    let l = list(page, style, showFinished: show)
-                    #expect(l.measured == l.drawn && l.measured > 0, "\(s.name) \(style)")
-                }
+            for show in [false, true] {
+                let l = list(page, showFinished: show)
+                #expect(l.measured == l.drawn && l.measured > 0, "\(s.name)")
             }
             for card in page.live + page.recent {
                 for style in RunPageStyle.allCases {
@@ -146,28 +141,31 @@ import HeadroomPresent
     }
 }
 
-/// What the Ledger's time column says when a run isn't simply running.
+/// The compact word that stands in for the time when a run isn't simply running.
 @MainActor @Suite struct RunsCompactTests {
     let now = Demo.now
 
-    @Test func theTimeColumnSaysWhatHoldsARunUp() {
+    @Test func theFlagSaysWhatHoldsARunUp() {
         let page = RunsPresenter(now: now).page(Demo.runScenarios(now: now).first { $0.name == "mixed-all" }!.runs)
         let flags = page.live.map(\.compactFlag)
-        #expect(flags.contains("asks"))
+        #expect(flags.contains("asks") && flags.contains("your turn"))
         #expect(page.live.filter { $0.glyph == .running }.allSatisfy { $0.compactFlag == nil })
         #expect(page.recent.allSatisfy { $0.compactFlag == nil })
     }
 }
 
-/// Picking a style in Settings reaches the open popover: the setting is kept and announced.
+/// The run page style is a setting; the old list style is gone and its stored value does nothing.
 @MainActor @Suite struct RunsStyleSettingTests {
-    @Test func stylesPersistAndAnnounceTheChange() {
-        let s = AppSettings(defaults: UserDefaults(suiteName: "headroom-tests-\(UUID().uuidString)")!)
-        #expect(s.runsListStyle == .ledger && s.runPageStyle == .briefing)
+    @Test func thePageStylePersistsAndAnOldListStyleIsHarmless() {
+        let defaults = UserDefaults(suiteName: "headroom-tests-\(UUID().uuidString)")!
+        // What 0.8.2 may have stored: Fill rows.
+        defaults.set(2, forKey: "runsListStyle")
+        let s = AppSettings(defaults: defaults)
+        #expect(s.runPageStyle == .briefing)
         var changes = 0
         s.onChange = { changes += 1 }
-        s.runsListStyle = .fill
         s.runPageStyle = .lanes
-        #expect(changes == 2 && s.runsListStyle == .fill && s.runPageStyle == .lanes)
+        #expect(changes == 1 && s.runPageStyle == .lanes)
+        #expect(defaults.integer(forKey: "runsListStyle") == 2)
     }
 }

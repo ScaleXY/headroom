@@ -145,7 +145,7 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
         var out = Decision()
         var stillWaiting: Set<String> = [], stillStopped: Set<String> = []
         for r in runs {
-            if !r.state.isTerminal, r.state == .waiting, r.waitReason == .input {
+            if !r.isSettled, r.state == .waiting, r.waitReason == .input {
                 stillWaiting.insert(r.id)
                 // Back at work after finishing, even if first seen asking: its next finish is news.
                 if finished[r.id] != nil { reopened.insert(r.id) }
@@ -171,7 +171,7 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
                 } else if primed, needsInput {
                     out.due.append(Alert(kind: .needsInput, run: r))
                 }
-            } else if r.state.isTerminal {
+            } else if r.isSettled {
                 let fresh = now.timeIntervalSince(r.updatedAt) < Self.finishFreshness
                 if let last = finished[r.id] {
                     guard reopened.remove(r.id) != nil, now.timeIntervalSince(last) >= Self.finishSpacing else { continue }
@@ -180,9 +180,12 @@ public struct RunAlertLedger: Codable, Sendable, Hashable {
                 if primed, notifyFinished, fresh, Self.worthWatching(r) { out.due.append(Alert(kind: .finished, run: r)) }
             } else {
                 if finished[r.id] != nil { reopened.insert(r.id) }
-                if r.stoppedWithWorkLeft {
+                // A turn that ended after real work, with the session still there. A session that
+                // simply ends settles without a word.
+                if r.yourTurn {
                     stillStopped.insert(r.id)
-                    if stopped.insert(r.id).inserted, primed, notifyStopped, Self.worthWatching(r), now.timeIntervalSince(r.updatedAt) < Self.finishFreshness {
+                    if stopped.insert(r.id).inserted, primed, notifyStopped, r.turnWorthTelling, Self.worthWatching(r),
+                       now.timeIntervalSince(r.updatedAt) < Self.finishFreshness {
                         out.due.append(Alert(kind: .stopped, run: r))
                     }
                 }

@@ -189,7 +189,6 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case runsPage(RunsPage)
         case connect(ConnectRow.Kind)
         case quietAfter(TimeInterval)
-        case listStyle(RunsListStyle)
         case pageStyle(RunPageStyle)
     }
 
@@ -326,7 +325,6 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             setupMessage = result.message.isEmpty ? nil : (result.message, result.failed)
             setup = AgentSetupState.read(setupContext, bundledCLI: CLIInstaller.bundledCLI?.path)
         case .quietAfter(let v): s.runQuietAfter = v
-        case .listStyle(let style): s.runsListStyle = style
         case .pageStyle(let style): s.runPageStyle = style
         }
         needsDisplay = true
@@ -763,17 +761,9 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         }
     }
 
-    /// How the Runs tab lists runs, and how a run's own page draws it.
+    /// How a run's own page draws it (the list is one layout), and the other Macs' runs.
     private func drawRunLayout(x: CGFloat, y: CGFloat, w: CGFloat, enabled on: Bool, ctx: CGContext) {
         var cy = y
-        sectionLabel("RUNS LIST", x: x, y: cy, ctx: ctx)
-        cy += 14
-        let lists = RunsListStyle.allCases
-        segmented(lists.map(\.title), selected: lists.firstIndex(of: settings.runsListStyle) ?? 0, x: x, y: cy, w: w,
-                  actions: lists.map { AnyHashable(Action.listStyle($0)) }, enabled: on, ctx: ctx)
-        cy += 30 + 8
-        Text(settings.runsListStyle.detail, F.sf(12, 500), theme.muted2).draw(x: x + 1, capCenter: cy + 6, in: ctx)
-        cy += 34
         sectionLabel("RUN PAGE", x: x, y: cy, ctx: ctx)
         cy += 14
         let pages = RunPageStyle.allCases

@@ -115,16 +115,12 @@ enum RenderCommand {
             for theme in themes {
                 let suffix = theme.isDark ? "dark" : "light"
                 for s in Demo.runScenarios(now: now) {
-                    // The list, in each style for the busy fixtures.
-                    let styles: [RunsListStyle] = ["mixed", "mixed-all"].contains(s.name) ? RunsListStyle.allCases : [.ledger]
-                    for style in styles {
-                        let tag = style == .ledger ? "" : "-\(style == .twoLine ? "twoline" : "fill")"
-                        if let rep = PopoverPage.renderRuns(s, theme: theme, now: now, list: style) {
-                            write(rep, to: outDir.appendingPathComponent("runs-\(s.name)\(tag)-\(suffix).png")); written += 1
-                        }
+                    if let rep = PopoverPage.renderRuns(s, theme: theme, now: now) {
+                        write(rep, to: outDir.appendingPathComponent("runs-\(s.name)-\(suffix).png")); written += 1
                     }
-                    if s.name == "mixed", let rep = PopoverPage.renderRuns(s, theme: theme, now: now, list: .twoLine, showFinished: true) {
-                        write(rep, to: outDir.appendingPathComponent("runs-mixed-twoline-open-\(suffix).png")); written += 1
+                    // The short sessions opened.
+                    if s.name == "settled", let rep = PopoverPage.renderRuns(s, theme: theme, now: now, showFinished: true) {
+                        write(rep, to: outDir.appendingPathComponent("runs-settled-open-\(suffix).png")); written += 1
                     }
                     // Each run's own page, in each style (Lanes only while live).
                     for (i, r) in s.runs.filter({ !$0.hidden }).enumerated() {
@@ -148,10 +144,10 @@ enum RenderCommand {
                 if let rep = PopoverPage.renderSettings(section: .runs, theme: theme) {
                     write(rep, to: outDir.appendingPathComponent("settings-runs-\(suffix).png")); written += 1
                 }
-                // Runs › Layout in two combinations of styles: the preview follows the picks.
-                for (list, page) in [(RunsListStyle.ledger, RunPageStyle.briefing), (.fill, .lanes), (.twoLine, .briefing)] {
-                    let name = "settings-runs-layout-\(list.title.lowercased().replacingOccurrences(of: " ", with: "-"))-\(page.title.lowercased())-\(suffix).png"
-                    if let rep = PopoverPage.renderSettings(section: .runs, theme: theme, runsPage: .layout, configure: { $0.runsListStyle = list; $0.runPageStyle = page }) {
+                // Runs › Layout in each run page style: the preview follows the pick.
+                for page in RunPageStyle.allCases {
+                    let name = "settings-runs-layout-\(page.title.lowercased())-\(suffix).png"
+                    if let rep = PopoverPage.renderSettings(section: .runs, theme: theme, runsPage: .layout, configure: { $0.runPageStyle = page }) {
                         write(rep, to: outDir.appendingPathComponent(name)); written += 1
                     }
                 }
@@ -237,13 +233,13 @@ enum PopoverPage {
         }
     }
 
-    /// The Runs tab of the popover for one fixture: the list in `list`'s style, or, with `run`, that
-    /// run's own page in `pageStyle`.
-    static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date, list: RunsListStyle = .ledger, showFinished: Bool = false,
+    /// The Runs tab of the popover for one fixture: the list, or, with `run`, that run's own page in
+    /// `pageStyle`. `showFinished` opens the folded short sessions.
+    static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date, showFinished: Bool = false,
                            run: String? = nil, pageStyle: RunPageStyle = .briefing) -> NSBitmapImageRep? {
         let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale, pricing: demoPricing)
             .page(s.runs, remote: s.remote, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
-        let card = run.flatMap { id in (page.live + page.recent).first { $0.id == id } }
+        let card = run.flatMap { id in (page.live + page.recent + page.days.flatMap(\.short)).first { $0.id == id } }
         let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
         // A run's page keeps its way back in a row above it, as the popover does.
         let top = pad + PopoverChrome.headerHeight + (card == nil ? 0 : 36)
@@ -251,14 +247,14 @@ enum PopoverPage {
             if let card {
                 return RunPageRenderer.draw(card, style: pageStyle, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
             }
-            return RunListRenderer.drawPage(page, style: list, showFinished: showFinished, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
+            return RunListRenderer.drawPage(page, showFinished: showFinished, origin: CGPoint(x: pad, y: y), width: cw, theme: theme, ctx: ctx)
         }
         let h = top + content(nil, 0) + 2 + PopoverChrome.footerHeight + pad
         return renderImage(size: CGSize(width: w, height: h)) { ctx in
             PopoverChrome.drawWindow(CGRect(x: 0, y: 0, width: w, height: h), theme: theme, ctx: ctx)
             PopoverChrome.drawHeader(x: pad, y: pad, width: cw, tabs: ["Limits", "Activity", "Runs"], selected: 2, theme: theme, ctx: ctx, out: nil)
             if let card {
-                let position = page.live.firstIndex { $0.id == card.id }.map { "\($0 + 1) of \(page.live.count) live" } ?? "finished"
+                let position = page.live.firstIndex { $0.id == card.id }.map { "\($0 + 1) of \(page.live.count) live" } ?? "settled"
                 PopoverRootView.drawRunCrumb(position: position, x: pad, y: pad + PopoverChrome.headerHeight, width: cw, theme: theme, ctx: ctx, out: nil)
             }
             let y = top + content(ctx, top) + 2

@@ -77,7 +77,9 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
     @Test func elapsedIsWorkingTimeWhileLive() {
         #expect(p.card(run { $0.time = TaskTimeSplit(working: 72 * 60, waitingInput: 600) }).elapsed == "1h 12m working")
         #expect(p.card(run()).elapsed == nil)
-        #expect(p.card(run(state: .done, updated: 0)).elapsed == "1h 42m")
+        // Settled: time worked too; with no split (an older run) the time it was open stands in.
+        #expect(p.card(run(state: .done, updated: 0)).elapsed == "1h 42m working")
+        #expect(p.card(run(state: .done, updated: 0) { $0.time = TaskTimeSplit(working: 83 * 60, idle: 127 * 3600) }).elapsed == "1h 23m working")
         #expect(RunsPresenter.duration(30) == "<1m" && RunsPresenter.duration(3 * 3600) == "3h" && RunsPresenter.duration(50 * 3600) == "2d 2h")
     }
 
@@ -108,7 +110,7 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
     }
 
     @Test func actionsFollowWhatTheRunKnows() {
-        #expect(p.card(run()).actions == RunActionSet(hide: true, abandon: true))
+        #expect(p.card(run()).actions == RunActionSet(hide: true, close: true))
         #expect(p.card(run { $0.cwd = "/tmp/x" }).actions.openSession)
         #expect(p.card(run { $0.host = "com.apple.Terminal" }).actions.openSession)
         #expect(p.card(run(uuid)).actions.copyResume)
@@ -116,8 +118,11 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(!p.card(run(uuid, harness: "aider")).actions.copyResume)
         #expect(!p.card(run("not-a-session")).actions.copyResume)
         let done = p.card(run(state: .done)).actions
-        #expect(done.hide && !done.abandon)
-        #expect(!p.card(run { $0.abandoned = true }).actions.abandon)
+        #expect(done.hide && !done.close && !done.resume)
+        #expect(!p.card(run { $0.abandoned = true }).actions.close)
+        // Your turn and left runs can be resumed and closed.
+        let turn = p.card(run(state: .stopped)).actions, left = p.card(run(state: .stopped) { $0.left = true }).actions
+        #expect(turn.resume && turn.close && left.resume && left.close)
     }
 }
 
@@ -162,7 +167,8 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
 
     @Test func finishedCardsCarryAReceipt() throws {
         let rc = try #require(p.card(finished()).receipt)
-        #expect(rc.duration == "1h 42m" && rc.tokens == "296K" && rc.cost == nil)
+        // Time worked leads; the time open goes to the page.
+        #expect(rc.duration == "1h 10m" && rc.open == "1h 42m" && rc.tokens == "296K" && rc.cost == nil)
         #expect(rc.tasks == "4 of 5" && rc.tasksNote == "tasks · 1 optional failed")
         #expect(rc.time.waitingInput == 22 * 60)
         #expect(rc.footnote == "Plan changed 2 times after it started · 1 retry")
@@ -178,12 +184,12 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(RunsPresenter.cost(["made-up-model": 1000], pricing: engine) == nil)
     }
 
-    @Test func abandonedRunsSitWithTheFinishedOnes() {
+    @Test func closedRunsSitWithTheFinishedOnes() {
         let r = run("gone", state: .stopped, nodes: [leaf("a", .done), leaf("b", .cancelled, counted: false), leaf("c", .planned)]) { $0.abandoned = true }
         let page = p.page([r])
         #expect(page.live.isEmpty && page.recent.map(\.id) == ["gone"])
         let c = page.recent[0]
-        #expect(c.stateText == "Abandoned" && c.glyph == .skipped && c.tone == .quiet && !c.live)
+        #expect(c.stateText == "Closed" && c.glyph == .skipped && c.tone == .quiet && !c.live)
         #expect(c.receipt?.tasksNote == "tasks · 1 cancelled · 1 left open")
         #expect(p.menuBar([r]) == nil)
     }
@@ -194,7 +200,7 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
             $0.abandoned = true
         }
         let c = p.page([r]).recent[0]
-        #expect(c.stateText == "Abandoned" && !c.live)
+        #expect(c.stateText == "Closed" && !c.live)
         #expect(!c.needsInput && c.question == nil)
     }
 }
@@ -249,11 +255,11 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
     }
 
     @Test func oneWordPerState() {
-        #expect(p.stateText(run(state: .stopped)) == RunWords.stopped)
+        #expect(p.stateText(run(state: .stopped)) == RunWords.yourTurn)
         #expect(p.stateText(run(state: .partial)) == RunWords.partial)
         #expect(p.stateText(run(state: .waiting, wait: .input)) == RunWords.needsInput)
         #expect(p.stateText(run(stale: true, updated: -18)) == RunWords.quiet("18m"))
-        #expect(p.stateText(run { $0.abandoned = true }) == RunWords.abandoned)
+        #expect(p.stateText(run { $0.abandoned = true }) == RunWords.closed)
         // Rose is for "needs you"; a failure is .alert with the failed glyph, which surfaces colour apart.
         let failed = p.card(run(state: .failed))
         #expect(failed.glyph == .failed && failed.tone == .alert)
@@ -338,8 +344,9 @@ private func run(_ id: String = "r", state: TaskRunState = .running, wait: TaskW
         #expect(v?.primary == "Working on Routes and 1 more." && v?.figure == "296K tokens")
         // A run that needs you leads with the question instead.
         #expect(p.card(run(state: .waiting, wait: .input, nodes: nodes)).verdict?.primary == nil)
-        // Stopped: what's left, not the state again.
-        #expect(p.card(run(state: .stopped, nodes: nodes)).verdict?.primary?.hasPrefix("3 tasks left.") == true)
+        // Your turn: what's left, not the state again; left: that the session ended.
+        #expect(p.card(run(state: .stopped, nodes: nodes)).verdict?.primary == "The agent ended its turn with 3 tasks open. Reply in the session to go on.")
+        #expect(p.card(run(state: .stopped, nodes: nodes) { $0.left = true }).verdict?.primary?.hasPrefix("3 tasks left open when the session ended.") == true)
         // Done with optional work failed says so, so "4 of 5" beside it adds up.
         let done = [leaf("a", .done), leaf("b", .done), leaf("bench", .failed, importance: .optional, counted: false)]
         #expect(p.card(run(state: .done, nodes: done)).verdict?.primary == "Everything that counts is done; Bench, which was optional, failed.")
