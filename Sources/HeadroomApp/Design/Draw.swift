@@ -79,7 +79,8 @@ struct Text {
         return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 
-    var font: NSFont { string.attribute(.font, at: 0, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 12) }
+    /// (Asking an empty string for an attribute raises.)
+    var font: NSFont { string.length > 0 ? string.attribute(.font, at: 0, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 12) : .systemFont(ofSize: 12) }
 
     /// Cap height of the first run's font, for optical vertical centering.
     var capHeight: CGFloat { font.capHeight }

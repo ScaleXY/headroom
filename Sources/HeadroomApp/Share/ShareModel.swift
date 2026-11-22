@@ -27,7 +27,7 @@ struct ShareModel: Equatable {
     /// Tokens per bar across the selected span (≤ 24 bars) and their labels.
     var bars: [Int64]
     var barLabels: [String]
-    var barUnit: String             // "hr", "4h", "day"
+    var barUnit: String             // "hr", "4h", "day", "2d"
     var pace: Pace?
     /// Share of the weekly allowance the span used, when known ("≈ 1% used in 4 hours").
     var allowanceUsed: Double?
@@ -46,7 +46,10 @@ enum ShareBuilder {
         f.locale = Display.locale
         f.calendar = Display.calendar
         f.timeZone = Display.calendar.timeZone
-        f.setLocalizedDateFormatFromTemplate(selected.count > 30 ? "MMMd" : (selected.first.map { $0.end.timeIntervalSince($0.start) >= 86400 } ?? false) ? "MMMd" : "j")
+        let barSeconds = selected.first.map { $0.end.timeIntervalSince($0.start) } ?? 3600
+        // A day is 23 hours when the clocks go forward.
+        let daily = barSeconds >= 23 * 3600
+        f.setLocalizedDateFormatFromTemplate(selected.count > 30 || daily ? "MMMd" : "j")
         for chunk in stride(from: 0, to: selected.count, by: group) {
             let slice = selected[chunk..<min(chunk + group, selected.count)]
             bars.append(slice.reduce(0) { $0 + (mode == .all ? $1.tokens.total : $1.tokens.fresh) })
@@ -54,8 +57,9 @@ enum ShareBuilder {
         }
         let t = activity.totals
         let total = Double(max(1, mode == .all ? t.total : t.fresh))
-        let unitSeconds = (selected.first.map { $0.end.timeIntervalSince($0.start) } ?? 3600) * Double(group)
-        let unit = unitSeconds >= 86400 ? "day" : unitSeconds >= 4 * 3600 ? "\(Int(unitSeconds / 3600))h" : "hr"
+        // What one drawn bar holds: merged days say so ("2d"), or the peak would read as a day's.
+        let unitSeconds = barSeconds * Double(group)
+        let unit = daily ? (group > 1 ? "\(group)d" : "day") : unitSeconds >= 4 * 3600 ? "\(Int(unitSeconds / 3600))h" : "hr"
         var p: ShareModel.Pace? = nil
         if let hero = pace?.hero, let meter = pace?.meter {
             p = .init(state: meter.state, cells: meter.cells, percentLeft: hero.percentLeft,

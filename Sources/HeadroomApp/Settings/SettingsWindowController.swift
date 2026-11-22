@@ -430,7 +430,8 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         guard let field = obj.object as? NSTextField else { return }
         if let (p, _) = priceFields.first(where: { $0.value === field }) {
             let text = field.stringValue.replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespaces)
-            settings.setPlanPriceOverride(text.isEmpty ? nil : Double(text), for: p)
+            // "nan", "inf", zero or a negative price is no price: the field clears and the plan's own applies.
+            settings.setPlanPriceOverride(Double(text).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }, for: p)
         }
         if let (tool, _) = pathFields.first(where: { $0.value === field }) {
             let path = field.stringValue.trimmingCharacters(in: .whitespaces)

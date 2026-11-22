@@ -6,6 +6,12 @@ import HeadroomPresent
 /// History view (PLAN §7): one week's glide path in the brand color, "Week to Sep 30 · 66% used".
 @MainActor
 enum HistoryCardRenderer {
+    /// "Ran out 1 hour early", "Ran out", or "34% renewed unused".
+    static func outcome(_ r: WeekRecord) -> String {
+        guard r.ranOut else { return "\(Int(((1 - r.finalUsed) * 100).rounded()))% renewed unused" }
+        return r.hoursEarly.map { "Ran out \($0) hour\($0 == 1 ? "" : "s") early" } ?? "Ran out"
+    }
+
     static func draw(provider: Provider, record: WeekRecord?, origin: CGPoint, width: CGFloat, theme: Theme, ctx: CGContext?,
                      calendar: Calendar = Display.calendar, locale: Locale = Display.locale) -> CGFloat {
         let x0 = origin.x + 14, w = width - 28
@@ -32,7 +38,7 @@ enum HistoryCardRenderer {
                                state: .onPace, brandLine: provider)
         GlideChartRenderer.draw(glide, rect: CGRect(x: x0, y: y, width: w, height: glideH), theme: theme, ctx: ctx, calendar: calendar, locale: locale)
         y += glideH + 12
-        let outcome: String = r.ranOut ? (r.hoursEarly.map { "Ran out \($0) hours early" } ?? "Ran out") : "\(Int(((1 - r.finalUsed) * 100).rounded()))% renewed unused"
+        let outcome = Self.outcome(r)
         let rows = [
             DetailRowModel(icon: .ring(used: min(r.finalUsed, 1), level: r.ranOut ? .rose : .normal), label: "Outcome", value: outcome, suffix: r.earlyReset ? "reset early" : nil),
             DetailRowModel(icon: .hourglass(highlight: false), label: "5-hour limit hits", value: "\(r.sessionHits)", suffix: r.plan),

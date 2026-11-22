@@ -105,7 +105,7 @@ final class AppUpdater: NSObject {
         get { settings.betaUpdates }
         set {
             settings.betaUpdates = newValue
-            // A pending offer may be from the other channel; look again.
+            // A pending offer may be from the other channel: drop it, and the next check looks again.
             if !newValue, foundReply != nil { foundReply?(.dismiss); foundReply = nil; state = .idle }
             onChange?()
         }

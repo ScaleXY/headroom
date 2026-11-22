@@ -544,13 +544,15 @@ final class CardsView: NSView, NSViewToolTipOwner {
         }) else { return }
         fade = (image, rect, Date())
         fadeTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let f = self.fade else { return }
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            let fading = MainActor.assumeIsolated {
+                guard let self, let f = self.fade else { return false }
                 if Date().timeIntervalSince(f.start) >= 0.15 { self.fade = nil; self.fadeTimer?.invalidate(); self.fadeTimer = nil }
-                _ = f
                 self.needsDisplay = true
+                return true
             }
+            // The view went away mid-fade: nothing else would stop this.
+            if !fading { timer.invalidate() }
         }
         RunLoop.main.add(t, forMode: .common)
         fadeTimer = t

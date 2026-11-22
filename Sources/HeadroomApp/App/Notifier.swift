@@ -62,7 +62,7 @@ final class Notifier {
             // 5-hour session.
             let status = SessionStatus(window: reading.session, now: now, policy: presenter.policy)
             if let s = status, let resetsAt = s.resetsAt, resetsAt > now {
-                let stamp = Int(resetsAt.timeIntervalSince1970 / 600)
+                let stamp = Self.stamp(resetsAt, every: 600)
                 if s.level == .blocked {
                     post(.sessionLimit, id: "limit.\(p.rawValue).\(stamp)", title: "\(name): 5-hour limit reached",
                          body: "Back at \(clock(resetsAt)), in \(Presenter.hoursMinutes(resetsAt.timeIntervalSince(now))).")
@@ -75,7 +75,7 @@ final class Notifier {
             }
             // A session that warned or blocked has reset.
             if let last = lastSession[p], last.level >= .amber, let was = last.resetsAt, was <= now {
-                post(.sessionReset, id: "reset.\(p.rawValue).\(Int(was.timeIntervalSince1970 / 600))", title: "\(name): 5-hour session is back",
+                post(.sessionReset, id: "reset.\(p.rawValue).\(Self.stamp(was, every: 600))", title: "\(name): 5-hour session is back",
                      body: "A fresh session is ready. The full allowance is available again.")
             }
             if let s = status { lastSession[p] = (s.level, s.resetsAt) }
@@ -86,7 +86,7 @@ final class Notifier {
                 let state = input.smoothedState ?? a.state
                 if state >= .tight, a.rule != .exhausted {
                     let v = VerdictWriter.verdict(for: a, window: headline, now: now, calendar: presenter.calendar, locale: presenter.locale, state: state)
-                    post(.weeklyTight, id: "week.\(p.rawValue).\(Int(resetsAt.timeIntervalSince1970 / 3600)).\(state.rawValue)",
+                    post(.weeklyTight, id: "week.\(p.rawValue).\(Self.stamp(resetsAt, every: 3600)).\(state.rawValue)",
                          title: "\(name): \(state.title.lowercased()) this week", body: v.primary)
                 }
             }
@@ -122,6 +122,12 @@ final class Notifier {
         if alert.openable { content.categoryIdentifier = Self.runCategory }
         if alert.sound { content.sound = .default }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: alert.request, content: content, trigger: nil))
+    }
+
+    /// A reset time as an event id. Providers report the same reset a fraction of a second either
+    /// side of the hour from one reading to the next, so it goes to the nearest `seconds`, not down.
+    nonisolated static func stamp(_ date: Date, every seconds: TimeInterval) -> Int {
+        Int((date.timeIntervalSince1970 / seconds).rounded())
     }
 
     /// Records `id` in `ledger` (the last `ledgerSize`) and says whether it was new.

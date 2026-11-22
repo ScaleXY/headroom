@@ -13,7 +13,7 @@ enum RunActions {
         let running = ws.runningApplications.compactMap(\.bundleIdentifier)
         let plan = RunHost.plan(host: run.host, cwd: run.cwd, running: running,
                                 installed: { ws.urlForApplication(withBundleIdentifier: $0) != nil },
-                                folderExists: { FileManager.default.fileExists(atPath: $0) })
+                                folderExists: isFolder)
         switch plan {
         case .activate(let id):
             NSRunningApplication.runningApplications(withBundleIdentifier: id).first?.activate()
@@ -28,6 +28,12 @@ enum RunActions {
         case .nothing:
             NSSound.beep()
         }
+    }
+
+    /// A folder, not a file by that name: opening a file would run a script or launch an app.
+    nonisolated static func isFolder(_ path: String) -> Bool {
+        var directory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
     }
 
     /// `cd '<folder>' && claude --resume <id>` (or `codex resume <id>`), when the run can be resumed:

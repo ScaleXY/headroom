@@ -63,6 +63,18 @@ import HeadroomKit
         #expect(plan(nil, exists: false) == .nothing)
     }
 
+    @Test func onlyAFolderIsOpened() throws {
+        // A run's recorded folder that now names a file (a script, say) is never handed to a terminal or Finder.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("headroom-open-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("run.command")
+        try Data("#!/bin/sh\n".utf8).write(to: script)
+        #expect(RunActions.isFolder(dir.path))
+        #expect(!RunActions.isFolder(script.path) && !RunActions.isFolder(dir.appendingPathComponent("gone").path))
+        #expect(RunHost.plan(host: nil, cwd: script.path, running: [], installed: { _ in true }, folderExists: RunActions.isFolder) == .nothing)
+    }
+
     @Test func hideAndAbandonGoToTheJournalAsTheUser() throws {
         let h = TaskHome()
         try h.add(session, 0, .add(.init(id: "a")))

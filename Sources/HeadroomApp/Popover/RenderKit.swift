@@ -94,7 +94,8 @@ struct TextBlock {
     var height: CGFloat { CGFloat(max(lines.count, 1)) * lineHeight }
 
     func draw(x: CGFloat, top: CGFloat, in ctx: CGContext) {
-        guard let font = string.attribute(.font, at: 0, effectiveRange: nil) as? NSFont else { return }
+        // Nothing to draw, and asking an empty string for an attribute raises.
+        guard string.length > 0, let font = string.attribute(.font, at: 0, effectiveRange: nil) as? NSFont else { return }
         for (i, line) in lines.enumerated() {
             let b = baseline(top: top + CGFloat(i) * lineHeight, font: font, lineHeight: lineHeight)
             ctx.saveGState()

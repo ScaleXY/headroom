@@ -380,6 +380,7 @@ enum GlideChartRenderer {
     }
 
     private static func drawOutlined(_ s: NSAttributedString, center: CGPoint, outline: NSColor, ctx: CGContext) {
+        guard s.length > 0 else { return }
         let outlined = NSMutableAttributedString(attributedString: s)
         let range = NSRange(location: 0, length: outlined.length)
         let size = (s.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize ?? 8.5

@@ -9,7 +9,7 @@ class CanvasControlView: NSView {
     var regions: [(rect: CGRect, action: AnyHashable)] = []
     var hovered: AnyHashable?
     private var fade: (image: CGImage, start: Date)?
-    private var fadeTimer: Timer?
+    private(set) var fadeTimer: Timer?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -44,12 +44,15 @@ class CanvasControlView: NSView {
         guard window != nil, let image = CPUCanvas.image(for: self, { self.drawContent($0) }) else { return }
         fade = (image, Date())
         fadeTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let f = self.fade else { return }
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            let fading = MainActor.assumeIsolated {
+                guard let self, let f = self.fade else { return false }
                 if Date().timeIntervalSince(f.start) >= 0.22 { self.fade = nil; self.fadeTimer?.invalidate(); self.fadeTimer = nil }
                 self.needsDisplay = true
+                return true
             }
+            // The view went away mid-fade (the welcome window closed): nothing else would stop this.
+            if !fading { timer.invalidate() }
         }
         RunLoop.main.add(t, forMode: .common)
         fadeTimer = t

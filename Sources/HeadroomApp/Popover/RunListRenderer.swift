@@ -136,11 +136,14 @@ enum RunListRenderer {
         drawStateIcon(c, center: CGPoint(x: r.minX + 17, y: mid), theme: t, ctx: ctx)
         drawOpens(r, mid: mid, theme: t, ctx: ctx)
         var right = r.maxX - 10 - chevronW - 8
-        // Columns line up whether or not a run is priced.
+        // Columns line up whether or not a run is priced; a cost past $99 takes the room it needs.
+        var costW: CGFloat = 0
         if let cost = c.receipt?.cost.map({ $0.replacingOccurrences(of: "about ", with: "~") }) {
-            Text(cost, F.sf(12, 600, tabular: true), t.ink.fade(0.85)).draw(x: right, capCenter: mid, align: .right, in: ctx)
+            let k = Text(cost, F.sf(12, 600, tabular: true), t.ink.fade(0.85))
+            k.draw(x: right, capCenter: mid, align: .right, in: ctx)
+            costW = k.width
         }
-        right -= 44 + 10
+        right -= max(44, costW) + 10
         if let took = c.receipt?.duration ?? c.hero?.side {
             let d = Text(took, F.sf(11.5, 550, tabular: true), t.muted)
             d.draw(x: right, capCenter: mid, align: .right, in: ctx)
@@ -471,7 +474,11 @@ enum RunListRenderer {
             cells = (0..<5).map { i in (0.2, min(max(f * 5 - Double(i), 0), 1), c.tone == .warn ? .warn : .progress, false) }
         }
         let n = cells.count
-        let gap: CGFloat = n > 12 ? 1 : 1.5, minW: CGFloat = 1.5
+        // Narrower gaps until a cell is a point wide, and none past that: at 1pt gaps the cells of a
+        // run with twenty-odd tasks are slivers, and at 28 there is no room left for any.
+        var gap: CGFloat = 1.5
+        while gap > 0, inner.width - gap * CGFloat(n - 1) < CGFloat(n) { gap -= 0.5 }
+        let minW: CGFloat = 1.5
         let avail = inner.width - gap * CGFloat(n - 1)
         let spare = max(0, avail - minW * CGFloat(n))
         let total = max(cells.reduce(0) { $0 + $1.weight }, 1e-9)
