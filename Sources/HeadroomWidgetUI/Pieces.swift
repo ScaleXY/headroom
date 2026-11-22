@@ -340,8 +340,12 @@ public struct HeadroomMarkView: View {
                         .offset(x: x * s, y: (51.8 - 6.2 - 8.7 * Double(i)) * s)
                 }
             }
-            RoundedRectangle(cornerRadius: 2.2 * s, style: .continuous).fill(hex(0xECEDF1))
-                .frame(width: 16 * s, height: 5 * s).offset(x: 24 * s, y: 28.8 * s)
+            // The crossbar: one more pearl cell in the "now" row, joining the legs.
+            RoundedRectangle(cornerRadius: 2.6 * s, style: .continuous)
+                .fill(hex(Self.cells[2]))
+                .shadow(color: hex(Self.cells[2]).opacity(0.55), radius: 1.8 * s)
+                .frame(width: 9 * s, height: 6.2 * s)
+                .offset(x: 27.5 * s, y: 28.2 * s)
         }
         .frame(width: size, height: size)
     }
