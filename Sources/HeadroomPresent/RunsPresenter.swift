@@ -251,6 +251,8 @@ public struct RunCardModel: Sendable, Hashable, Identifiable {
     public var rowsTitle = "Tasks"
     /// The run's own page: status line, facts, limit, grouped tasks and lanes.
     public var page: RunPageModel?
+    /// The Mac a run synced from, on another Mac's Runs tab; nil for a run of this Mac's own.
+    public var mac: String?
 
     public init(id: String, title: String, subtitle: String, stateText: String, glyph: RunGlyph, tone: RunTone, live: Bool, declared: Bool,
                 needsInput: Bool = false, provider: Provider? = nil, bar: TaskProgress? = nil, headline: String, estimate: String? = nil,

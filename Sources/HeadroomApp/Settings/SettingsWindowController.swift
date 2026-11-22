@@ -183,7 +183,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case choose(String)
         case revealPricing
         case checkUpdates, installUpdate, cancelUpdate
-        case syncToggle, syncRemove, syncTaskNames, syncQuestion
+        case syncToggle, syncRemove, syncTaskNames, syncQuestion, otherMacsRuns
         case autoCheck, autoDownload
         case betaUpdates(Bool)
         case runsPage(RunsPage)
@@ -316,6 +316,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .syncRemove: confirmRemoveSync()
         case .syncTaskNames: s.syncTaskNames.toggle()
         case .syncQuestion: s.syncQuestionText.toggle()
+        case .otherMacsRuns: s.showOtherMacsRuns.toggle()
         case .runsPage(let page):
             guard page != runsPage else { break }
             crossfade()
@@ -781,6 +782,13 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         cy += 30 + 8
         Text(settings.runPageStyle.detail, F.sf(12, 500), theme.muted2).draw(x: x + 1, capCenter: cy + 6, in: ctx)
         cy += 34
+        // Here, not under iPhone & Watch: that page has no room left once both providers are listed.
+        // The other Macs' runs arrive through that sync, so the row waits for it.
+        let synced = on && settings.syncEnabled
+        toggleRow("Show runs from your other Macs",
+                  synced || !on ? "Macs on your iCloud that have sync turned on." : "Turn on sync under iPhone & Watch to see them.",
+                  on: synced && settings.showOtherMacsRuns, action: Action.otherMacsRuns, x: x, y: cy, w: w, enabled: synced, ctx: ctx)
+        cy += 42 + 8
         hint(symbol: "cursorarrow.click", "Click a run in the list to open its page. \u{2039} Runs, or Esc, goes back to the list.", x: x, y: cy, w: w, ctx: ctx)
     }
 
@@ -1034,7 +1042,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
     private func confirmRemoveSync() {
         let alert = NSAlert()
         alert.messageText = "Remove Headroom data from iCloud?"
-        alert.informativeText = "This Mac's readings, history and activity are deleted from iCloud, and your iPhone, iPad and Apple Watch stop showing them. Everything stays on this Mac, and sync turns off."
+        alert.informativeText = "This Mac's readings, history and activity are deleted from iCloud, and your iPhone, iPad, Apple Watch and other Macs stop showing them. Everything stays on this Mac, and sync turns off."
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true

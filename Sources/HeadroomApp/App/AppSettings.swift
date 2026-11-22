@@ -219,6 +219,13 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "sync.questionText"); changed() }
     }
 
+    /// Show the runs of the user's other Macs in the Runs tab, from what they synced to iCloud.
+    /// On by default; only meaningful while sync and task tracking are on.
+    var showOtherMacsRuns: Bool {
+        get { defaults.object(forKey: "sync.otherMacsRuns") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "sync.otherMacsRuns"); changed() }
+    }
+
     /// When this Mac first turned sync on (cleared by "Remove from iCloud").
     var syncSince: Date? {
         get { defaults.object(forKey: "sync.since") as? Date }

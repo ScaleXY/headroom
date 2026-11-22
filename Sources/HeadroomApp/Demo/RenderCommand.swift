@@ -135,6 +135,12 @@ enum RenderCommand {
                             }
                         }
                     }
+                    // And the pages of the runs its other Macs synced.
+                    for (i, d) in s.remote.enumerated() {
+                        if let rep = PopoverPage.renderRuns(s, theme: theme, now: now, run: d.id) {
+                            write(rep, to: outDir.appendingPathComponent("runpage-\(s.name)-synced-\(i + 1)-briefing-\(suffix).png")); written += 1
+                        }
+                    }
                 }
                 if let rep = PopoverPage.renderRecentRuns(theme: theme, now: now) {
                     write(rep, to: outDir.appendingPathComponent("runs-recent-\(suffix).png")); written += 1
@@ -236,7 +242,7 @@ enum PopoverPage {
     static func renderRuns(_ s: Demo.RunScenario, theme: Theme, now: Date, list: RunsListStyle = .ledger, showFinished: Bool = false,
                            run: String? = nil, pageStyle: RunPageStyle = .briefing) -> NSBitmapImageRep? {
         let page = RunsPresenter(now: now, calendar: Display.calendar, locale: Display.locale, pricing: demoPricing)
-            .page(s.runs, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
+            .page(s.runs, remote: s.remote, expanded: s.expanded, opened: s.opened, allRecent: s.allRecent)
         let card = run.flatMap { id in (page.live + page.recent).first { $0.id == id } }
         let w = PopoverChrome.width, pad = PopoverChrome.pad, cw = w - pad * 2
         // A run's page keeps its way back in a row above it, as the popover does.

@@ -96,6 +96,19 @@ enum RunListRenderer {
         RunCardRenderer.drawDisclosure(open: false, center: CGPoint(x: r.maxX - 12, y: mid), color: t.muted2, ctx: ctx)
     }
 
+    /// A run's name. One synced from another Mac carries a small computer after it, unless the name
+    /// already says where it is ("Run on Mac Studio"): its tooltip and its page name the Mac.
+    static func drawTitle(_ c: RunCardModel, _ font: NSFont, _ color: NSColor, x: CGFloat, capCenter: CGFloat, width: CGFloat, theme t: Theme,
+                          ctx: CGContext) {
+        let marked = c.mac.map { !c.title.contains($0) } ?? false
+        let name = RunCardRenderer.fit(c.title, font, color, width: width - (marked ? 20 : 0), kern: -0.05)
+        name.draw(x: x, capCenter: capCenter, in: ctx)
+        if marked {
+            CanvasControlView.drawSymbol("desktopcomputer", in: CGRect(x: x + name.width + 6, y: capCenter - 5.5, width: 14, height: 11),
+                                         color: t.muted, weight: .medium, ctx: ctx)
+        }
+    }
+
     // MARK: Ledger
 
     static let ledgerRow: CGFloat = 36
@@ -128,7 +141,7 @@ enum RunListRenderer {
         drawMiniMeter(c, rect: meter, theme: t, ctx: ctx)
         right = meter.minX - 10
         let tx = r.minX + 34
-        RunCardRenderer.fit(c.title, F.sf(13, 600), t.ink, width: right - tx, kern: -0.05).draw(x: tx, capCenter: mid, in: ctx)
+        drawTitle(c, F.sf(13, 600), t.ink, x: tx, capCenter: mid, width: right - tx, theme: t, ctx: ctx)
     }
 
     static func drawLedgerFinished(_ c: RunCardModel, row r: CGRect, theme t: Theme, ctx: CGContext) {
@@ -155,7 +168,7 @@ enum RunListRenderer {
             right -= k.width + 12
         }
         let tx = r.minX + 34
-        RunCardRenderer.fit(c.title, F.sf(13, 550), t.ink.fade(0.85), width: right - tx, kern: -0.05).draw(x: tx, capCenter: mid, in: ctx)
+        drawTitle(c, F.sf(13, 550), t.ink.fade(0.85), x: tx, capCenter: mid, width: right - tx, theme: t, ctx: ctx)
     }
 
     /// The time column: what needs you or holds the run up when something does, else the time
@@ -219,7 +232,7 @@ enum RunListRenderer {
         let right = r.maxX - 10 - chevronW - 8
         let figW = max(40, drawFigure(c, right: right, mid: top, size: 15, theme: t, ctx: ctx))
         let tx = r.minX + 40
-        RunCardRenderer.fit(c.title, F.sf(13, 600), t.ink, width: right - figW - 8 - tx, kern: -0.05).draw(x: tx, capCenter: top, in: ctx)
+        drawTitle(c, F.sf(13, 600), t.ink, x: tx, capCenter: top, width: right - figW - 8 - tx, theme: t, ctx: ctx)
         // The state's key, then what's going on.
         let key = c.needsInput ? "Asks" : c.page?.status.key ?? c.stateText
         let k = Text(key, F.sf(11.5, 650, tabular: true), settled(c) ? t.ink.fade(0.75) : tc)
@@ -350,7 +363,7 @@ enum RunListRenderer {
             right -= fig.width + 10
         }
         let tx = r.minX + 34
-        RunCardRenderer.fit(c.title, F.sf(12.5, 600), t.ink, width: right - tx, kern: -0.05).draw(x: tx, capCenter: mid, in: ctx)
+        drawTitle(c, F.sf(12.5, 600), t.ink, x: tx, capCenter: mid, width: right - tx, theme: t, ctx: ctx)
     }
 
     /// The rose "Answer ↗": opens the session where the question is answered.

@@ -3,6 +3,7 @@ import CoreData
 import Foundation
 import HeadroomCore
 import HeadroomKit
+import HeadroomPresent
 import HeadroomSync
 import os
 
@@ -16,6 +17,9 @@ private let syncLog = Logger(subsystem: "com.scalexy.headroom", category: "sync"
 /// at most once a minute otherwise; activity at most every 5 minutes; a heartbeat every 10. Agent
 /// runs ride in the device record: a run's state change at most once a minute, progress alone at
 /// most every 5 minutes (`RunPublishGate`).
+///
+/// The same store imports what the user's other Macs posted; `remoteRuns` reads their runs for
+/// the Runs tab and writes nothing.
 @MainActor
 final class CloudPublisher {
     enum Status: Equatable {
@@ -58,8 +62,18 @@ final class CloudPublisher {
     private var heartbeat: Timer?
     private var observers: [NSObjectProtocol] = []
     private var running = false
+    private let remote = RemoteRuns()
 
     var isRunning: Bool { running }
+
+    /// Called when the other Macs' runs changed.
+    var onRemoteRuns: (() -> Void)? {
+        get { remote.onChange }
+        set { remote.onChange = newValue }
+    }
+
+    /// The runs of the user's other Macs, most pressing first; empty while sync isn't running.
+    func remoteRuns(now: Date) -> [RunDigest] { remote.digests(now: now) }
 
     // MARK: Lifecycle
 
@@ -71,16 +85,20 @@ final class CloudPublisher {
             status = .unavailable(reason)
             return
         }
+        let opened: SyncStore
         do {
             let url = PlistStore<Int>.standardDirectory().appendingPathComponent("Sync/Headroom.store")
-            store = SyncStore(container: try SyncContainer.make(.file(url), cloudKit: true))
+            opened = SyncStore(container: try SyncContainer.make(.file(url), cloudKit: true))
         } catch {
             syncLog.error("sync store failed to open: \(String(describing: error), privacy: .public)")
             status = .failed("Couldn't open the sync store.")
             return
         }
+        store = opened
         running = true
         observe()
+        // The other Macs' runs show from what's already imported; no need to wait for the seed.
+        remote.start(store: opened, deviceID: deviceID)
         if model.settings.syncSince == nil { model.settings.syncSince = Date() }
         // Give the first import a moment, so a reinstalled Mac updates its old records instead of copying them.
         try? await Task.sleep(for: .seconds(20))
@@ -97,6 +115,7 @@ final class CloudPublisher {
         heartbeat?.invalidate(); heartbeat = nil
         for o in observers { NotificationCenter.default.removeObserver(o); NSWorkspace.shared.notificationCenter.removeObserver(o) }
         observers.removeAll()
+        remote.stop()
         store = nil
         published.removeAll()
         looks.removeAll()
@@ -145,9 +164,9 @@ final class CloudPublisher {
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.power = .awake; self?.update() }
         })
-        // After each import, clean up any copies of this Mac's own records.
+        // After each import, clean up any copies of this Mac's own records and read the other Macs' runs.
         observers.append(NotificationCenter.default.addObserver(forName: .NSPersistentStoreRemoteChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleDedupe() }
+            MainActor.assumeIsolated { self?.scheduleDedupe(); self?.remote.storeChanged() }
         })
         let timer = Timer(timeInterval: Self.heartbeatInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.update() }

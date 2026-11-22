@@ -228,7 +228,9 @@ enum RunPageRenderer {
                        from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.maxY))
         ctx.innerStroke(shape, rgb(0xFF6982).fade(t.isDark ? 0.32 : 0.42), width: 0.75)
         RunCardRenderer.drawGlyph(.needsInput, color: t.rose, center: CGPoint(x: x + pad + 6, y: headTop + 8), size: 12, ctx: ctx)
-        RunCardRenderer.fit(q.asker, F.sf(12, 650), t.rose, width: inner - 20).draw(x: x + pad + 18, capCenter: headTop + 8, in: ctx)
+        // Another Mac's question without its wording names nobody (and an empty line can't be drawn).
+        RunCardRenderer.fit(q.asker.isEmpty ? RunWords.needsInput : q.asker, F.sf(12, 650), t.rose, width: inner - 20)
+            .draw(x: x + pad + 18, capCenter: headTop + 8, in: ctx)
         text.draw(x: x + pad, top: textTop, in: ctx)
         offered?.draw(x: x + pad, top: offeredTop, in: ctx)
         for (i, (label, _)) in buttons.enumerated() {
@@ -450,7 +452,10 @@ enum RunPageRenderer {
         let open = page.groups.filter { $0.id != "~done" }
         let title = open.isEmpty ? m.rowsTitle.uppercased() : "\(page.groupsTitle.uppercased()) · \(page.openCount)"
         if let ctx { Text(title, F.sf(9.5, 700), t.muted2, kern: 0.9).draw(x: x, capCenter: headMid, in: ctx) }
-        if page.doneCount > 0 {
+        if page.doneCount > 0, !page.listsDone {
+            // Another Mac's run counts its finished tasks without listing them: nothing to open.
+            if let ctx { Text("\(page.doneCount) done", F.sf(11, 600, tabular: true), t.muted).draw(x: x + w, capCenter: headMid, align: .right, in: ctx) }
+        } else if page.doneCount > 0 {
             let label = Text(page.showDone ? "Hide done" : "\(page.doneCount) done", F.sf(11, 600, tabular: true), t.muted)
             let lw = label.width + 6 + 8
             let r = CGRect(x: x + w - lw - 8, y: headMid - 11, width: lw + 12, height: 22)

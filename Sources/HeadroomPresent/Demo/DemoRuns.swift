@@ -7,14 +7,18 @@ extension Demo {
     public struct RunScenario {
         public var name: String
         public var runs: [TaskRun]
+        /// Runs the user's other Macs synced, listed with this Mac's.
+        public var remote: [RunDigest]
         public var expanded: Set<String>
         /// Rows shown opened (`RunsPresenter.rowKey`).
         public var opened: Set<String>
         public var allRecent: Bool
         public var note: String
 
-        public init(name: String, runs: [TaskRun], expanded: Set<String> = [], opened: Set<String> = [], allRecent: Bool = false, note: String) {
-            self.name = name; self.runs = runs; self.expanded = expanded; self.opened = opened; self.allRecent = allRecent; self.note = note
+        public init(name: String, runs: [TaskRun], remote: [RunDigest] = [], expanded: Set<String> = [], opened: Set<String> = [],
+                    allRecent: Bool = false, note: String) {
+            self.name = name; self.runs = runs; self.remote = remote; self.expanded = expanded; self.opened = opened
+            self.allRecent = allRecent; self.note = note
         }
     }
 
@@ -42,8 +46,41 @@ extension Demo {
             RunScenario(name: "large", runs: [largeRun(now: now)], note: "A session that ran for days: 1,004 agents"),
             RunScenario(name: "mixed", runs: mixedRuns(now: now), note: "Live runs, then the last day's finished ones"),
             RunScenario(name: "mixed-all", runs: mixedRuns(now: now), allRecent: true, note: "Every finished run of the last day listed"),
+            RunScenario(name: "other-macs", runs: [declared, finished], remote: otherMacRuns(now: now),
+                        note: "This Mac's runs with the ones its other Macs synced"),
             RunScenario(name: "empty", runs: [], note: "Nothing tracked yet"),
         ]
+    }
+
+    /// What two other Macs synced: the Mac Studio shares task names and questions, the MacBook Air
+    /// only structure, and it went quiet an hour and a half ago.
+    public static func otherMacRuns(now: Date) -> [RunDigest] {
+        [synced(inputRun(now: now), mac: "Mac Studio", device: "studio", names: true, now: now),
+         synced(observedRun(now: now), mac: "Mac Studio", device: "studio", names: true, now: now),
+         synced(mirroredRun(now: now), mac: "MacBook Air", device: "air", names: false, lastSeen: ago(now, 95), now: now),
+         synced(failedRun(now: now), mac: "Mac Studio", device: "studio", names: true, now: now)]
+    }
+
+    /// `r` as another Mac would have synced it: names, rows and the question only with `names`,
+    /// and `lastSeen` when that Mac has gone quiet with the run still live.
+    public static func synced(_ r: TaskRun, mac: String, device: String, names: Bool, lastSeen: Date? = nil, now: Date) -> RunDigest {
+        let picked = RunsPresenter(now: now).digestRows(r, cap: 30)
+        var d = RunDigest(id: device + ":" + r.id, mac: mac, harness: r.harness, state: r.state, waitReason: r.waitReason, stale: r.stale,
+                          progress: r.progress, mustHaves: r.mustHaves, etaSeconds: r.etaSeconds, tokens: r.tokens, warning: r.warning,
+                          hasDeclaredTasks: r.hasDeclaredTasks, startedAt: r.startedAt, updatedAt: r.updatedAt, counts: RunCounts.of(r),
+                          title: names ? r.agentTitle : nil, rows: names ? picked.rows : nil, moreRows: names ? picked.more : 0,
+                          finishedRows: names ? picked.finished : 0, finishedEarlier: r.finishedEarlier ?? 0,
+                          lastSeen: r.state.isTerminal ? nil : lastSeen)
+        d.mirrored = r.mirrored
+        d.abandoned = r.abandoned
+        d.workingSeconds = r.time.working > 0 ? r.time.working : nil
+        d.finishAt = r.state.isTerminal ? nil : r.etaSeconds.map { now.addingTimeInterval($0) }
+        if r.state.isTerminal {
+            d.receipt = RunDigest.Receipt(seconds: r.updatedAt.timeIntervalSince(r.startedAt), tokensByModel: r.tokensByModel, time: r.time,
+                                          scopeChanges: r.scopeChanges)
+        }
+        if names, r.needsInput, let q = r.question { d.question = RunDigest.Question(text: q.text, options: q.options) }
+        return d
     }
 
     /// Several live runs (one asking, one quiet) and five finished ones.

@@ -132,7 +132,19 @@ final class AppModel {
         // Read limits right away on launch.
         scheduler.refreshNow()
         tick()
+        publisher.onRemoteRuns = { [weak self] in
+            guard let self, self.settings.taskTracking, self.settings.showOtherMacsRuns else { return }
+            self.onChange?()
+        }
         if settings.syncEnabled { Task { await publisher.start(model: self) } }
+    }
+
+    /// The runs of the user's other Macs, most pressing first, for the Runs tab only (the menu
+    /// bar, alerts, widgets and history stay this Mac's own). Empty unless task tracking, sync and
+    /// "Show runs from your other Macs" are all on and sync is running.
+    func remoteRuns(now: Date) -> [RunDigest] {
+        guard settings.taskTracking, settings.syncEnabled, settings.showOtherMacsRuns, publisher.isRunning else { return [] }
+        return publisher.remoteRuns(now: now)
     }
 
     func applyCLIOverrides() async {

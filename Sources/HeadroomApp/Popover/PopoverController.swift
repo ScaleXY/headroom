@@ -518,8 +518,10 @@ final class CardsView: NSView, NSViewToolTipOwner {
                 ? RecentRunsPresenter(now: now, pricing: model.pricingEngine).model(RunHistory.shared.records(now: now)) : nil
         }
         if tab == PopoverRootView.runsTab {
-            runsPage = RunsPresenter(now: now, pricing: model.pricingEngine).page(model.taskRuns, expanded: expandedRuns, opened: openRows, allRecent: allRecent)
-            // A run that's gone (hidden, aged out) closes its page.
+            // This Mac's runs and, when sync shows them, its other Macs': those cards carry no actions.
+            runsPage = RunsPresenter(now: now, pricing: model.pricingEngine)
+                .page(model.taskRuns, remote: model.remoteRuns(now: now), expanded: expandedRuns, opened: openRows, allRecent: allRecent)
+            // A run that's gone (hidden, aged out, its Mac no longer shown) closes its page.
             if detailRun != nil, detailCard == nil { detailRun = nil }
         }
         if animated, states != lastStates, !lastStates.isEmpty, window != nil { beginFade() }
