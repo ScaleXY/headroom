@@ -242,7 +242,9 @@ enum ClaudeTranscript {
         let head = min(n, 220)
         guard Bytes.contains(p, head, "\"type\":\"ai-title\"") || Bytes.contains(p, head, "\"type\":\"custom-title\"")
             || Bytes.contains(p, head, "\"aiTitle\"") || Bytes.contains(p, head, "\"customTitle\"")
-            || Bytes.contains(p, n, "\"gitBranch\"") else { return nil }
+            // Every line carries the branch after its message: a short one says it as well as a
+            // multi-megabyte tool result, without scanning the result byte by byte.
+            || (n <= 64 * 1024 && Bytes.contains(p, n, "\"gitBranch\"")) else { return nil }
         let s = JSONScan(p, n)
         var type: ByteSpan?, ai: String?, custom: String?, branch: String?
         guard s.forEachMember(0, { k, v in

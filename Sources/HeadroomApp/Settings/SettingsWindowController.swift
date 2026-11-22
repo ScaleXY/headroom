@@ -999,7 +999,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
             cy += 36 + 6
         }
         cy += 2
-        toggleRow("Include task names", "Run and task titles. Notes and projects stay here.",
+        toggleRow("Include task names", "Run, session and task titles. Notes and projects stay here.",
                   on: settings.syncTaskNames, action: Action.syncTaskNames, x: x, y: cy, w: w, enabled: settings.taskTracking, ctx: ctx)
         cy += 42
         // Indented under task names: it only means something with them on.

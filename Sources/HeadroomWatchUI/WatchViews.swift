@@ -120,7 +120,7 @@ struct WatchEmptyView: View {
     }
 }
 
-/// Agent runs from every Mac, compact: the title (or the Mac), the state, and the percent or
+/// Agent runs from every Mac, compact: the title and its Mac, the state, and the percent or
 /// the agent counts. Live runs first, then the last day's finished ones.
 public struct WatchRunsPage: View {
     var runs: [RunDigest]

@@ -916,7 +916,7 @@ final class CardsView: NSView, NSViewToolTipOwner {
     /// left behind it.
     @objc private func abandonRun(_ sender: NSMenuItem) {
         guard let run = (sender.representedObject as? String).flatMap(taskRun) else { return }
-        let title = RunsPresenter(now: Date()).displayTitle(run)
+        let title = RunsPresenter(now: Date()).label(run)
         root?.controller?.close()
         let alert = NSAlert()
         alert.messageText = "Mark “\(title)” as abandoned?"

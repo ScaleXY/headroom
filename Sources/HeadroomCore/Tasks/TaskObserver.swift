@@ -34,10 +34,12 @@ import HeadroomKit
 /// `task.wait` for `limit`. The main session's plan list (`TodoWrite`, `TaskCreate`/`TaskUpdate`,
 /// Codex `update_plan`, the desktop app's plan tool) is mirrored whole as `plan.mirror`.
 ///
-/// Nothing anyone typed and no tool output is written: only labels agents wrote (descriptions,
+/// No prompt, message or tool output is written: only labels agents wrote (descriptions,
 /// delegate titles, questions, their answers' labels, plan titles), the harness's limit message,
-/// agent types, models, the project directory's name, and on `run.meta` (which stays on this
-/// Mac) the working folder and the app the session runs in.
+/// agent types, models, the project directory's name, and on `run.meta` the session's title as
+/// Claude Code or Codex keeps it (its own, or one the person set with `/rename`), and, staying on
+/// this Mac, the working folder, the app the session runs in, and the git repo and branch.
+/// The session title syncs as the run's title only with "Include task names" on.
 public actor TaskObserver {
     public struct Report: Sendable {
         public var filesRead = 0
@@ -1236,6 +1238,8 @@ enum TaskGit {
         let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
         var dir = URL(fileURLWithPath: cwd, isDirectory: true).resolvingSymlinksInPath()
         while true {
+            // A versioned home folder (dotfiles) isn't the project a session works in.
+            if dir.path == home || dir.path == "/" { return nil }
             let git = dir.appendingPathComponent(".git")
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: git.path, isDirectory: &isDirectory) {
@@ -1245,7 +1249,6 @@ enum TaskGit {
                 guard !path.isEmpty else { return nil }
                 return remote(in: URL(fileURLWithPath: path, isDirectory: true, relativeTo: dir).standardizedFileURL)
             }
-            if dir.path == home || dir.path == "/" { return nil }
             dir.deleteLastPathComponent()
         }
     }

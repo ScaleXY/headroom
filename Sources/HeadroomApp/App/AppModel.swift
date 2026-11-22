@@ -649,7 +649,7 @@ final class AppModel {
         taskRuns.compactMap { r in
             guard !r.hidden, r.state == .running || r.state == .waiting, let o = r.limitOutlook, o.provider == p,
                   let share = o.share, share > 0 else { return nil }
-            return RunSpend(title: r.bestTitle ?? r.project ?? "Agent run", share: share)
+            return RunSpend(title: RunsPresenter(now: r.updatedAt).label(r), share: share)
         }
     }
 }

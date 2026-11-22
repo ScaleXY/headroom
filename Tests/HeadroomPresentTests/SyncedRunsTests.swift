@@ -76,12 +76,12 @@ private let presenter: RunsPresenter = {
         // No title at all: what ran it.
         var untitled = Demo.observedRun(now: now)
         untitled.sessionTitle = nil
-        #expect(presenter.card(digest(untitled, names: true)).title == "Claude Code session")
+        #expect(presenter.card(digest(untitled, names: true)).title == "Claude Code run")
     }
 
-    @Test func withoutNamesTheTitleIsTheMacAndTheRowsOneLineOfCounts() {
+    @Test func withoutNamesTheTitleIsWhatRanItAndTheRowsOneLineOfCounts() {
         let c = presenter.card(digest(Demo.declaredRun(now: now), names: false))
-        #expect(c.title == "Claude Code session")
+        #expect(c.title == "Claude Code run")
         #expect(c.subtitle == "MacBook Pro · updated 1m ago")
         #expect(c.rows.count == 1)
         #expect(c.rows[0].kind == .counts)
@@ -107,7 +107,7 @@ private let presenter: RunsPresenter = {
     @Test func runsWithTheSameTitleSayWhenTheyStarted() {
         let a = digest(Demo.declaredRun(now: now), names: false), b = digest(Demo.limitRun(now: now), names: false)
         let page = presenter.page([b, a])
-        #expect(page.live.count == 2 && page.live.allSatisfy { $0.title.hasPrefix("Claude Code session · ") })
+        #expect(page.live.count == 2 && page.live.allSatisfy { $0.title.hasPrefix("Claude Code run · ") })
     }
 
     @Test func aRunOnAQuietMacReadsLastSeen() {
@@ -125,7 +125,7 @@ private let presenter: RunsPresenter = {
         let named = digest(Demo.inputRun(now: now), names: true)
         #expect(presenter.needsInputAlert(named) == RunAlertCopy(title: "Database upgrade needs your input", body: "Answer it on MacBook Pro"))
         let unnamed = digest(Demo.failedRun(now: now), names: false)
-        #expect(presenter.finishedAlert(unnamed).title == "Claude Code session failed")
+        #expect(presenter.finishedAlert(unnamed).title == "Claude Code run failed")
         #expect(presenter.finishedAlert(unnamed).body == "On MacBook Pro. 50% done · must-haves 0 of 1 · 101K tokens")
         #expect(presenter.stoppedAlert(digest(Demo.stoppedRun(now: now), names: true)).title == "Tidy the settings module stopped with work left")
     }
@@ -139,7 +139,7 @@ private let presenter: RunsPresenter = {
         d.question = RunDigest.Question(text: "May I drop the audit table?", options: ["Drop it", "Keep it"], asker: "Switch the queries over")
         let q = presenter.card(d).question
         #expect(q == RunQuestionModel(asker: "Switch the queries over is asking", text: "May I drop the audit table?", options: ["Drop it", "Keep it"]))
-        #expect(presenter.needsInputAlert(d).body == "May I drop the audit table?")
+        #expect(presenter.needsInputAlert(d).body == "On MacBook Pro: May I drop the audit table?")
         // Only while it needs you, and never from a quiet Mac.
         d.lastSeen = now.addingTimeInterval(-3600)
         #expect(presenter.card(d).question == nil)

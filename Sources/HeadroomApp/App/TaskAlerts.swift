@@ -146,6 +146,6 @@ struct TaskAlerts {
         return minutes == 60 ? "an hour" : "\(minutes / 60) hours"
     }
 
-    /// The run's title, or its project when the title is only the id.
-    static func name(_ r: TaskRun) -> String { r.bestTitle ?? r.project ?? "Agent run" }
+    /// The run's name as the Runs tab's dialogs say it: its title, else what ran it and where.
+    static func name(_ r: TaskRun) -> String { RunsPresenter(now: r.updatedAt).label(r) }
 }

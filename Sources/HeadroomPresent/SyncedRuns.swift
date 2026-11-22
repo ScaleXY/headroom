@@ -152,7 +152,8 @@ public struct RunDigest: Sendable, Hashable, Identifiable {
     public var startedAt: Date
     public var updatedAt: Date
     public var counts: RunCounts
-    /// The agent's title for the run; nil unless the Mac includes task names (and never the project).
+    /// The run's title (the agent's, else the session's own); nil unless the Mac includes task
+    /// names, and never the project or repo.
     public var title: String?
     /// The most pressing rows; nil unless the Mac includes task names.
     public var rows: [Row]?
@@ -375,7 +376,7 @@ extension RunsPresenter {
     /// The Mac, what ran it (unless the title already says), and how long ago it moved.
     func subtitle(_ d: RunDigest) -> String {
         var parts = [d.mac]
-        if let h = Self.harnessName(d.harness), !baseTitle(d).hasPrefix(h) { parts.append(h) }
+        if let h = Self.harnessName(d.harness), baseTitle(d) != Self.untitled(d.harness) { parts.append(h) }
         let age = TimeFormat.freshness(since: d.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
         parts.append(d.state.isTerminal ? "finished \(ago)" : "updated \(ago)")
@@ -551,9 +552,9 @@ extension RunsPresenter {
     // MARK: Alerts
 
     /// A run on a Mac that now waits for an answer: the question when the Mac shares it, else
-    /// where to answer it.
+    /// where to answer it. Either way it says which Mac.
     public func needsInputAlert(_ d: RunDigest) -> RunAlertCopy {
-        let body = d.question.map(\.text).flatMap { $0.isEmpty ? nil : $0 } ?? "Answer it on \(d.mac)"
+        let body = d.question.map(\.text).flatMap { $0.isEmpty ? nil : "On \(d.mac): " + $0 } ?? "Answer it on \(d.mac)"
         return RunAlertCopy(title: RunWords.alertNeedsInput(baseTitle(d)), body: body)
     }
 

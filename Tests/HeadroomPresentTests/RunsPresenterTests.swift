@@ -37,8 +37,8 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code", session: "Fix the refund webhook")) == "Fix the refund webhook")
         #expect(presenter.displayTitle(run(title: "Ship it", session: "Fix the refund webhook")) == "Ship it")
         // Never the folder, the id or the device: with no name it says what ran it.
-        #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code")) == "Claude Code session")
-        #expect(presenter.displayTitle(run(uuid, harness: "codex")) == "Codex session")
+        #expect(presenter.displayTitle(run(uuid, project: "storefront", harness: "claude-code")) == "Claude Code run")
+        #expect(presenter.displayTitle(run(uuid, harness: "codex")) == "Codex run")
         #expect(presenter.displayTitle(run(uuid)) == "Agent run")
         // Where it runs is additional: the repo (else the folder), and a branch that isn't the default.
         #expect(presenter.card(run(uuid, project: "storefront", harness: "claude-code", session: "Fix the refund webhook", repo: "ScaleXY/storefront",
@@ -47,10 +47,24 @@ private func run(_ id: String = "r", title: String? = nil, project: String? = ni
         #expect(presenter.card(run(title: "Ship it", project: "storefront")).subtitle == "storefront · updated 1m ago")
     }
 
+    @Test func aTitleThatStartsWithTheHarnessKeepsItInTheSubtitle() {
+        let r = run("r", harness: "claude-code", session: "Claude Code hook for billing")
+        #expect(presenter.card(r).subtitle == "Claude Code · updated 1m ago")
+    }
+
+    /// Where nothing sits under the name (a dialog, an alert, Recent runs), an untitled run says where.
+    @Test func aRunsLabelSaysWhereWhenItHasNoTitle() {
+        let uuid = "3f9b8c1e-6a0d-4c52-9e7a-1b2c3d4e5f60"
+        #expect(presenter.label(run(uuid, project: "storefront", harness: "claude-code", repo: "acme/storefront")) == "Claude Code run · acme/storefront")
+        #expect(presenter.label(run(uuid, project: "storefront", harness: "codex")) == "Codex run · storefront")
+        #expect(presenter.label(run(uuid)) == "Agent run")
+        #expect(presenter.label(run(uuid, project: "storefront", session: "Fix the refund webhook")) == "Fix the refund webhook")
+    }
+
     @Test func clashingTitlesSayWhenTheyStarted() {
         let page = presenter.page([run("a", project: "web", harness: "codex"), run("b", project: "web", harness: "codex"),
                                    run("c", project: "api", harness: "codex", session: "Rename the billing tables")])
-        #expect(page.live.map(\.title) == ["Codex session · today 7 AM", "Codex session · today 7 AM", "Rename the billing tables"])
+        #expect(page.live.map(\.title) == ["Codex run · today 7 AM", "Codex run · today 7 AM", "Rename the billing tables"])
     }
 }
 

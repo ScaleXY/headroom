@@ -27,7 +27,8 @@ final class RunHistory {
         for r in runs where RunsPresenter.isFinished(r) {
             // The fold sets `updatedAt` on every change, so an unchanged finished run is skipped here.
             // (Whole seconds on disk, hence the tolerance.)
-            if let old = records[r.id], abs(old.endedAt.timeIntervalSince(r.updatedAt)) < 1, old.hidden == r.hidden, old.abandoned == r.abandoned, old.state == r.state { continue }
+            if let old = records[r.id], abs(old.endedAt.timeIntervalSince(r.updatedAt)) < 1, old.hidden == r.hidden, old.abandoned == r.abandoned, old.state == r.state,
+               old.title == RunRecord(r).title { continue }
             guard now.timeIntervalSince(r.updatedAt) < Self.keep else { continue }
             records[r.id] = RunRecord(r)
             changed = true

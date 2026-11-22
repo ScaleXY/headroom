@@ -547,9 +547,18 @@ public struct RunsPresenter: Sendable {
         r.bestTitle ?? Self.untitled(r.harness)
     }
 
-    /// A run nobody named: what ran it. Runs with the same name say when they started.
+    /// A run nobody named: what ran it ("run", not "session": that's the 5-hour window here).
+    /// Runs with the same name say when they started.
     static func untitled(_ harness: String?) -> String {
-        harnessName(harness).map { "\($0) session" } ?? "Agent run"
+        harnessName(harness).map { "\($0) run" } ?? "Agent run"
+    }
+
+    /// The run's name where nothing sits under it (a dialog, an alert, Recent runs): its title,
+    /// else what ran it and where ("Claude Code run · acme/storefront").
+    public func label(_ r: TaskRun) -> String {
+        if let t = r.bestTitle { return t }
+        let place = Self.place(repo: r.repo, project: r.project, branch: nil).first
+        return Self.untitled(r.harness) + (place.map { " · " + $0 } ?? "")
     }
 
     /// Where a run works: the GitHub org and repo (else the project folder), and the branch
@@ -576,7 +585,7 @@ public struct RunsPresenter: Sendable {
 
     func subtitle(_ r: TaskRun) -> String {
         var parts = Self.place(repo: r.repo, project: r.project, branch: r.branch).filter { $0 != baseTitle(r) }
-        if let h = Self.harnessName(r.harness), !baseTitle(r).hasPrefix(h) { parts.append(h) }
+        if let h = Self.harnessName(r.harness), baseTitle(r) != Self.untitled(r.harness) { parts.append(h) }
         let age = TimeFormat.freshness(since: r.updatedAt, now: now)
         let ago = age == "now" ? "just now" : "\(age) ago"
         parts.append(Self.isFinished(r) ? "finished \(ago)" : "updated \(ago)")

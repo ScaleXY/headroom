@@ -51,6 +51,35 @@ import Testing
         #expect(!h.allBytes().contains("secret prompt"))
     }
 
+    /// Claude Code rewrites its own title as the session goes on: the latest one names the run.
+    @Test func theLatestAITitleWins() async throws {
+        let h = try ObserverHome()
+        try h.write("retitled.jsonl", [
+            // A session that spawned an agent is a run.
+            Fx.assistant(1, "retitled", id: "m1", [Fx.agentCall("tu", "Helper", prompt: "p")]),
+            Fx.user(2, "retitled", Fx.toolResult("tu", "launched"), result: ["status": "async_launched", "agentId": "a1"]),
+            Fx.json(["type": "ai-title", "sessionId": "retitled", "aiTitle": "First guess"]),
+            Fx.json(["type": "ai-title", "sessionId": "retitled", "aiTitle": "Fix the refund webhook"]),
+        ])
+        _ = await h.observer().scan(since: Fx.t0)
+        #expect(h.fold("retitled")?.sessionTitle == "Fix the refund webhook")
+    }
+
+    /// A long line (a tool result) isn't scanned for the branch; a short one gives it.
+    @Test func theBranchComesFromShortLines() async throws {
+        let h = try ObserverHome()
+        let big = String(repeating: "x", count: 70 * 1024)
+        try h.write("branch.jsonl", [
+            // A session that spawned an agent is a run.
+            Fx.assistant(1, "branch", id: "m1", [Fx.agentCall("tu", "Helper", prompt: "p")]),
+            Fx.user(2, "branch", Fx.toolResult("tu", "launched"), result: ["status": "async_launched", "agentId": "a1"]),
+            Fx.json(["type": "user", "sessionId": "branch", "message": ["role": "user", "content": "ok"], "gitBranch": "feature/short"]),
+            Fx.json(["type": "user", "sessionId": "branch", "message": ["role": "user", "content": big], "gitBranch": "from-a-huge-line"]),
+        ])
+        _ = await h.observer().scan(since: Fx.t0)
+        #expect(h.fold("branch")?.branch == "feature/short")
+    }
+
     @Test(arguments: [
         "https://user:password@github.example/group/ScaleXY/headroom.git",
         "git@github.example:ScaleXY/headroom.git",

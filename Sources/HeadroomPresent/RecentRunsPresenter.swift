@@ -32,7 +32,7 @@ public struct RunRecord: Codable, Sendable, Hashable, Identifiable {
     /// The summary of a finished run, titled as its card was.
     public init(_ r: TaskRun) {
         let (tasks, note) = RunsPresenter.receiptTasks(r)
-        self.init(id: r.id, title: RunsPresenter(now: r.updatedAt).displayTitle(r), project: r.project, harness: r.harness,
+        self.init(id: r.id, title: RunsPresenter(now: r.updatedAt).label(r), project: r.project, harness: r.harness,
                   startedAt: r.startedAt, endedAt: r.updatedAt, state: r.state, abandoned: r.abandoned, hidden: r.hidden, tokens: r.tokens,
                   tokensByModel: r.tokensByModel, time: r.time, tasks: tasks, tasksNote: note)
     }

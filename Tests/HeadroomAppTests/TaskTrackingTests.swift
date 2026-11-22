@@ -92,7 +92,7 @@ final class TaskHome: @unchecked Sendable {
         #expect(eval(run(.waiting, wait: .input)) == [])
         #expect(eval(run(.running)) == [])
         let ask = alerts.evaluate([run(.waiting, wait: .input)], now: now) { s.taskNotifies($0) }
-        #expect(ask.map(\.kind) == [.needsInput] && ask[0].title == "demo needs your input")
+        #expect(ask.map(\.kind) == [.needsInput] && ask[0].title == "Agent run · demo needs your input")
         #expect(eval(run(.waiting, wait: .input)) == [])
         #expect(eval(run(.running)) == [] && eval(run(.waiting, wait: .input)) == [.needsInput])
 
@@ -109,7 +109,7 @@ final class TaskHome: @unchecked Sendable {
 
         let done = TaskNode(id: "~agent-a", title: "a", state: .done, declared: false)
         let finished = alerts.evaluate([run(.done, nodes: [done])], now: now) { s.taskNotifies($0) }
-        #expect(finished.map(\.kind) == [.finished] && finished[0].title == "demo finished" && finished[0].body == "1 agent done.")
+        #expect(finished.map(\.kind) == [.finished] && finished[0].title == "Agent run · demo finished" && finished[0].body == "1 agent done.")
         #expect(eval(run(.done, nodes: [done])) == [])
         s.setTaskNotifies(.finished, false)
         #expect(eval(run(.running)) == [] && eval(run(.partial)) == [])
@@ -199,7 +199,7 @@ final class TaskHome: @unchecked Sendable {
         let done = TaskNode(id: "docs", title: "Docs", state: .done)
         _ = alerts.evaluate([run(.running, nodes: [open, done])], now: now) { _ in true }
         let stopped = alerts.evaluate([run(.stopped, nodes: [open, done])], now: now) { _ in true }
-        #expect(stopped.map(\.kind) == [.stopped] && stopped[0].title == "demo stopped with work left" && stopped[0].body == "1 of 2 tasks done.")
+        #expect(stopped.map(\.kind) == [.stopped] && stopped[0].title == "Agent run · demo stopped with work left" && stopped[0].body == "1 of 2 tasks done.")
         // Back to work and stopped again soon after: once is enough.
         _ = alerts.evaluate([run(.running, nodes: [open, done], updated: -30)], now: now) { _ in true }
         #expect(alerts.evaluate([run(.stopped, nodes: [open, done], updated: -20)], now: now) { _ in true }.isEmpty)
@@ -243,7 +243,7 @@ final class TaskHome: @unchecked Sendable {
         var alerts = TaskAlerts()
         _ = alerts.evaluate([run(.running)], now: now, quietAfter: 1800) { _ in true }
         let a = alerts.evaluate([run(.running, stale: true)], now: now, quietAfter: 1800) { _ in true }
-        #expect(a.first?.body == "No agent activity for 30 minutes." && a.first?.title == "demo went quiet")
+        #expect(a.first?.body == "No agent activity for 30 minutes." && a.first?.title == "Agent run · demo went quiet")
         #expect(TaskAlerts.span(3600) == "an hour" && TaskAlerts.span(600) == "10 minutes")
     }
 
