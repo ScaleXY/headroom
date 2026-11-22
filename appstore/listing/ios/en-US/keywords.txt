@@ -1,1 +1,1 @@
-usage,limit,quota,tokens,menu bar,AI,coding,session,allowance,widget,watch,agent,runs,tracker
+claude,codex,usage,limits,quota,tokens,agents,AI,coding,session,allowance,widgets,developer,tracker

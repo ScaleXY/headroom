@@ -85,26 +85,19 @@ Apply is not transactional: an API failure can leave earlier changes in place. R
 failure. Checksums and current order make successful updates safe to repeat. Replacing screenshots
 in a full set removes obsolete images before reserving new ones, because Apple limits a set to 10.
 
-## Screenshot slots to fill in
+## Screenshot slots
 
-Apple's [ScreenshotDisplayType](https://developer.apple.com/documentation/appstoreconnectapi/screenshotdisplaytype)
-page currently omits the possible values. Its
-[list screenshot sets endpoint](https://developer.apple.com/documentation/appstoreconnectapi/get-v1-appstoreversionlocalizations-_id_-appscreenshotsets)
-confirms `APP_DESKTOP`, `APP_IPHONE_61`, `APP_IPHONE_67`, `APP_IPAD_PRO_3GEN_129`, and
-`APP_WATCH_ULTRA`, among other older values. The Mac mapping uses verified `APP_DESKTOP`.
-The precise mapping of the following newest dimensions to API slots could not be established
-from that enum documentation. They are deliberately omitted from `ios/listing.json`, **to fill in**:
+The live listing's sets, as `diff` reported them, and the folders `ios/listing.json` maps to them:
 
-| Folder under `appstore/mobile/2-captioned/` | Slot to fill in |
+| Folder under `appstore/mobile/2-captioned/` | `screenshotDisplayType` |
 | --- | --- |
-| `iphone-dynamic-island-medium-1206x2622` | iPhone Dynamic Island medium |
-| `iphone-duo-outer-display-1398x2034` | iPhone Duo |
-| `ipad-13-inch-2752x2064` | iPad 13-inch |
-| `watch-ultra-4-422x514` | Apple Watch Ultra 4 (one Watch folder only) |
+| `iphone-dynamic-island-medium-1206x2622` | `APP_IPHONE_61` |
+| `iphone-duo-outer-display-1398x2034` | `APP_IPHONE_DUO` |
+| `ipad-13-inch-2752x2064` | `APP_IPAD_PRO_3GEN_129` |
+| `watch-ultra-4-422x514` | `APP_WATCH_ULTRA` (one Watch folder only) |
 
-Run diff with access to the listing: it prints every existing set's `screenshotDisplayType`.
-Use the value for each matching device slot in `listing.json`; do not guess from the dimensions.
-Before the first apply, verify the slot accepts these images. Apple's
+For a new device slot, run diff: it prints every existing set's `screenshotDisplayType`; use that
+value, never one guessed from the dimensions. Apple's
 [upload guide](https://developer.apple.com/documentation/appstoreconnectapi/uploading-assets-to-app-store-connect)
 now deprecates the screenshot/set API in favor of the Asset Library and placements. This tool
 implements the requested screenshot/set flow; migration to the Asset Library is future work.

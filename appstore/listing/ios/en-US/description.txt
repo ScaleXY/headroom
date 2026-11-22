@@ -1,21 +1,32 @@
-Headroom brings your Claude and Codex limits from your Mac to your iPhone, iPad and Apple Watch, and answers one question: do you have room to spare this week, are you on track, or should you slow down?
+Will your Claude and Codex allowance last? AI Headroom brings the readings from Headroom on your Mac to your iPhone, iPad and Apple Watch, so you can check what's left this week, your 5-hour session and your agent runs wherever you are.
 
-THE RESERVOIR
-One level, filled to what's left this week, with when it renews right beside it. Under it, the week's graph and each 5-hour session as a bar on the same time axis, so a run of near-misses stands out.
+Requires Headroom running on a Mac with Apple silicon and macOS 15 or later, Claude Code or Codex signed in to a subscription, and the same Apple Account with iCloud on your devices. You can explore the app with sample data before setting up sync.
+
+NOT JUST A PERCENTAGE
+The Limits card fills one level to what's left this week, with when it renews beside it, and says whether you have room to spare, are on track, or should slow down, with a graph of the week and a forecast at your recent rate.
 
 THE LIMIT YOU HIT FIRST
-The 5-hour session gets a warning from 75% (or the level you set on your Mac), a Live Activity that counts down to the reset, and a note when it will run out before then. At the limit, it tells you exactly when you're back.
+Every 5-hour session is a bar under the week's graph, so a run of near-misses stands out. See what's left of the session, the reset countdown and a note when it will run out first. A Live Activity puts the countdown on your Lock Screen and in the Dynamic Island on supported iPhones.
 
 YOUR AGENT RUNS, AWAY FROM THE DESK
-Follow your Claude Code and Codex runs from every Mac: which one needs you, how far along each is, and when it should finish. Get told when a run needs your input, stops with work left, or finishes.
+Follow your Claude Code and Codex runs from every Mac: which one needs you, how far along each is, and when it should finish. Each run shows which Mac it's on and, when you include task names on that Mac, what it's working on. Get told when a run needs your input, stops with work left, or finishes.
 
-ON YOUR WRIST AND HOME SCREEN
-Complications, a watch app, Home Screen and Lock Screen widgets in every size.
+WIDGETS AT A GLANCE
+Add Headroom, 5-Hour Session, Burn-o-meter, Activity and Accounts widgets to your Home Screen. Keep your limits close with Lock Screen widgets, Apple Watch complications and Smart Stack widgets.
 
-SEE WHERE THE TOKENS GO
-Activity by hour and by model, what your usage is worth at API prices, and every past week.
+SEE YOUR ACTIVITY
+Start with what your usage is worth at API prices, split between Claude and Codex, then browse tokens by hour and model. Review past weeks, including how many 5-hour sessions hit the limit. These estimates show what your usage would cost at API prices; they are not subscription charges.
+
+SEVERAL MACS, ONE ACCOUNT CARD
+Each Claude or Codex account gets one card, even when several Macs report it. Activity adds up across your Macs, and the Macs tab shows which devices are syncing and when they last reported.
+
+TIMELY REMINDERS
+Choose local notifications when a 5-hour session becomes available again or before unused weekly allowance renews. Reset reminders use the times your Mac reported, so they can arrive while it sleeps.
 
 PRIVATE BY DESIGN
-Readings travel from your Mac through your own private iCloud, end-to-end encrypted. There is no Headroom server and no sign-up. Prompts, project names and file paths never leave your Mac.
+Your readings, history, token counts, account emails and run progress sync through your own private iCloud to devices signed in to the same Apple Account. There is no Headroom server, no separate sign-up and no analytics. Prompts, project names, file paths and sign-in details never sync; run and task titles only if you include them on your Mac.
 
-Requires Headroom on a Mac with Claude Code or Codex signed in to a subscription, and iCloud sync turned on there.
+GET STARTED
+Install Headroom on your Mac, open Settings → iPhone & Watch, and turn on sync. Open AI Headroom on your iPhone or iPad using the same Apple Account. For a preview, choose Explore with Sample Data, or turn on Show sample data in Settings.
+
+Claude is a trademark of Anthropic. OpenAI and Codex are trademarks of OpenAI. Headroom is an independent project and is not affiliated with either.

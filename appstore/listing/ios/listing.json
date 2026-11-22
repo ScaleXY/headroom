@@ -1,5 +1,11 @@
 {
   "bundleId": "com.scalexy.headroom",
   "platform": "IOS",
-  "screenshots": []
+  "copyright": "2026 ScaleXY Private Limited",
+  "screenshots": [
+    {"displayType": "APP_IPHONE_61", "folder": "appstore/mobile/2-captioned/iphone-dynamic-island-medium-1206x2622", "locale": "en-US"},
+    {"displayType": "APP_IPHONE_DUO", "folder": "appstore/mobile/2-captioned/iphone-duo-outer-display-1398x2034", "locale": "en-US"},
+    {"displayType": "APP_IPAD_PRO_3GEN_129", "folder": "appstore/mobile/2-captioned/ipad-13-inch-2752x2064", "locale": "en-US"},
+    {"displayType": "APP_WATCH_ULTRA", "folder": "appstore/mobile/2-captioned/watch-ultra-4-422x514", "locale": "en-US"}
+  ]
 }

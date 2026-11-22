@@ -1,0 +1,3 @@
+Agent runs now have titles that say what they are: the name Claude Code or Codex gave the session, or the one the agent declared (on iPhone when your Mac includes task names). The Mac moves to the line underneath.
+
+Activity and this week's cost at API rates now add up across all your Macs.
