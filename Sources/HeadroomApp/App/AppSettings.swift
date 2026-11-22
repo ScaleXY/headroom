@@ -64,6 +64,13 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "costOnShares"); changed() }
     }
 
+    /// Hold a downloaded update until Update & Restart is clicked. Off by default: an update installs
+    /// and Headroom reopens as soon as it's downloaded.
+    var holdUpdates: Bool {
+        get { defaults.bool(forKey: "updates.hold") }
+        set { defaults.set(newValue, forKey: "updates.hold"); changed() }
+    }
+
     /// Offer beta releases too. On by default for anyone already running a beta.
     var betaUpdates: Bool {
         get {

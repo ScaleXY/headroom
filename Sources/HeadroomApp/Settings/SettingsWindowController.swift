@@ -184,7 +184,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case revealPricing
         case checkUpdates, installUpdate, cancelUpdate
         case syncToggle, syncRemove, syncTaskNames, syncQuestion, otherMacsRuns
-        case autoCheck, autoDownload
+        case autoCheck, holdUpdates
         case betaUpdates(Bool)
         case runsPage(RunsPage)
         case connect(ConnectRow.Kind)
@@ -310,7 +310,7 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         case .installUpdate: updater?.installAndRelaunch()
         case .cancelUpdate: updater?.cancel()
         case .autoCheck: updater.map { $0.automaticChecks.toggle() }
-        case .autoDownload: updater.map { $0.automaticDownloads.toggle() }
+        case .holdUpdates: updater.map { $0.holdUpdates.toggle() }
         case .betaUpdates(let on): updater?.betaUpdates = on
         case .syncToggle: s.syncEnabled.toggle()
         case .syncRemove: confirmRemoveSync()
@@ -1120,11 +1120,13 @@ final class SettingsView: CanvasControlView, NSTextFieldDelegate {
         sectionLabel("AUTOMATIC", x: x, y: cy, ctx: ctx)
         cy += 14
         let checks = updater?.automaticChecks ?? true
-        toggleRow("Check for updates", "Once a day, quietly in the background.", on: checks,
+        toggleRow("Check for updates", "Every hour, quietly in the background.", on: checks,
                   action: Action.autoCheck, x: x, y: cy, w: w, enabled: available, ctx: ctx)
         cy += 48
-        toggleRow("Download them too", "Ready to go; installs when Headroom quits.", on: updater?.automaticDownloads ?? false,
-                  action: Action.autoDownload, x: x, y: cy, w: w, enabled: available && checks, ctx: ctx)
+        // Off by default: each update downloads, installs and reopens Headroom on its own.
+        let hold = updater?.holdUpdates ?? settings.holdUpdates
+        toggleRow("Wait for me to click Update", hold ? "Updates wait here and in the popover." : "Off: each update installs once downloaded.",
+                  on: hold, action: Action.holdUpdates, x: x, y: cy, w: w, enabled: available && checks, ctx: ctx)
         cy += 48 + 14
         sectionLabel("RELEASES", x: x, y: cy, ctx: ctx)
         cy += 14

@@ -80,6 +80,9 @@ final class AppUpdater: NSObject {
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: self, delegate: self)
         do {
             try updater.start()
+            // Every hour (Sparkle's shortest), whatever an older version saved.
+            updater.updateCheckInterval = Self.checkInterval
+            updater.automaticallyDownloadsUpdates = Self.downloadsInBackground(hold: settings.holdUpdates)
             self.updater = updater
         } catch {
             NSLog("Headroom: updates are off: \(error.localizedDescription)")
@@ -96,9 +99,20 @@ final class AppUpdater: NSObject {
         set { updater?.automaticallyChecksForUpdates = newValue; onChange?() }
     }
 
-    var automaticDownloads: Bool {
-        get { updater?.automaticallyDownloadsUpdates ?? false }
-        set { updater?.automaticallyDownloadsUpdates = newValue; onChange?() }
+    static let checkInterval: TimeInterval = 3600
+
+    /// Sparkle installs a background download when the app quits, whatever it's told; so while
+    /// updates are held nothing downloads until Update & Restart, and nothing installs unasked.
+    nonisolated static func downloadsInBackground(hold: Bool) -> Bool { !hold }
+
+    /// Hold updates until Update & Restart is clicked; otherwise each one installs once downloaded.
+    var holdUpdates: Bool {
+        get { settings.holdUpdates }
+        set {
+            settings.holdUpdates = newValue
+            updater?.automaticallyDownloadsUpdates = Self.downloadsInBackground(hold: newValue)
+            onChange?()
+        }
     }
 
     var betaUpdates: Bool {
@@ -162,6 +176,12 @@ extension AppUpdater: SPUUserDriver {
         let version = appcastItem.displayVersionString
         // Information-only items can't install; there's nothing for a button to do.
         guard !appcastItem.isInformationOnlyUpdate else { reply(.dismiss); state = .upToDate; return }
+        // Not held: a check that found one (Check Now, or a scheduled one) installs it straight away.
+        if !settings.holdUpdates, s.stage != .installing {
+            state = s.stage == .downloaded ? .installing(version) : .downloading(version, progress: nil)
+            reply(.install)
+            return
+        }
         switch s.stage {
         case .installing:
             // Already on its way; a restart finishes it.
@@ -258,8 +278,14 @@ extension AppUpdater: SPUUpdaterDelegate {
 
     func updater(_ updater: SPUUpdater, shouldDownloadReleaseNotesForUpdate updateItem: SUAppcastItem) -> Bool { false }
 
-    /// A background download finished: it installs on quit, and the banner offers a restart now.
+    /// A background download finished. Not held, it installs and Headroom reopens now; held (turned
+    /// on after it downloaded), it waits for Update & Restart, or installs on quit.
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        if !settings.holdUpdates {
+            state = .installing(item.displayVersionString)
+            immediateInstallHandler()
+            return true
+        }
         installNow = immediateInstallHandler
         state = .ready(item.displayVersionString)
         return true
