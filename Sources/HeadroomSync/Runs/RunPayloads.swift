@@ -5,10 +5,10 @@ import HeadroomPresent
 
 // Agent runs ride along in `DevicePayload.runs`: an optional field, so it needs no CloudKit
 // schema change, older readers skip it and older payloads simply lack it. By default only
-// structure and state sync. A run's title and its most pressing rows' titles sync only when the
-// Mac's "Include task names" is on, and the wording of a question it waits on only when the Mac
-// also shares questions; project names, notes, failure reasons, evidence, the host app and the
-// working folder never do. Hidden runs never sync. Every field added since runs first synced is
+// structure and state sync. Run titles (including harness session titles) and row titles sync
+// only when the Mac's "Include task names" is on. Question wording requires sharing questions.
+// Project names, repos, branches, notes, failure reasons, evidence, the host app and working folders
+// stay on the Mac. Hidden runs never sync. Every field added since runs first synced is
 // optional and left out when empty, so a run with nothing new writes the same bytes as before.
 
 /// One of a run's most pressing rows. Synced only with task names included.
@@ -319,7 +319,7 @@ public enum RunSummaryBuilder {
         if r.state.isTerminal { s.receipt = receipt(r) }
         guard includeNames else { return s }
         let picked = presenter.digestRows(r, cap: maxRows)
-        s.title = r.agentTitle.map { String($0.prefix(maxTitle)) }
+        s.title = r.bestTitle.map { String($0.prefix(maxTitle)) }
         s.rows = picked.rows.map {
             var row = RunRowPayload($0)
             row.title = String(row.title.prefix(maxTitle))

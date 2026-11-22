@@ -66,6 +66,9 @@ public actor TaskObserver {
     /// for `/var`.
     private let claudeRoots: [String]
     private let codexRoots: [String]
+    private let codexIndexPaths: [String]
+    /// An entry with a nil value is a lookup that found no remote.
+    private var claudeRepos: [String: String?] = [:]
     /// Root as given → its real path, so a file has one key whichever way it's named.
     private let aliases: [(String, String)]
     private let now: @Sendable () -> Date
@@ -97,6 +100,9 @@ public actor TaskObserver {
         self.aliases = aliases
         claudeRoots = forms(roots.claude)
         codexRoots = forms(roots.codex)
+        codexIndexPaths = Set(roots.codex.map {
+            $0.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent("session_index.jsonl").path
+        }).sorted()
         self.now = now
         let loaded = (try? Data(contentsOf: Self.stateURL(home: home))).flatMap { try? PropertyListDecoder().decode(ObserverState.self, from: $0) }
         state = loaded?.version == ObserverState.currentVersion ? loaded! : ObserverState()
@@ -125,7 +131,9 @@ public actor TaskObserver {
                 }
                 guard url.pathExtension == "jsonl" else { continue }
                 let m = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-                if m >= cutoff || (state.files[url.path].map { m > $0.mtime } ?? false) { paths.append(url.path) }
+                if m >= cutoff || (state.files[canonical(url.path)].map { m > $0.mtime || needsRunMetadata($0) } ?? false) {
+                    paths.append(url.path)
+                }
             }
         }
         return ingest(paths: paths)
@@ -140,6 +148,7 @@ public actor TaskObserver {
         for p in Set(paths.map(canonical)) { if let r = classify(p) { work.append((p, r)) } }
         work.sort { (rank($0.role), $0.path) < (rank($1.role), $1.path) }
         for (path, role) in work { read(path, as: role, into: &report) }
+        readCodexIndexes()
         refreshMetas(sessions: touchedSessions.union(touchedAttempts.compactMap { state.attempts[$0]?.session }))
         bind()
         report.events = publish()
@@ -147,9 +156,9 @@ public actor TaskObserver {
         return report
     }
 
-    /// The slow timer: re-reads meta files of unfinished agents and workflow results, and writes
-    /// throttled activity that is due. Only needed while `needsPolling`.
+    /// The slow timer reads titles, looks for agent and workflow results, and writes activity that's due.
     public func poll() -> Report {
+        readCodexIndexes()
         refreshMetas(sessions: nil)
         touchedAttempts.formUnion(pending.filter { state.attempts[$0] != nil })
         touchedSessions.formUnion(pending.filter { state.sessions[$0] != nil })
@@ -159,10 +168,14 @@ public actor TaskObserver {
         return report
     }
 
-    /// Something unfinished whose end only a file the watcher doesn't report (or the throttle) will show.
+    /// Whether something may change without a new transcript write.
     public var needsPolling: Bool {
-        let recent = now().timeIntervalSince1970 - 6 * 3600
+        let wall = now().timeIntervalSince1970
+        let recent = wall - 6 * 3600
         if !pending.isEmpty { return true }
+        // A thread title can arrive after the final rollout write, outside the watched log roots.
+        if state.sessions.values.contains(where: { $0.harness == "codex" && $0.boundTo == nil && $0.out.run != nil
+            && $0.lastAt > wall - 3600 }) { return true }
         return state.attempts.values.contains { a in
             a.lastAt > recent && (a.meta != nil || a.kind == .workflow) && effective(a).end == nil
         }
@@ -228,6 +241,10 @@ public actor TaskObserver {
         return (session, agent, workflow)
     }
 
+    private func needsRunMetadata(_ file: TranscriptFile) -> Bool {
+        file.readRunMetadata == nil && file.offset > 0 && (file.role == .session || file.role == .codex)
+    }
+
     private func read(_ path: String, as role: TranscriptFile.Role, into report: inout Report) {
         guard let st = LogFileReader.fileStat(path) else { return }
         let isNew = state.files[path] == nil
@@ -267,7 +284,9 @@ public actor TaskObserver {
         if let dir = sessionDir, let s = file.session { state.sessions[s]?.dir = dir }
         // The meta file's `finished` is read after the lines, so the end lands on the last of them.
         defer { if isNew, let key = file.agent { readMeta(key) } }
-        guard st.size > file.offset else {
+        let backfill = needsRunMetadata(file)
+        let start = backfill ? 0 : Int(file.offset)
+        guard st.size > start else {
             file.mtime = st.mtime
             state.files[path] = file
             return
@@ -281,7 +300,7 @@ public actor TaskObserver {
         let base = UnsafePointer<UInt8>(map.assumingMemoryBound(to: UInt8.self))
         var end = length
         while end > Int(file.offset) && base[end - 1] != 0x0A { end -= 1 }
-        var pos = Int(file.offset)
+        var pos = start
         readingMtime = st.mtime
         // The last tool-result line with nothing after it: only its time can still matter.
         var quiet: (start: Int, count: Int)?
@@ -289,7 +308,15 @@ public actor TaskObserver {
             var lineEnd = end
             if let nl = memchr(base + pos, 0x0A, end - pos) { lineEnd = UnsafePointer<UInt8>(nl.assumingMemoryBound(to: UInt8.self)) - base }
             if lineEnd > pos {
-                if role == .codex { codexLine(base + pos, lineEnd - pos, file: &file) } else {
+                if pos < file.offset {
+                    if role == .session { claudeRunMetadata(base + pos, lineEnd - pos, session: file.session) }
+                    else if codexLine(base + pos, lineEnd - pos, file: &file, metadataOnly: true) {
+                        pos = Int(file.offset)
+                        continue
+                    }
+                } else if role == .codex {
+                    codexLine(base + pos, lineEnd - pos, file: &file)
+                } else {
                     switch claudeLine(base + pos, lineEnd - pos, file: &file) {
                     case .activity: quiet = (pos, lineEnd - pos)
                     case .read: quiet = nil
@@ -304,10 +331,12 @@ public actor TaskObserver {
             line.at = at
             claudeApply(line, file: &file)
         }
+        if backfill, let sid = file.session { touchSession(sid) }
         report.filesRead += 1
-        report.bytes += Int64(end) - file.offset
+        report.bytes += Int64(end - start)
         file.offset = Int64(end)
         file.mtime = st.mtime
+        file.readRunMetadata = true
         state.files[path] = file
         changed = true
     }
@@ -315,6 +344,15 @@ public actor TaskObserver {
     // MARK: Claude Code lines
 
     enum LineUse { case skipped, read, activity }
+
+    private func claudeRunMetadata(_ p: UnsafePointer<UInt8>, _ n: Int, session: String?) {
+        guard let session, let metadata = ClaudeTranscript.runMetadata(p, n), var s = state.sessions[session] else { return }
+        if let ai = metadata.ai { s.sessionTitle = ai }
+        if let custom = metadata.custom { s.customTitle = custom }
+        if let branch = metadata.branch { s.branch = branch }
+        state.sessions[session] = s
+        touchSession(session)
+    }
 
     private func claudeLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile) -> LineUse {
         guard file.session != nil else { return .skipped }
@@ -326,7 +364,12 @@ public actor TaskObserver {
             return (true, s.tool == .delegate || s.tool == .taskStatus)
         }
         let wantText = file.role == .session && !file.sawText
-        guard let line = ClaudeTranscript.parse(p, n, wanted: wanted, wantText: wantText) else { return .skipped }
+        let main = file.role == .session
+        let parsed = ClaudeTranscript.parse(p, n, wanted: wanted, wantText: wantText, readBranch: main)
+        if main, parsed == nil || parsed?.activityOnly == true {
+            claudeRunMetadata(p, n, session: file.session)
+        }
+        guard let line = parsed else { return .skipped }
         if line.activityOnly { return .activity }
         claudeApply(line, file: &file)
         return .read
@@ -379,6 +422,7 @@ public actor TaskObserver {
             }
             if s.project == nil, let cwd = line.cwd { s.project = Bytes.lastPathComponent(cwd) }
             if s.cwd == nil, let cwd = line.cwd, !cwd.isEmpty { s.cwd = cwd }
+            if let branch = line.branch { s.branch = branch }
             if s.host == nil, line.entrypoint == "claude-desktop" { s.host = Self.desktopHost }
             s.tokens += tokens
             if let m = line.model, line.assistant, line.limit == nil, m != "<synthetic>" { s.model = m }
@@ -654,26 +698,30 @@ public actor TaskObserver {
 
     // MARK: Codex lines
 
-    private func codexLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile) {
+    @discardableResult
+    private func codexLine(_ p: UnsafePointer<UInt8>, _ n: Int, file: inout TranscriptFile, metadataOnly: Bool = false) -> Bool {
+        if metadataOnly, !Bytes.contains(p, min(n, 220), "\"type\":\"session_meta\"") { return false }
         let wantText = !file.sawText
         // A question waiting on its call's output: only then are output lines looked into.
         let pending = file.session.flatMap { state.sessions[$0]?.question }.flatMap { q in
             state.pendingCalls[q.id]?.kind == .question && q.answeredAt == nil ? q.id : nil
         }
-        guard let (lineAt, event) = CodexTranscript.parse(p, n, wantText: wantText, pendingCall: pending) else { return }
+        guard let (lineAt, event) = CodexTranscript.parse(p, n, wantText: wantText, pendingCall: pending) else { return false }
         let at = lineAt ?? 0
-        if case .meta(let id, let cwd, let started) = event {
-            guard let sid = TaskRunID.sanitize(id), sid == id else { return }
+        if case .meta(let id, let cwd, let started, let repo, let branch) = event {
+            guard let sid = TaskRunID.sanitize(id), sid == id else { return false }
             file.session = sid
             if state.sessions[sid] == nil {
                 state.sessions[sid] = SessionRec(id: sid, harness: "codex", project: cwd.flatMap(Bytes.lastPathComponent),
                                                  startedAt: started ?? at, lastAt: started ?? at)
             }
             if state.sessions[sid]?.cwd == nil, let cwd, !cwd.isEmpty { state.sessions[sid]?.cwd = cwd }
+            if let repo { state.sessions[sid]?.repo = repo }
+            if let branch { state.sessions[sid]?.branch = branch }
             touchSession(sid)
-            return
+            return true
         }
-        guard let sid = file.session, var s = state.sessions[sid] else { return }
+        guard !metadataOnly, let sid = file.session, var s = state.sessions[sid] else { return false }
         let works: Bool
         switch event {
         case .limit, .tokens(_, true), .completed(true): works = false
@@ -723,9 +771,80 @@ public actor TaskObserver {
         }
         state.sessions[sid] = s
         touchSession(sid)
+        return false
     }
 
     // MARK: Meta files
+
+    private func readCodexIndexes() {
+        for path in codexIndexPaths {
+            guard let st = LogFileReader.fileStat(path) else { continue }
+            let previous = state.codexIndexes?[path]
+            var index = previous ?? CodexSessionIndex(device: st.device, inode: st.inode)
+            if index.device != st.device || index.inode != st.inode || index.size > st.size {
+                index = CodexSessionIndex(device: st.device, inode: st.inode)
+            } else if previous != nil, index.size == st.size {
+                continue
+            }
+            guard let handle = openRegularFile(path) else { continue }
+            defer { try? handle.close() }
+            var opened = Darwin.stat()
+            guard fstat(handle.fileDescriptor, &opened) == 0, Int64(opened.st_dev) == st.device,
+                  UInt64(opened.st_ino) == st.inode else { continue }
+            do {
+                try readCodexIndex(handle, through: UInt64(st.size), into: &index)
+            } catch {
+                continue
+            }
+            index.size = st.size
+            if state.codexIndexes == nil { state.codexIndexes = [:] }
+            state.codexIndexes?[path] = index
+            changed = true
+        }
+    }
+
+    private func readCodexIndex(_ handle: FileHandle, through size: UInt64, into index: inout CodexSessionIndex) throws {
+        struct Entry: Decodable {
+            let id: String
+            let thread_name: String
+        }
+        let decoder = JSONDecoder()
+        let maxLine = 16 * 1024
+        var line = Data()
+        var oversized = false
+        var position = index.offset
+        try handle.seek(toOffset: position)
+        while position < size, let block = try handle.read(upToCount: Int(min(size - position, 64 * 1024))), !block.isEmpty {
+            var start = block.startIndex
+            while start < block.endIndex {
+                let newline = block[start...].firstIndex(of: 0x0A)
+                let end = newline ?? block.endIndex
+                if !oversized, line.count + end - start <= maxLine { line.append(contentsOf: block[start..<end]) }
+                else { oversized = true }
+                guard let newline else { break }
+                if !oversized, let entry = try? decoder.decode(Entry.self, from: line),
+                   TaskRunID.sanitize(entry.id) == entry.id, let title = TaskText.title(entry.thread_name),
+                   index.titles.updateValue(title, forKey: entry.id) != title,
+                   state.sessions[entry.id]?.harness == "codex" {
+                    touchSession(entry.id)
+                }
+                index.offset = position + UInt64(newline - block.startIndex + 1)
+                line.removeAll(keepingCapacity: true)
+                oversized = false
+                start = newline + 1
+            }
+            position += UInt64(block.count)
+        }
+        guard position == size else { throw POSIXError(.EIO) }
+    }
+
+    private func claudeRepo(for session: SessionRec) -> String? {
+        guard let cwd = session.cwd else { return nil }
+        if let cached = claudeRepos[session.id] { return cached }
+        let repo = TaskGit.repository(at: cwd)
+        claudeRepos.updateValue(repo, forKey: session.id)
+        return repo
+    }
 
     /// Reads an agent's meta file: its label and type, the call that spawned it, and whether it finished.
     private func readMeta(_ key: String) {
@@ -960,11 +1079,23 @@ public actor TaskObserver {
             }
             let key = "session:" + sid
             if s.out.run != sid { s.out = Emitted(run: sid) }
-            let metaKey = [s.project, s.harness, s.host, s.cwd].map { $0 ?? "" }.joined(separator: "\u{1F}")
+            if s.harness == "codex" {
+                let title = codexIndexPaths.lazy.compactMap { self.state.codexIndexes?[$0]?.titles[sid] }.first
+                if let title { s.sessionTitle = title }
+            }
+            let title = s.customTitle ?? s.sessionTitle
+            let repo = s.harness == "claude-code" ? claudeRepo(for: s) : s.repo
+            let fields = [title, repo, s.branch]
+            let base = [s.project, s.harness, s.host, s.cwd]
+            let metaKey = (fields.contains(where: { $0 != nil }) ? base + fields : base)
+                .map { $0 ?? "" }.joined(separator: "\u{1F}")
             if !state.metaRuns.contains(sid) || s.out.meta != metaKey {
-                event(s.startedAt, sid, .meta(title: nil, project: s.project, harness: s.harness, host: s.host, cwd: s.cwd))
+                let at = s.out.metaAt ?? s.startedAt
+                event(at, sid, .meta(title: nil, project: s.project, harness: s.harness, host: s.host, cwd: s.cwd,
+                                     sessionTitle: title, repo: repo, branch: s.branch))
                 state.metaRuns.insert(sid)
                 s.out.meta = metaKey
+                s.out.metaAt = at
             }
             let provider = s.harness == "codex" ? "codex" : "claude"
             let specKey = [s.model ?? "", provider].joined(separator: "\u{1F}")
@@ -1058,6 +1189,7 @@ public actor TaskObserver {
         state.prunedAt = t
         let week = t - Self.keep, day = t - 86400
         state.sessions = state.sessions.filter { $0.value.lastAt >= week || $0.value.lastAt == 0 && $0.value.startedAt >= week }
+        claudeRepos = claudeRepos.filter { state.sessions[$0.key] != nil }
         for (id, s) in state.sessions where s.candidates != nil && s.startedAt < day { state.sessions[id]?.candidates = nil }
         state.attempts = state.attempts.filter { $0.value.lastAt >= week }
         state.spawns = state.spawns.filter { $0.value.at >= day }
@@ -1074,4 +1206,101 @@ public actor TaskObserver {
         let t = label.replacingOccurrences(of: ref.tag, with: "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return t.isEmpty ? label : t
     }
+}
+
+/// The remote's host and credentials never enter task metadata.
+enum TaskGit {
+    static func slug(_ remote: String) -> String? {
+        let remote = remote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path: String
+        if remote.contains("://") {
+            guard let url = URLComponents(string: remote), let scheme = url.scheme?.lowercased(),
+                  ["http", "https", "ssh"].contains(scheme), let host = url.host, !host.isEmpty else { return nil }
+            path = url.path
+        } else {
+            guard let colon = remote.firstIndex(of: ":") else { return nil }
+            let host = remote[..<colon]
+            guard let at = host.firstIndex(of: "@"), at != host.startIndex, host.index(after: at) != host.endIndex,
+                  !host.contains("/"), !host.contains(where: \.isWhitespace) else { return nil }
+            path = String(remote[remote.index(after: colon)...])
+        }
+        let parts = path.split(separator: "/").suffix(2)
+        guard parts.count == 2, let owner = parts.first, var name = parts.last else { return nil }
+        if name.hasSuffix(".git") { name = name.dropLast(4) }
+        guard !name.isEmpty, owner != ".", owner != "..", name != ".", name != ".." else { return nil }
+        return TaskText.clean("\(owner)/\(name)", limit: 400)
+    }
+
+    static func repository(at cwd: String) -> String? {
+        guard cwd.hasPrefix("/") else { return nil }
+        let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
+        var dir = URL(fileURLWithPath: cwd, isDirectory: true).resolvingSymlinksInPath()
+        while true {
+            let git = dir.appendingPathComponent(".git")
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: git.path, isDirectory: &isDirectory) {
+                if isDirectory.boolValue { return remote(in: git) }
+                guard let pointer = read(git, max: 8192), pointer.hasPrefix("gitdir:") else { return nil }
+                let path = pointer.dropFirst(7).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !path.isEmpty else { return nil }
+                return remote(in: URL(fileURLWithPath: path, isDirectory: true, relativeTo: dir).standardizedFileURL)
+            }
+            if dir.path == home || dir.path == "/" { return nil }
+            dir.deleteLastPathComponent()
+        }
+    }
+
+    private static func remote(in git: URL) -> String? {
+        var common = git
+        let commonFile = git.appendingPathComponent("commondir")
+        if FileManager.default.fileExists(atPath: commonFile.path) {
+            guard let path = read(commonFile, max: 8192)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.isEmpty else { return nil }
+            common = URL(fileURLWithPath: path, isDirectory: true, relativeTo: git).standardizedFileURL
+        }
+        guard let config = read(common.appendingPathComponent("config"), max: 256 * 1024) else { return nil }
+        var remote: Substring?
+        var first: String?
+        for line in config.split(whereSeparator: \.isNewline) {
+            let line = line.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                remote = nil
+                if let quote = line.firstIndex(of: "\""), let end = line[line.index(after: quote)...].firstIndex(of: "\""),
+                   line[line.index(after: line.startIndex)..<quote].trimmingCharacters(in: .whitespaces).lowercased() == "remote" {
+                    remote = line[line.index(after: quote)..<end]
+                }
+            } else if let remote, let equal = line.firstIndex(of: "="),
+                      line[..<equal].trimmingCharacters(in: .whitespaces).lowercased() == "url" {
+                let value = line[line.index(after: equal)...].trimmingCharacters(in: .whitespaces)
+                let url: String
+                if value.hasPrefix("\""), let quote = value.dropFirst().firstIndex(of: "\"") {
+                    url = String(value[value.index(after: value.startIndex)..<quote])
+                } else {
+                    let comment = value.firstIndex { $0 == "#" || $0 == ";" } ?? value.endIndex
+                    url = String(value[..<comment])
+                }
+                if remote == "origin" { return slug(url) }
+                if first == nil { first = url }
+            }
+        }
+        return first.flatMap(slug)
+    }
+
+    private static func read(_ url: URL, max: Int) -> String? {
+        guard let file = openRegularFile(url.path) else { return nil }
+        defer { try? file.close() }
+        guard let bytes = try? file.read(upToCount: max + 1), bytes.count <= max else { return nil }
+        return String(data: bytes, encoding: .utf8)
+    }
+}
+
+private func openRegularFile(_ path: String) -> FileHandle? {
+    let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+    guard fd >= 0 else { return nil }
+    var st = Darwin.stat()
+    guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else {
+        close(fd)
+        return nil
+    }
+    return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
 }

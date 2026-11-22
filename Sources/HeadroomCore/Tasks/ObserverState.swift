@@ -23,11 +23,21 @@ struct ObserverState: Codable, Sendable {
     /// Question and plan tool calls waiting for their results, by tool-use (or Codex call) id.
     /// Optional, like every field added after version 1, so older saved state still decodes.
     var calls: [String: CallRec]?
+    /// Codex session indexes, keyed by path, including titles for rollouts not yet seen.
+    var codexIndexes: [String: CodexSessionIndex]?
 
     var pendingCalls: [String: CallRec] {
         get { calls ?? [:] }
         set { calls = newValue.isEmpty ? nil : newValue }
     }
+}
+
+struct CodexSessionIndex: Codable, Sendable {
+    var device: Int64
+    var inode: UInt64
+    var size: Int64 = 0
+    var offset: UInt64 = 0
+    var titles: [String: String] = [:]
 }
 
 /// A harness tool call whose result the observer waits for.
@@ -83,6 +93,8 @@ struct TranscriptFile: Codable, Sendable {
     var recentKeys: [UInt64] = []
     /// The first message has been looked at (for delegate matching).
     var sawText = false
+    /// Older cursors need one pass over the consumed lines for run metadata only.
+    var readRunMetadata: Bool?
 }
 
 /// What was last written for an attempt, so only changes are written.
@@ -104,6 +116,8 @@ struct Emitted: Codable, Sendable, Hashable {
     var plan: String?
     /// The `run.meta` fields last written, as a key.
     var meta: String?
+    /// Reuse the first metadata timestamp so even earlier transcript activity leaves updates in order.
+    var metaAt: Double?
 }
 
 struct SessionRec: Codable, Sendable {
@@ -134,6 +148,11 @@ struct SessionRec: Codable, Sendable {
     var outStopped: Bool?
     /// The working folder (Claude lines' `cwd`, Codex `session_meta`). Written to `run.meta` only.
     var cwd: String?
+    /// Claude's automatic title or the latest title from the Codex index.
+    var sessionTitle: String?
+    var customTitle: String?
+    var repo: String?
+    var branch: String?
     /// The app it runs in, when the transcript says (the Claude desktop app's bundle id).
     var host: String?
     /// Codex: the last turn was aborted by the person (`turn_aborted` with reason `interrupted`).

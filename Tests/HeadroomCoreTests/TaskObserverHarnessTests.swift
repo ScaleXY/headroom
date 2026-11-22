@@ -46,7 +46,7 @@ extension Array where Element == TaskEvent {
     }
 
     var metas: [(project: String?, harness: String?, host: String?, cwd: String?)] {
-        compactMap { if case .meta(_, let p, let h, let host, let cwd) = $0.op { (p, h, host, cwd) } else { nil } }
+        compactMap { if case .meta(_, let p, let h, let host, let cwd, _, _, _) = $0.op { (p, h, host, cwd) } else { nil } }
     }
 }
 

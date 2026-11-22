@@ -255,6 +255,9 @@ struct RunBuilder {
     var harness: String?
     var host: String?
     var cwd: String?
+    var sessionTitle: String?
+    var repo: String?
+    var branch: String?
     var startedAt: Date
     var updatedAt: Date
     var tasks: [String: Rec] = [:]
@@ -322,12 +325,15 @@ struct RunBuilder {
             if byPerson { stoppedAt = nil; endedAt = nil; runWait = nil } else if byAgent { clearRunWait(at: e.at) }
         }
         switch e.op {
-        case .meta(let t, let p, let h, let host, let cwd):
+        case .meta(let t, let p, let h, let host, let cwd, let sessionTitle, let repo, let branch):
             if let t = TaskText.title(t) { title = t }
             if let p = TaskText.title(p) { project = p }
             if let h = TaskText.title(h) { harness = h }
             if let host = TaskText.clean(host, limit: 400) { self.host = host }
             if let cwd = TaskText.clean(cwd, limit: 2048) { self.cwd = cwd }
+            if let sessionTitle = TaskText.title(sessionTitle) { self.sessionTitle = sessionTitle }
+            if let repo = TaskText.clean(repo, limit: 400) { self.repo = repo }
+            if let branch = TaskText.clean(branch, limit: 400) { self.branch = branch }
         case .add(let spec):
             let existed = tasks[spec.id] != nil
             guard ensure(spec.id, at: e.at, declared: true) else { return }
@@ -1237,7 +1243,8 @@ struct RunBuilder {
                        tokens: root.tokens, scopeChanges: scopeChanges, warning: nil, hasDeclaredTasks: hasPlan, nodes: d.nodes,
                        hidden: hidden, abandoned: abandoned, question: question, time: time, etaLowSeconds: eta?.low, etaHighSeconds: eta?.high,
                        tokensByModel: byModel, recentTokensPerHour: live ? recentRate(working: working, end: end) : nil,
-                       tokensToFinish: tokensToFinish, mirrored: mirrorActive, host: host, cwd: cwd)
+                       tokensToFinish: tokensToFinish, mirrored: mirrorActive, host: host, cwd: cwd,
+                       sessionTitle: sessionTitle, repo: repo, branch: branch)
     }
 
     /// Seconds to finish: what's left of the estimate over the share of the run closed per working

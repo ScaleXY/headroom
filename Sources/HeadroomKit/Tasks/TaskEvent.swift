@@ -8,7 +8,7 @@ import Foundation
 ///
 /// | `op` | fields |
 /// | :- | :- |
-/// | `run.meta` | `title`, `project`, `harness`, `host`, `cwd` (each optional; `host` and `cwd` stay on this Mac, never synced) |
+/// | `run.meta` | `title`, `project`, `harness`, `host`, `cwd`, `session_title`, `repo`, `branch` (each optional; `host`, `cwd`, `repo` and `branch` stay on this Mac) |
 /// | `task.add` | `task`, `title`, `effort` (number), `importance`, `steps` (total); re-adding updates the fields given |
 /// | `task.start` | `task` |
 /// | `task.progress` | `task`, `step` (done), `steps` (total), `fraction` (0…1), `note` |
@@ -45,7 +45,9 @@ public struct TaskEvent: Sendable, Hashable {
     public enum Op: Sendable, Hashable {
         /// `host` is the app the session runs in (a bundle id such as `com.googlecode.iterm2`, or
         /// `$TERM_PROGRAM`); `cwd` its working folder. Both stay on this Mac.
-        case meta(title: String?, project: String?, harness: String?, host: String? = nil, cwd: String? = nil)
+        /// `sessionTitle` is supplied by the harness, separate from the agent's declared `title`.
+        case meta(title: String?, project: String?, harness: String?, host: String? = nil, cwd: String? = nil,
+                  sessionTitle: String? = nil, repo: String? = nil, branch: String? = nil)
         case add(TaskSpec)
         case start(task: String)
         case progress(task: String, step: Int?, total: Int?, fraction: Double?, note: String?)
@@ -146,7 +148,7 @@ extension TaskEvent: Codable {
     enum Key: String, CodingKey {
         case v, ts, run, src, op, task, title, project, harness, host, cwd, effort, importance, steps, step, fraction, note, options
         case waitFor = "for", evidence, reason, attempt, kind, model, provider, tag, parent, at, tokens, outcome, blocked, items, tool, hidden, instead
-        case agentType = "agent_type"
+        case agentType = "agent_type", sessionTitle = "session_title", repo, branch
     }
 
     public struct UnknownOp: Error { public var op: String }
@@ -161,7 +163,9 @@ extension TaskEvent: Codable {
         func attempt() throws -> String { try c.decode(String.self, forKey: .attempt) }
         let name = try c.decode(String.self, forKey: .op)
         switch name {
-        case "run.meta": op = .meta(title: try s(.title), project: try s(.project), harness: try s(.harness), host: try s(.host), cwd: try s(.cwd))
+        case "run.meta":
+            op = .meta(title: try s(.title), project: try s(.project), harness: try s(.harness), host: try s(.host), cwd: try s(.cwd),
+                       sessionTitle: try s(.sessionTitle), repo: try s(.repo), branch: try s(.branch))
         case "task.add":
             op = .add(TaskSpec(id: try task(), title: try s(.title), effort: try c.decodeIfPresent(Double.self, forKey: .effort),
                                importance: try c.decodeIfPresent(TaskImportance.self, forKey: .importance), steps: try c.decodeIfPresent(Int.self, forKey: .steps)))
@@ -201,12 +205,15 @@ extension TaskEvent: Codable {
         try c.encode(source, forKey: .src)
         try c.encode(op.name, forKey: .op)
         switch op {
-        case .meta(let title, let project, let harness, let host, let cwd):
+        case .meta(let title, let project, let harness, let host, let cwd, let sessionTitle, let repo, let branch):
             try c.encodeIfPresent(title, forKey: .title)
             try c.encodeIfPresent(project, forKey: .project)
             try c.encodeIfPresent(harness, forKey: .harness)
             try c.encodeIfPresent(host, forKey: .host)
             try c.encodeIfPresent(cwd, forKey: .cwd)
+            try c.encodeIfPresent(sessionTitle, forKey: .sessionTitle)
+            try c.encodeIfPresent(repo, forKey: .repo)
+            try c.encodeIfPresent(branch, forKey: .branch)
         case .add(let spec):
             try c.encode(spec.id, forKey: .task)
             try c.encodeIfPresent(spec.title, forKey: .title)

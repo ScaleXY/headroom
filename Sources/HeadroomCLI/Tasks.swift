@@ -388,7 +388,7 @@ enum TaskOps {
     static func lastPlace(_ events: [TaskEvent]) -> (host: String?, cwd: String?) {
         var host: String?, cwd: String?
         for e in events {
-            if case .meta(_, _, _, let h, let c) = e.op {
+            if case .meta(_, _, _, let h, let c, _, _, _) = e.op {
                 if let h { host = h }
                 if let c { cwd = c }
             }
@@ -768,7 +768,7 @@ enum RunWaitCommand {
             }
             if !announced && !json {
                 announced = true
-                ctx.output(ctx.style.dim("⏸ waiting on run \(TaskText.display(r?.title ?? run, limit: 80))" + (until == "attention" ? " (until it needs you)" : "")))
+                ctx.output(ctx.style.dim("⏸ waiting on run \(TaskText.display(r?.bestTitle ?? r?.project ?? run, limit: 80))" + (until == "attention" ? " (until it needs you)" : "")))
             }
             let left = deadline.timeIntervalSince(ctx.now())
             if left <= 0 {

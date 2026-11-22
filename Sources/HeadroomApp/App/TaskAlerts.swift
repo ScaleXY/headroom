@@ -147,5 +147,5 @@ struct TaskAlerts {
     }
 
     /// The run's title, or its project when the title is only the id.
-    static func name(_ r: TaskRun) -> String { r.agentTitle ?? r.project ?? "Agent run" }
+    static func name(_ r: TaskRun) -> String { r.bestTitle ?? r.project ?? "Agent run" }
 }

@@ -166,13 +166,19 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
     /// The app the session runs in and its working folder (from `run.meta`). Never synced.
     public var host: String?
     public var cwd: String?
+    /// The harness's title, used when the agent hasn't declared one.
+    public var sessionTitle: String?
+    /// The repository slug and branch. Both stay on this Mac.
+    public var repo: String?
+    public var branch: String?
 
     public init(id: String, title: String, project: String? = nil, harness: String? = nil, startedAt: Date, updatedAt: Date, state: TaskRunState,
                 waitReason: TaskWaitReason? = nil, stale: Bool = false, progress: TaskProgress = .zero, mustHaves: TaskMustHaves = TaskMustHaves(done: 0, total: 0),
                 etaSeconds: Double? = nil, tokens: Int64 = 0, scopeChanges: Int = 0, warning: String? = nil, hasDeclaredTasks: Bool? = nil, nodes: [TaskNode] = [], finishedEarlier: Int? = nil,
                 hidden: Bool = false, abandoned: Bool = false, question: TaskQuestion? = nil, time: TaskTimeSplit = .zero, etaLowSeconds: Double? = nil,
                 etaHighSeconds: Double? = nil, tokensByModel: [String: Int64] = [:], recentTokensPerHour: Double? = nil, tokensToFinish: Int64? = nil,
-                limitOutlook: TaskLimitOutlook? = nil, mirrored: Bool = false, host: String? = nil, cwd: String? = nil) {
+                limitOutlook: TaskLimitOutlook? = nil, mirrored: Bool = false, host: String? = nil, cwd: String? = nil,
+                sessionTitle: String? = nil, repo: String? = nil, branch: String? = nil) {
         self.id = id; self.title = title; self.project = project; self.harness = harness; self.startedAt = startedAt; self.updatedAt = updatedAt
         self.state = state; self.waitReason = waitReason; self.stale = stale; self.progress = progress; self.mustHaves = mustHaves
         self.etaSeconds = etaSeconds; self.tokens = tokens; self.scopeChanges = scopeChanges; self.warning = warning
@@ -183,6 +189,7 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
         self.etaLowSeconds = etaLowSeconds; self.etaHighSeconds = etaHighSeconds; self.tokensByModel = tokensByModel
         self.recentTokensPerHour = recentTokensPerHour; self.tokensToFinish = tokensToFinish; self.limitOutlook = limitOutlook
         self.mirrored = mirrored; self.host = host; self.cwd = cwd
+        self.sessionTitle = sessionTitle; self.repo = repo; self.branch = branch
     }
 
     public var attention: TaskAttention { TaskAttention(run: state, waitReason: waitReason, stale: stale) }
@@ -207,7 +214,8 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
         case scopeChanges = "scope_changes"
         case hasDeclaredTasks = "has_declared_tasks"
         case finishedEarlier = "finished_earlier"
-        case hidden, abandoned, question, time, mirrored, host, cwd
+        case hidden, abandoned, question, time, mirrored, host, cwd, repo, branch
+        case sessionTitle = "session_title"
         case etaLowSeconds = "eta_low_seconds"
         case etaHighSeconds = "eta_high_seconds"
         case tokensByModel = "tokens_by_model"
@@ -242,7 +250,9 @@ public struct TaskRun: Codable, Sendable, Hashable, Identifiable {
                   tokensToFinish: try c.decodeIfPresent(Int64.self, forKey: .tokensToFinish),
                   limitOutlook: try c.decodeIfPresent(TaskLimitOutlook.self, forKey: .limitOutlook),
                   mirrored: try c.decodeIfPresent(Bool.self, forKey: .mirrored) ?? false,
-                  host: try c.decodeIfPresent(String.self, forKey: .host), cwd: try c.decodeIfPresent(String.self, forKey: .cwd))
+                  host: try c.decodeIfPresent(String.self, forKey: .host), cwd: try c.decodeIfPresent(String.self, forKey: .cwd),
+                  sessionTitle: try c.decodeIfPresent(String.self, forKey: .sessionTitle),
+                  repo: try c.decodeIfPresent(String.self, forKey: .repo), branch: try c.decodeIfPresent(String.self, forKey: .branch))
     }
 }
 

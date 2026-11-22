@@ -35,14 +35,16 @@ enum TaskRender {
             if let eta = r.etaSeconds { parts.append("~\(TimeFormat.compact(eta)) left") }
         }
         if r.tokens > 0 { parts.append("\(NumberFormat.tokens(r.tokens)) tokens") }
-        // A bare session id says nothing: the project, then a short id.
-        let name = TaskText.display(r.agentTitle ?? r.project ?? String(r.id.prefix(8)), limit: TaskText.titleLimit)
+        // For an unnamed run, show its project or a short id.
+        let name = TaskText.display(r.bestTitle ?? r.project ?? String(r.id.prefix(8)), limit: TaskText.titleLimit)
         var head = "\(style.paint(g, hex)) \(style.bold(name))  " + (observed ? "" : "\(bar(r.progress, width: 20, style: style))  ") + parts.joined(separator: " · ")
         var detail = [stateWord(r)]
         if r.stale { detail.append("no activity for \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt)))") }
         detail.append("updated \(TimeFormat.compact(now.timeIntervalSince(r.updatedAt))) ago")
         if r.scopeChanges > 0 { detail.append("scope +\(r.scopeChanges)") }
         if let p = r.project { detail.append(TaskText.display(p, limit: 60)) }
+        if let repo = r.repo { detail.append(TaskText.display(repo, limit: 80)) }
+        if let branch = r.branch { detail.append(TaskText.display(branch, limit: 80)) }
         if let h = r.harness { detail.append(TaskText.display(h, limit: 40)) }
         head += "\n  " + style.dim(detail.joined(separator: " · "))
         if let w = r.warning { head += "\n  " + style.paint("⚠ " + TaskText.display(w), Style.amber) }
@@ -136,7 +138,7 @@ enum TaskRender {
 
     /// One line for `wait --run`: title, state, percent.
     static func summary(_ r: TaskRun, style: Style) -> String {
-        "\(TaskText.display(r.title, limit: TaskText.titleLimit)) · \(stateWord(r)) · \(Int((r.progress.done * 100).rounded(.down)))%"
+        "\(TaskText.display(r.bestTitle ?? r.project ?? r.id, limit: TaskText.titleLimit)) · \(stateWord(r)) · \(Int((r.progress.done * 100).rounded(.down)))%"
     }
 
     /// The status line's run segment: percent done, running count, and a marker when it needs you.

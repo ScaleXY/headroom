@@ -71,7 +71,7 @@ enum TaskEcho {
         let tasks = r.nodes.filter { !TaskPath.isImplicit($0.id) }
         let leaves = tasks.filter { $0.leaf && $0.counted }
         var head = "run \(r.id)"
-        if r.title != r.id { head += " \"\(TaskText.display(r.title, limit: 60))\"" }
+        if let name = r.bestTitle ?? r.project { head += " \"\(TaskText.display(name, limit: 60))\"" }
         head += " · \(percent(r)) · \(leaves.filter { $0.state == .done }.count) of \(leaves.count) done"
         switch r.state {
         case .running: break

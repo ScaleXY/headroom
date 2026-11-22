@@ -158,6 +158,7 @@ enum ClaudeTranscript {
         var at: Double?
         var sessionID: String?
         var cwd: String?
+        var branch: String?
         /// Which app wrote it: `cli`, `claude-desktop`, `sdk-ts`, …
         var entrypoint: String?
         /// A tool result or progress line read only for its time: the session is still at work.
@@ -236,6 +237,29 @@ enum ClaudeTranscript {
         return line
     }
 
+    /// Also used on user lines skipped by the activity parser, such as untracked tool results.
+    static func runMetadata(_ p: UnsafePointer<UInt8>, _ n: Int) -> (ai: String?, custom: String?, branch: String?)? {
+        let head = min(n, 220)
+        guard Bytes.contains(p, head, "\"type\":\"ai-title\"") || Bytes.contains(p, head, "\"type\":\"custom-title\"")
+            || Bytes.contains(p, head, "\"aiTitle\"") || Bytes.contains(p, head, "\"customTitle\"")
+            || Bytes.contains(p, n, "\"gitBranch\"") else { return nil }
+        let s = JSONScan(p, n)
+        var type: ByteSpan?, ai: String?, custom: String?, branch: String?
+        guard s.forEachMember(0, { k, v in
+            if s.key(k, is: "type") { type = v }
+            else if v.count <= 8192 {
+                if s.key(k, is: "aiTitle") { ai = TaskText.title(s.string(v)) }
+                else if s.key(k, is: "customTitle") { custom = TaskText.title(s.string(v)) }
+                else if s.key(k, is: "gitBranch") { branch = TaskText.clean(s.string(v), limit: 400) }
+            }
+            return true
+        }), let type else { return nil }
+        if let ai, s.string(type, is: "ai-title") { return (ai, nil, nil) }
+        if let custom, s.string(type, is: "custom-title") { return (nil, custom, nil) }
+        if let branch, s.string(type, is: "user") || s.string(type, is: "assistant") { return (nil, nil, branch) }
+        return nil
+    }
+
     /// Which tool calls an assistant line makes, from its `"name":"…"` keys: one pass over the bytes.
     static func toolNames(_ p: UnsafePointer<UInt8>, _ n: Int) -> (spawning: Bool, calling: Bool) {
         let needle: StaticString = "\"name\":\""
@@ -255,7 +279,7 @@ enum ClaudeTranscript {
 
     /// `wanted` says whether a tool result belongs to a spawn or call being tracked and whether
     /// its text is needed; `wantText` asks for the text of a first user message.
-    static func parse(_ p: UnsafePointer<UInt8>, _ n: Int, wanted: (String) -> (tracked: Bool, text: Bool), wantText: Bool) -> Line? {
+    static func parse(_ p: UnsafePointer<UInt8>, _ n: Int, wanted: (String) -> (tracked: Bool, text: Bool), wantText: Bool, readBranch: Bool) -> Line? {
         let assistant = Bytes.contains(p, n, "\"type\":\"assistant\"")
         var interruptHint = false
         if !assistant {
@@ -293,6 +317,7 @@ enum ClaudeTranscript {
             else if s.key(k, is: "timestamp") { line.at = s.rawString(v).flatMap(FastTimestamp.parse) }
             else if s.key(k, is: "sessionId") { line.sessionID = s.string(v) }
             else if s.key(k, is: "cwd") { line.cwd = s.string(v) }
+            else if readBranch, s.key(k, is: "gitBranch"), v.count <= 8192 { line.branch = TaskText.clean(s.string(v), limit: 400) }
             else if s.key(k, is: "entrypoint") { line.entrypoint = s.string(v) }
             else if s.key(k, is: "requestId") { requestID = s.string(v) }
             else if s.key(k, is: "toolUseResult") { resultSpan = v }
@@ -645,7 +670,7 @@ enum HarnessText {
 /// What the task observer needs from one Codex rollout line.
 enum CodexTranscript {
     enum Event {
-        case meta(id: String, cwd: String?, at: Double?)
+        case meta(id: String, cwd: String?, at: Double?, repo: String?, branch: String?)
         case model(String)
         case started
         /// The turn ended; `limited` when it ended on a usage limit.
@@ -750,13 +775,23 @@ enum CodexTranscript {
             return (at, callID.map { .output(callID: $0) } ?? .activity)
         case .meta:
             var id: String?, cwd: String?, started: Double?
+            var repo: String?, branch: String?
             s.forEachMember(payload.start) { k, v in
                 if s.key(k, is: "id") { id = s.string(v) }
                 else if s.key(k, is: "cwd") { cwd = s.string(v) }
                 else if s.key(k, is: "timestamp") { started = s.rawString(v).flatMap(FastTimestamp.parse) }
+                else if s.key(k, is: "git") {
+                    s.forEachMember(v.start) { k, v in
+                        if v.count <= 8192 {
+                            if s.key(k, is: "branch") { branch = TaskText.clean(s.string(v), limit: 400) }
+                            else if s.key(k, is: "repository_url"), let url = s.string(v) { repo = TaskGit.slug(url) }
+                        }
+                        return true
+                    }
+                }
                 return true
             }
-            return id.map { (at, .meta(id: $0, cwd: cwd, at: started ?? at)) }
+            return id.map { (at, .meta(id: $0, cwd: cwd, at: started ?? at, repo: repo, branch: branch)) }
         case .context:
             var model: String?
             s.forEachMember(payload.start) { k, v in

@@ -106,7 +106,12 @@ extension TaskCompaction {
 
 extension TaskRun {
     /// The title the agent gave the run; nil while it's only the run's id (a session UUID) or blank.
-    public var agentTitle: String? {
+    public var agentTitle: String? { namedTitle(title) }
+
+    /// The best available name, with the agent's declaration taking precedence.
+    public var bestTitle: String? { agentTitle ?? sessionTitle.flatMap(namedTitle) }
+
+    private func namedTitle(_ title: String) -> String? {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t != id, UUID(uuidString: t) == nil else { return nil }
         return t
