@@ -1,3 +1,13 @@
-Agent runs now have titles that say what they are: the name Claude Code or Codex gave the session, or the one the agent declared (on iPhone when your Mac includes task names). The Mac moves to the line underneath.
+A redesigned Limits tab (formerly Pace): one big gauge shows what's left this week and when it renews, and every 5-hour session sits right under the week's graph.
 
-Activity and this week's cost at API rates now add up across all your Macs.
+Plans without a 5-hour limit see how much of the week each day used.
+
+A calmer Activity tab opens with what your usage is worth at API rates, split between Claude and Codex.
+
+Clearer words: "on track", "40% spare" and "20% short" replace the old pace multiplier.
+
+Agent runs now say what they're doing, using the title Claude Code or Codex gave the session, with their Mac underneath. Titles show when your Mac includes task names.
+
+Fresh colors and a refined app icon.
+
+Bug fixes and improvements.

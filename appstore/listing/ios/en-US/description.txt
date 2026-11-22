@@ -1,12 +1,12 @@
-Will your Claude and Codex allowance last? AI Headroom brings the readings from Headroom on your Mac to your iPhone, iPad and Apple Watch, so you can check what's left this week, your 5-hour session and your agent runs wherever you are.
+Will your Claude and Codex allowance last? AI Headroom brings the readings from Headroom on your Mac to your iPhone, iPad and Apple Watch, so you can see what's left this week, when it renews, how your 5-hour session is going and how your agent runs are doing, wherever you are.
 
 Requires Headroom running on a Mac with Apple silicon and macOS 15 or later, Claude Code or Codex signed in to a subscription, and the same Apple Account with iCloud on your devices. You can explore the app with sample data before setting up sync.
 
-NOT JUST A PERCENTAGE
-The Limits card fills one level to what's left this week, with when it renews beside it, and says whether you have room to spare, are on track, or should slow down, with a graph of the week and a forecast at your recent rate.
+YOUR LIMITS AT A GLANCE
+One big gauge shows how much of this week's allowance is left and when it renews. The Limits card tells you whether you have room to spare, are on track, or should slow down, with a graph of the week, a forecast at today's rate and each 5-hour session right underneath.
 
-THE LIMIT YOU HIT FIRST
-Every 5-hour session is a bar under the week's graph, so a run of near-misses stands out. See what's left of the session, the reset countdown and a note when it will run out first. A Live Activity puts the countdown on your Lock Screen and in the Dynamic Island on supported iPhones.
+WATCH THE 5-HOUR SESSION
+See the session's remaining allowance, the reset countdown and where it's heading at this rate, with a warning before it runs out. A Live Activity puts the countdown on your Lock Screen and in the Dynamic Island on supported iPhones. Readings update as your Mac syncs.
 
 YOUR AGENT RUNS, AWAY FROM THE DESK
 Follow your Claude Code and Codex runs from every Mac: which one needs you, how far along each is, and when it should finish. Each run shows which Mac it's on and, when you include task names on that Mac, what it's working on. Get told when a run needs your input, stops with work left, or finishes.
@@ -15,7 +15,7 @@ WIDGETS AT A GLANCE
 Add Headroom, 5-Hour Session, Burn-o-meter, Activity and Accounts widgets to your Home Screen. Keep your limits close with Lock Screen widgets, Apple Watch complications and Smart Stack widgets.
 
 SEE YOUR ACTIVITY
-Start with what your usage is worth at API prices, split between Claude and Codex, then browse tokens by hour and model. Review past weeks, including how many 5-hour sessions hit the limit. These estimates show what your usage would cost at API prices; they are not subscription charges.
+Start with what your usage is worth at API rates, split between Claude and Codex, then browse tokens by hour and model. Review past weeks, including how many 5-hour sessions hit the limit. These estimates show what your usage would cost at API prices; they are not subscription charges.
 
 SEVERAL MACS, ONE ACCOUNT CARD
 Each Claude or Codex account gets one card, even when several Macs report it. Activity adds up across your Macs, and the Macs tab shows which devices are syncing and when they last reported.
